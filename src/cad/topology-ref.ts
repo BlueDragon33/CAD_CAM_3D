@@ -1,8 +1,43 @@
-import type { EdgeTopologyRef, Vec3Tuple } from './model';
-import type { EdgeSelection, ExactEdgeTopology } from './topology-selection';
+import type { EdgeTopologyRef, FaceTopologyRef, Vec3Tuple } from './model';
+import type {
+  EdgeSelection,
+  ExactEdgeTopology,
+  ExactFaceTopology,
+  FaceSelection,
+} from './topology-selection';
 
 function distance(a: Vec3Tuple, b: Vec3Tuple) {
   return Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+}
+
+function dot(a: Vec3Tuple, b: Vec3Tuple) {
+  return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+}
+
+function cross(a: Vec3Tuple, b: Vec3Tuple): Vec3Tuple {
+  return [
+    a[1] * b[2] - a[2] * b[1],
+    a[2] * b[0] - a[0] * b[2],
+    a[0] * b[1] - a[1] * b[0],
+  ];
+}
+
+function normalize(value: Vec3Tuple): Vec3Tuple {
+  const length = Math.hypot(value[0], value[1], value[2]);
+  if (length <= 1e-12) return [0, 1, 0];
+  return [value[0] / length, value[1] / length, value[2] / length];
+}
+
+function subtract(a: Vec3Tuple, b: Vec3Tuple): Vec3Tuple {
+  return [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+}
+
+function scale(a: Vec3Tuple, factor: number): Vec3Tuple {
+  return [a[0] * factor, a[1] * factor, a[2] * factor];
+}
+
+function add(a: Vec3Tuple, b: Vec3Tuple): Vec3Tuple {
+  return [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
 }
 
 function ratioPenalty(a: number, b: number) {
@@ -29,7 +64,45 @@ function endpoints(edge: ExactEdgeTopology) {
   };
 }
 
-/** Convert a transient viewport selection into a durable project reference. */
+export type FaceLocalFrame = {
+  origin: Vec3Tuple;
+  uAxis: Vec3Tuple;
+  vAxis: Vec3Tuple;
+  normal: Vec3Tuple;
+};
+
+/**
+ * Build a deterministic in-plane frame from a face signature. The frame origin
+ * is the world origin projected onto the face plane, which is stable for the
+ * centered MVP part when width/depth/height change.
+ */
+export function createFaceLocalFrame(face: Pick<ExactFaceTopology, 'centroid' | 'normal'> | FaceTopologyRef['signature']): FaceLocalFrame {
+  const normal = normalize([...face.normal]);
+  const planeDistance = dot(normal, [...face.centroid]);
+  const origin = scale(normal, planeDistance);
+
+  const worldX: Vec3Tuple = [1, 0, 0];
+  const projectedX = subtract(worldX, scale(normal, dot(worldX, normal)));
+  let uAxis = normalize(projectedX);
+  if (Math.hypot(projectedX[0], projectedX[1], projectedX[2]) <= 1e-8) {
+    const worldZ: Vec3Tuple = [0, 0, 1];
+    const projectedZ = subtract(worldZ, scale(normal, dot(worldZ, normal)));
+    uAxis = normalize(projectedZ);
+  }
+  const vAxis = normalize(cross(normal, uAxis));
+  return { origin, uAxis, vAxis, normal };
+}
+
+export function localCoordinatesOnFace(frame: FaceLocalFrame, point: Vec3Tuple) {
+  const offset = subtract(point, frame.origin);
+  return { uMm: dot(offset, frame.uAxis), vMm: dot(offset, frame.vAxis) };
+}
+
+export function pointFromFaceLocal(frame: FaceLocalFrame, uMm: number, vMm: number): Vec3Tuple {
+  return add(frame.origin, add(scale(frame.uAxis, uMm), scale(frame.vAxis, vMm)));
+}
+
+/** Convert a transient viewport selection into a durable project edge reference. */
 export function createEdgeTopologyRef(selection: EdgeSelection, capturedAfterFeatureId: string | null): EdgeTopologyRef {
   return {
     kind: 'edge',
@@ -45,8 +118,41 @@ export function createEdgeTopologyRef(selection: EdgeSelection, capturedAfterFea
   };
 }
 
+/** Convert a transient viewport selection into a durable project face reference. */
+export function createFaceTopologyRef(selection: FaceSelection, capturedAfterFeatureId: string | null): FaceTopologyRef {
+  return {
+    kind: 'face',
+    lineageIds: [...new Set(selection.lineageIds)].sort(),
+    capturedAfterFeatureId,
+    signature: {
+      centroid: [...selection.signature.centroid],
+      normal: [...selection.signature.normal],
+      areaMm2: selection.signature.areaMm2,
+    },
+  };
+}
+
+/**
+ * First face-bound manufacturing milestone: only horizontal faces descended
+ * from the base top/bottom faces are allowed. This preserves parity with the
+ * lightweight extrusion/STL path while the general oriented-cut path is built.
+ */
+export function isSupportedHorizontalFace(ref: FaceTopologyRef) {
+  const verticalNormal = Math.abs(ref.signature.normal[1]) >= 0.985;
+  const basePlaneLineage = ref.lineageIds.some((id) => id.includes(':top') || id.includes(':bottom'));
+  return verticalNormal && basePlaneLineage;
+}
+
 export type EdgeTopologyResolution = {
   edge: ExactEdgeTopology;
+  score: number;
+  lineageOverlap: number;
+  confidence: 'high' | 'medium';
+};
+
+export type FaceTopologyResolution = {
+  face: ExactFaceTopology;
+  frame: FaceLocalFrame;
   score: number;
   lineageOverlap: number;
   confidence: 'high' | 'medium';
@@ -95,10 +201,6 @@ export function resolveEdgeTopologyRef(
   }
 
   if (!best) return null;
-
-  // Reject weak or ambiguous matches. When semantic ancestry is present we
-  // require at least one lineage overlap; otherwise geometry alone must score
-  // very strongly. A close runner-up is treated as ambiguous rather than risky.
   if (ref.adjacentFaceLineageIds.length > 0 && best.overlap <= 0) return null;
   const maximumScore = ref.adjacentFaceLineageIds.length > 0 ? 1.15 : 0.72;
   if (best.score > maximumScore) return null;
@@ -109,5 +211,52 @@ export function resolveEdgeTopologyRef(
     score: best.score,
     lineageOverlap: best.overlap,
     confidence: best.overlap >= 0.99 && best.score <= 0.45 ? 'high' : 'medium',
+  };
+}
+
+/** Resolve a persisted face reference against the current exact topology. */
+export function resolveFaceTopologyRef(
+  ref: FaceTopologyRef,
+  faces: ExactFaceTopology[],
+  spanMm: number,
+): FaceTopologyResolution | null {
+  if (faces.length === 0) return null;
+  const span = Math.max(spanMm, 1);
+  const lineageCandidates = faces.filter((face) => lineageOverlap(ref.lineageIds, face.lineageIds) > 0);
+  const candidates = lineageCandidates.length > 0 ? lineageCandidates : faces;
+
+  let best: { face: ExactFaceTopology; score: number; overlap: number } | null = null;
+  let secondBest = Number.POSITIVE_INFINITY;
+  const referenceNormal = normalize([...ref.signature.normal]);
+
+  for (const face of candidates) {
+    const overlap = lineageOverlap(ref.lineageIds, face.lineageIds);
+    const centroidPenalty = distance(ref.signature.centroid, face.centroid) / span;
+    const candidateNormal = normalize([...face.normal]);
+    const normalPenalty = 1 - Math.abs(dot(referenceNormal, candidateNormal));
+    const areaPenalty = ratioPenalty(ref.signature.areaMm2, face.areaMm2);
+    const lineagePenalty = ref.lineageIds.length > 0 ? 1 - overlap : 0.4;
+    const score = centroidPenalty * 1.4 + normalPenalty * 1.1 + areaPenalty * 0.3 + lineagePenalty * 0.9;
+
+    if (!best || score < best.score) {
+      if (best) secondBest = best.score;
+      best = { face, score, overlap };
+    } else if (score < secondBest) {
+      secondBest = score;
+    }
+  }
+
+  if (!best) return null;
+  if (ref.lineageIds.length > 0 && best.overlap <= 0) return null;
+  const maximumScore = ref.lineageIds.length > 0 ? 1.1 : 0.68;
+  if (best.score > maximumScore) return null;
+  if (Number.isFinite(secondBest) && secondBest - best.score < 0.07) return null;
+
+  return {
+    face: best.face,
+    frame: createFaceLocalFrame(best.face),
+    score: best.score,
+    lineageOverlap: best.overlap,
+    confidence: best.overlap >= 0.99 && best.score <= 0.42 ? 'high' : 'medium',
   };
 }
