@@ -1,5 +1,6 @@
 import { OcctKernel } from 'occt-wasm';
 
+const HASH_UPPER_BOUND = 2_147_483_647;
 const kernel = await OcctKernel.init();
 
 try {
@@ -24,20 +25,20 @@ try {
   }
 
   if (!mesh.faceGroups || mesh.faceGroups.length === 0 || mesh.faceGroups.length % 3 !== 0) {
-    throw new Error('OCCT tessellation did not expose [triangleStart, triangleCount, faceHash] groups.');
+    throw new Error('OCCT tessellation did not expose [indexStart, indexCount, faceHash] groups.');
   }
 
-  let groupedTriangles = 0;
+  let groupedIndices = 0;
   for (let i = 0; i < mesh.faceGroups.length; i += 3) {
-    const triangleStart = mesh.faceGroups[i];
-    const triangleCount = mesh.faceGroups[i + 1];
-    if (triangleStart < 0 || triangleCount <= 0 || triangleStart + triangleCount > mesh.triangleCount) {
+    const indexStart = mesh.faceGroups[i];
+    const indexCount = mesh.faceGroups[i + 1];
+    if (indexStart < 0 || indexCount <= 0 || indexCount % 3 !== 0 || indexStart + indexCount > mesh.indices.length) {
       throw new Error(`Invalid OCCT face group at triple ${i / 3}.`);
     }
-    groupedTriangles += triangleCount;
+    groupedIndices += indexCount;
   }
-  if (groupedTriangles !== mesh.triangleCount) {
-    throw new Error(`Face groups cover ${groupedTriangles} triangles but mesh contains ${mesh.triangleCount}.`);
+  if (groupedIndices !== mesh.indices.length) {
+    throw new Error(`Face groups cover ${groupedIndices} indices but mesh contains ${mesh.indices.length}.`);
   }
 
   const step = kernel.exportStep(cut);
@@ -45,8 +46,8 @@ try {
     throw new Error('OCCT STEP export did not return a STEP exchange document.');
   }
 
-  const faceHashes = kernel.subShapeHashes(cut, 'face', 2_000_000_000);
-  const edgeHashes = kernel.subShapeHashes(cut, 'edge', 2_000_000_000);
+  const faceHashes = kernel.subShapeHashes(cut, 'face', HASH_UPPER_BOUND);
+  const edgeHashes = kernel.subShapeHashes(cut, 'edge', HASH_UPPER_BOUND);
   const faceHashSet = new Set(faceHashes);
   for (let i = 2; i < mesh.faceGroups.length; i += 3) {
     if (!faceHashSet.has(mesh.faceGroups[i])) {
@@ -58,7 +59,7 @@ try {
   let sampledEdge = false;
   for (const edge of edgeHandles) {
     try {
-      const hash = kernel.hashCode(edge, 2_000_000_000);
+      const hash = kernel.hashCode(edge, HASH_UPPER_BOUND);
       const length = kernel.curveLength(edge);
       const { first, last } = kernel.curveParameters(edge);
       const midpoint = kernel.curvePointAtParam(edge, first + (last - first) / 2);
