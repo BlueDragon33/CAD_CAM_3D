@@ -23,6 +23,23 @@ try {
     throw new Error('OCCT tessellation returned no triangles.');
   }
 
+  if (!mesh.faceGroups || mesh.faceGroups.length === 0 || mesh.faceGroups.length % 3 !== 0) {
+    throw new Error('OCCT tessellation did not expose [triangleStart, triangleCount, faceHash] groups.');
+  }
+
+  let groupedTriangles = 0;
+  for (let i = 0; i < mesh.faceGroups.length; i += 3) {
+    const triangleStart = mesh.faceGroups[i];
+    const triangleCount = mesh.faceGroups[i + 1];
+    if (triangleStart < 0 || triangleCount <= 0 || triangleStart + triangleCount > mesh.triangleCount) {
+      throw new Error(`Invalid OCCT face group at triple ${i / 3}.`);
+    }
+    groupedTriangles += triangleCount;
+  }
+  if (groupedTriangles !== mesh.triangleCount) {
+    throw new Error(`Face groups cover ${groupedTriangles} triangles but mesh contains ${mesh.triangleCount}.`);
+  }
+
   const step = kernel.exportStep(cut);
   if (!step.includes('ISO-10303-21')) {
     throw new Error('OCCT STEP export did not return a STEP exchange document.');
@@ -30,6 +47,33 @@ try {
 
   const faceHashes = kernel.subShapeHashes(cut, 'face', 2_000_000_000);
   const edgeHashes = kernel.subShapeHashes(cut, 'edge', 2_000_000_000);
+  const faceHashSet = new Set(faceHashes);
+  for (let i = 2; i < mesh.faceGroups.length; i += 3) {
+    if (!faceHashSet.has(mesh.faceGroups[i])) {
+      throw new Error(`Tessellation face hash ${mesh.faceGroups[i]} is missing from exact B-Rep topology.`);
+    }
+  }
+
+  const edgeHandles = kernel.getSubShapes(cut, 'edge');
+  let sampledEdge = false;
+  for (const edge of edgeHandles) {
+    try {
+      const hash = kernel.hashCode(edge, 2_000_000_000);
+      const length = kernel.curveLength(edge);
+      const { first, last } = kernel.curveParameters(edge);
+      const midpoint = kernel.curvePointAtParam(edge, first + (last - first) / 2);
+      if (hash > 0 && length > 0 && Number.isFinite(midpoint.x) && Number.isFinite(midpoint.y) && Number.isFinite(midpoint.z)) {
+        sampledEdge = true;
+        break;
+      }
+    } finally {
+      kernel.release(edge);
+    }
+  }
+  if (!sampledEdge) {
+    throw new Error('OCCT edge topology could not be sampled for viewport picking.');
+  }
+
   const bbox = kernel.getBoundingBox(cut, false);
   const volume = kernel.getVolume(cut);
 
@@ -47,7 +91,7 @@ try {
   }
 
   console.log(
-    `OCCT smoke PASS | ${mesh.triangleCount} triangles | ${faceHashes.length} faces | ${edgeHashes.length} edges | volume ${volume.toFixed(3)} mm^3`,
+    `OCCT smoke PASS | ${mesh.triangleCount} triangles | ${faceHashes.length} faces | ${edgeHashes.length} edges | ${mesh.faceGroups.length / 3} pick groups | volume ${volume.toFixed(3)} mm^3`,
   );
 } finally {
   kernel.releaseAll();
