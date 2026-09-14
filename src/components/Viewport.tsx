@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import type { CadProject } from '../cad/model';
-import { rebuildProject } from '../cad/rebuild';
+import { buildPartGeometry } from '../cad/geometry';
 
 type Props = { project: CadProject };
 
@@ -97,44 +97,8 @@ export function Viewport({ project }: Props) {
     if (!group) return;
     disposeGroup(group);
 
-    const rebuilt = rebuildProject(project);
-    if (!rebuilt.hasSolid) return;
-
-    const shape = new THREE.Shape();
-    const halfWidth = rebuilt.width / 2;
-    const halfDepth = rebuilt.depth / 2;
-    shape.moveTo(-halfWidth, -halfDepth);
-    shape.lineTo(halfWidth, -halfDepth);
-    shape.lineTo(halfWidth, halfDepth);
-    shape.lineTo(-halfWidth, halfDepth);
-    shape.closePath();
-
-    for (const feature of rebuilt.holes) {
-      const hole = new THREE.Path();
-      hole.absarc(feature.params.x, feature.params.z, feature.params.diameter / 2, 0, Math.PI * 2, true);
-      shape.holes.push(hole);
-    }
-
-    for (const feature of rebuilt.cuts) {
-      const cut = new THREE.Path();
-      const halfCutWidth = feature.params.width / 2;
-      const halfCutDepth = feature.params.depth / 2;
-      cut.moveTo(feature.params.x - halfCutWidth, feature.params.z - halfCutDepth);
-      cut.lineTo(feature.params.x - halfCutWidth, feature.params.z + halfCutDepth);
-      cut.lineTo(feature.params.x + halfCutWidth, feature.params.z + halfCutDepth);
-      cut.lineTo(feature.params.x + halfCutWidth, feature.params.z - halfCutDepth);
-      cut.closePath();
-      shape.holes.push(cut);
-    }
-
-    const geometry = new THREE.ExtrudeGeometry(shape, {
-      depth: rebuilt.height,
-      bevelEnabled: false,
-      curveSegments: 48,
-      steps: 1,
-    });
-    geometry.rotateX(-Math.PI / 2);
-    geometry.computeVertexNormals();
+    const { rebuilt, geometry } = buildPartGeometry(project);
+    if (!geometry) return;
 
     const material = new THREE.MeshStandardMaterial({ color: 0x2563eb, roughness: 0.55, metalness: 0.05 });
     const mesh = new THREE.Mesh(geometry, material);

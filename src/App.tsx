@@ -9,6 +9,7 @@ import {
 import { interpretCommand } from './cad/command';
 import { rebuildProject } from './cad/rebuild';
 import { validateForPrint } from './manufacturing/validate';
+import { downloadProjectStl, type StlExportReport } from './manufacturing/export';
 import { Viewport } from './components/Viewport';
 import { defaultManagementPolicy, managementIdentity } from './management/policy';
 
@@ -34,6 +35,7 @@ export default function App() {
   const [selectedFeatureId, setSelectedFeatureId] = useState<string | null>(() => project.features[1]?.id ?? project.features[0]?.id ?? null);
   const [command, setCommand] = useState('');
   const [status, setStatus] = useState('General CAD foundation ready.');
+  const [lastExport, setLastExport] = useState<StlExportReport | null>(null);
   const policy = defaultManagementPolicy;
   const rebuilt = useMemo(() => rebuildProject(project), [project]);
   const checks = useMemo(() => validateForPrint(project), [project]);
@@ -108,10 +110,21 @@ export default function App() {
     setCommand('');
   };
 
+  const exportStl = () => {
+    try {
+      const report = downloadProjectStl(project);
+      setLastExport(report);
+      setStatus(`${report.valid ? 'STL preflight PASS' : 'STL exported with mesh warnings'} · ${report.fileName} · ${report.triangleCount} triangles · ${(report.byteLength / 1024).toFixed(1)} KB.`);
+    } catch (error) {
+      setStatus(error instanceof Error ? `STL export blocked: ${error.message}` : 'STL export failed.');
+    }
+  };
+
   const reset = () => {
     const next = createDefaultProject();
     setProject(next);
     setSelectedFeatureId(next.features[1]?.id ?? next.features[0]?.id ?? null);
+    setLastExport(null);
     setStatus('Workspace reset.');
   };
 
@@ -168,6 +181,7 @@ export default function App() {
             Managed · Quản trị Ứng dụng
           </span>
           <span className="kernel-badge">Deterministic MVP kernel</span>
+          <button type="button" onClick={exportStl} disabled={!rebuilt.hasSolid}>Export STL</button>
           <button type="button" onClick={reset}>Reset</button>
         </div>
       </header>
@@ -230,6 +244,11 @@ export default function App() {
           <ul className="checks">
             {checks.map((check, index) => <li key={index} data-level={check.level}>{check.message}</li>)}
           </ul>
+          {lastExport ? <div className="profile-card">
+            <strong>Last STL · {lastExport.valid ? 'PASS' : 'WARN'}</strong>
+            <span>{lastExport.triangleCount} triangles · {(lastExport.byteLength / 1024).toFixed(1)} KB</span>
+            <small>{lastExport.messages.join(' ')}</small>
+          </div> : null}
 
           <h2>Management</h2>
           <div className="management-card">
