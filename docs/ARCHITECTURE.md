@@ -28,10 +28,10 @@ Fast mesh kernel          Exact B-Rep kernel
        |                         |
        v                         v
 Interactive viewport       STEP / exact queries
-+ STL printing path        + topology snapshot
++ STL printing path        + topology evolution
        |                         |
        |                   face/edge picking
-       |                   + conservative remap
+       |                   + durable edge refs
        |                         |
        +------------+------------+
                     v
@@ -48,6 +48,7 @@ Interactive viewport       STEP / exact queries
 5. Printer, material and design-for-manufacture rules live outside the geometry kernels.
 6. UAV, USV, UGV, robotics and electronics intelligence are domain modules layered over the general core.
 7. Capability flags describe application-level integrations that actually work; underlying library APIs are not advertised as product capabilities until wired and validated.
+8. Durable topology references may contain application-level semantic ancestry and geometric signatures, but never raw kernel handles or runtime-only hashes.
 
 ## Dual-kernel strategy
 
@@ -65,26 +66,39 @@ Current lightweight path:
 Current exact path:
 
 - OpenCascade B-Rep reconstruction for the MVP feature chain;
-- cylindrical and rectangular boolean cuts;
-- exact outer vertical-edge fillet for the current Fillet semantic;
+- cylindrical and rectangular Boolean cuts;
+- exact four-outer-edge Fillet preset;
+- exact single-edge Fillet resolved from a persisted topology reference;
 - B-Rep validity, exact bounds, volume and area;
 - tessellation with per-face topology groups;
 - sampled exact B-Rep edge curves for viewport picking;
 - click selection and highlighting for exact faces and edges;
-- conservative face/edge remapping across common parameter rebuilds using geometry signatures;
+- face-lineage propagation through `*WithHistory` Boolean/Fillet operations;
+- conservative transient selection remapping after common parameter rebuilds;
 - STEP export.
 
-App-level chamfer, shell, durable project-level topology naming and an exact-kernel STL switch remain disabled until they are integrated and tested. See `docs/EXACT_KERNEL.md`.
+App-level chamfer, shell, face-bound features and an exact-kernel STL switch remain disabled until they are integrated and tested. See `docs/EXACT_KERNEL.md`.
 
 ## Topology boundary
 
-Exact topology is transient runtime data. `src/cad/topology-selection.ts` maps OpenCascade tessellation groups back to exact B-Rep faces, samples exact B-Rep edges, stores compact selection signatures, and attempts conservative remapping after a rebuild.
+`src/cad/topology-selection.ts` maps OpenCascade tessellation groups back to exact B-Rep faces, samples exact B-Rep edges, stores compact transient selection signatures, and remaps active viewport selections after a rebuild.
 
-A face selection contains a runtime hash plus centroid, normal and approximate triangulated area. An edge selection contains a runtime hash plus curve type, length, midpoint and endpoints. When a runtime hash survives a rebuild it is reused directly; otherwise geometry-signature scoring can preserve common selections after dimension edits. If confidence is too low, the selection is dropped rather than silently targeting the wrong topology.
+`src/cad/topology-evolution.ts` tracks semantic face ancestry across ordered exact operations. Base extrusion faces receive stable semantic roles. Hole, Cut and Fillet operations propagate, modify, delete or introduce lineages using OCCT shape-history data.
 
-This is deliberately not yet called durable topology naming. Persistent feature references such as “Fillet these exact user-selected edges” or “Place this hole on this selected face” require operation-history/evolution mapping before references are written into `CadProject`.
+`src/cad/topology-ref.ts` is the durable-reference boundary. The first persisted reference type is `EdgeTopologyRef`, which contains:
 
-Kernel-specific handles, hashes, B-Rep objects and WebAssembly instances remain transient and never enter the project JSON schema.
+```text
+adjacent face lineage IDs
+capture point in the feature history
+curve kind
+length
+midpoint
+endpoints
+```
+
+It deliberately excludes OCCT handles and runtime hashes. During an exact rebuild, a topology-bound Fillet resolves its reference against the exact edge set that exists immediately before that Fillet executes. Semantic adjacency is preferred; geometry is used as a conservative disambiguator. Ambiguous matches are rejected.
+
+This solves the first narrow end-to-end topology-reference workflow; it does not claim to solve the general topological-naming problem for arbitrary CAD histories.
 
 ## Project persistence
 
@@ -92,12 +106,14 @@ Editable project files use a versioned JSON envelope rather than serializing tra
 
 ```text
 format: cad-cam-3d-project
-schemaVersion: 1
+schemaVersion: 2
 savedAt: ISO timestamp
 project: CadProject
 ```
 
-Loading is validated field-by-field before a project can enter the workspace. Unsupported feature definitions, invalid dimensions, malformed constraints and unknown schema versions are rejected instead of being silently coerced.
+Schema v2 can persist topology-bound Fillets. The loader still accepts schema v1 and migrates the legacy `outer-vertical-edges` Fillet selection into the explicit v2 preset representation.
+
+Loading is validated field-by-field before a project can enter the workspace. Unsupported feature definitions, invalid dimensions, malformed constraints, malformed topology references and unknown schema versions are rejected instead of being silently coerced.
 
 Project JSON remains local engineering data owned by CAD_CAM_3D. It is not mirrored into the central Quản trị Ứng dụng control-plane.
 
@@ -105,7 +121,8 @@ Project JSON remains local engineering data owned by CAD_CAM_3D. It is not mirro
 
 - Sketcher: primitives, snapping, dimensions and constraints.
 - Parametric feature history: extrude, cut, hole, fillet, chamfer, shell, pattern, revolve.
-- Exact-kernel topology evolution and durable feature references.
+- Persisted face references + face-local coordinate frames for Hole/Cut.
+- Selected-edge Chamfer using the same durable reference model.
 - 3D viewport: sectioning, measurement and richer selection inspection.
 - AI planner: natural language -> validated feature operations.
 - Component catalog: electronics, fasteners, bearings, tubes and common robotics parts.
@@ -114,4 +131,6 @@ Project JSON remains local engineering data owned by CAD_CAM_3D. It is not mirro
 
 ## Current foundation
 
-The project now has a deterministic semantic feature chain, a fast shared mesh path for preview/STL, validated project save/reload, a separately lazy-loaded exact OpenCascade B-Rep path for STEP, and real face/edge picking in the viewport. The next core milestone is to connect selected topology to feature creation through operation-history/evolution mapping, then expand the sketch/feature vocabulary without coupling the UI to either kernel implementation.
+The project now has a deterministic semantic feature chain, a fast shared mesh path for preview/STL, schema-v2 project persistence with v1 migration, a separately lazy-loaded exact OpenCascade B-Rep path for STEP, exact face/edge picking, topology evolution, and the first durable selected-edge feature workflow: select an exact edge -> create Fillet -> save/reload -> modify upstream dimensions -> resolve and reapply the intended exact edge Fillet.
+
+The next core milestone is persisted face references and face-local feature placement for Hole/Cut, followed by a stronger general sketcher, without coupling the UI to either kernel implementation.
