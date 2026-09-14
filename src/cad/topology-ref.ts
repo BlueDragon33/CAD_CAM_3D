@@ -73,8 +73,9 @@ export type FaceLocalFrame = {
 
 /**
  * Build a deterministic in-plane frame from a face signature. The frame origin
- * is the world origin projected onto the face plane, which is stable for the
- * centered MVP part when width/depth/height change.
+ * is the world origin projected onto the face plane. U is derived from world X
+ * whenever possible and falls back to world Z when the face normal is parallel
+ * to X. This gives top, bottom and side faces a stable local frame.
  */
 export function createFaceLocalFrame(face: Pick<ExactFaceTopology, 'centroid' | 'normal'> | FaceTopologyRef['signature']): FaceLocalFrame {
   const normal = normalize([...face.normal]);
@@ -132,15 +133,28 @@ export function createFaceTopologyRef(selection: FaceSelection, capturedAfterFea
   };
 }
 
+const basePlanarRoles = [
+  ':top',
+  ':bottom',
+  ':side:+x',
+  ':side:-x',
+  ':side:+depth',
+  ':side:-depth',
+];
+
 /**
- * First face-bound manufacturing milestone: only horizontal faces descended
- * from the base top/bottom faces are allowed. This preserves parity with the
- * lightweight extrusion/STL path while the general oriented-cut path is built.
+ * Current oriented-through workflow is intentionally restricted to faces that
+ * descend from one of the six planar base-extrusion faces. This includes side
+ * faces and split planar descendants while rejecting cylindrical Hole walls and
+ * curved Fillet faces until exact surface-type persistence is added.
  */
+export function isSupportedPlanarFace(ref: FaceTopologyRef) {
+  return ref.lineageIds.some((id) => basePlanarRoles.some((role) => id.includes(role)));
+}
+
+/** Retained for UI compatibility and horizontal fast-path decisions. */
 export function isSupportedHorizontalFace(ref: FaceTopologyRef) {
-  const verticalNormal = Math.abs(ref.signature.normal[1]) >= 0.985;
-  const basePlaneLineage = ref.lineageIds.some((id) => id.includes(':top') || id.includes(':bottom'));
-  return verticalNormal && basePlaneLineage;
+  return isSupportedPlanarFace(ref) && Math.abs(ref.signature.normal[1]) >= 0.985;
 }
 
 export type EdgeTopologyResolution = {
@@ -252,9 +266,21 @@ export function resolveFaceTopologyRef(
   if (best.score > maximumScore) return null;
   if (Number.isFinite(secondBest) && secondBest - best.score < 0.07) return null;
 
+  // Tessellation orientation can occasionally flip after Boolean rebuilds. Align
+  // the resolved normal with the persisted reference before rebuilding the local
+  // U/V frame so a saved coordinate does not mirror to the opposite side.
+  const candidateNormal = normalize([...best.face.normal]);
+  const alignedNormal = dot(referenceNormal, candidateNormal) < 0
+    ? scale(candidateNormal, -1)
+    : candidateNormal;
+  const alignedFace: ExactFaceTopology = {
+    ...best.face,
+    normal: alignedNormal,
+  };
+
   return {
-    face: best.face,
-    frame: createFaceLocalFrame(best.face),
+    face: alignedFace,
+    frame: createFaceLocalFrame(alignedFace),
     score: best.score,
     lineageOverlap: best.overlap,
     confidence: best.overlap >= 0.99 && best.score <= 0.42 ? 'high' : 'medium',
