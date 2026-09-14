@@ -16,13 +16,13 @@ import {
   createEdgeTopologyRef,
   createFaceLocalFrame,
   createFaceTopologyRef,
-  isSupportedHorizontalFace,
+  isSupportedPlanarFace,
   localCoordinatesOnFace,
   pointFromFaceLocal,
 } from './cad/topology-ref';
 import type { TopologySelection } from './cad/topology-selection';
 import { validateForPrint } from './manufacturing/validate';
-import { downloadProjectStl, type StlExportReport } from './manufacturing/export';
+import { downloadProjectStlAdaptive, type StlExportReport } from './manufacturing/export';
 import { downloadProjectStep, type StepExportReport } from './manufacturing/step-export';
 import { Viewport } from './components/Viewport';
 import { defaultManagementPolicy, managementIdentity } from './management/policy';
@@ -56,6 +56,7 @@ export default function App() {
   const [status, setStatus] = useState('General CAD foundation ready.');
   const [lastExport, setLastExport] = useState<StlExportReport | null>(null);
   const [lastStepExport, setLastStepExport] = useState<StepExportReport | null>(null);
+  const [stlBusy, setStlBusy] = useState(false);
   const [exactBusy, setExactBusy] = useState(false);
   const projectInputRef = useRef<HTMLInputElement>(null);
   const policy = defaultManagementPolicy;
@@ -94,7 +95,7 @@ export default function App() {
   const bindFeatureToCurrentFace = (feature: CadFeature, featuresBefore: CadFeature[]): CadFeature | null => {
     if (topologySelection?.kind !== 'face' || (feature.kind !== 'hole' && feature.kind !== 'cut')) return null;
     const ref = createFaceTopologyRef(topologySelection, lastEnabledFeatureId(featuresBefore));
-    if (!isSupportedHorizontalFace(ref)) return null;
+    if (!isSupportedPlanarFace(ref)) return null;
     const frame = createFaceLocalFrame(ref.signature);
     const local = localCoordinatesOnFace(frame, topologySelection.pickedPoint);
     const point = pointFromFaceLocal(frame, local.uMm, local.vMm);
@@ -127,11 +128,11 @@ export default function App() {
     if (feature.kind === 'hole' || feature.kind === 'cut') {
       const faceBound = bindFeatureToCurrentFace(feature, project.features);
       if (faceBound) {
-        appendFeature(faceBound, `${featureLabels[feature.kind]} added on the selected exact face with a durable local placement.`);
+        appendFeature(faceBound, `${featureLabels[feature.kind]} added on the selected exact planar face with durable local U/V placement.`);
         return;
       }
       if (topologySelection?.kind === 'face') {
-        appendFeature(feature, `${featureLabels[feature.kind]} added in global X/Z mode. Current face-bound MVP accepts only horizontal top/bottom faces.`);
+        appendFeature(feature, `${featureLabels[feature.kind]} added in global X/Z mode. The selected face is not a supported planar base-face descendant.`);
         return;
       }
     }
@@ -198,11 +199,11 @@ export default function App() {
     const before = featureIndex > 0 ? project.features.slice(0, featureIndex) : [];
     const bound = bindFeatureToCurrentFace(selectedFeature, before);
     if (!bound) {
-      setStatus(`${selectedFeature.name} was not rebound. Face-bound Hole/Cut currently requires a horizontal top/bottom face.`);
+      setStatus(`${selectedFeature.name} was not rebound. Hole/Cut face binding currently requires a planar descendant of a base extrusion face.`);
       return;
     }
     updateFeature(selectedFeature.id, () => bound);
-    setStatus(`${selectedFeature.name} rebound to the selected exact face using local U/V coordinates.`);
+    setStatus(`${selectedFeature.name} rebound to the selected exact face using local U/V coordinates and the resolved face normal as tool axis.`);
   };
 
   const useGlobalPlacement = () => {
@@ -285,13 +286,17 @@ export default function App() {
     }
   };
 
-  const exportStl = () => {
+  const exportStl = async () => {
+    setStlBusy(true);
+    setStatus('Rebuilding manufacturing geometry for STL…');
     try {
-      const report = downloadProjectStl(project);
+      const report = await downloadProjectStlAdaptive(project);
       setLastExport(report);
-      setStatus(`${report.valid ? 'STL preflight PASS' : 'STL exported with mesh warnings'} · ${report.fileName} · ${report.triangleCount} triangles · ${(report.byteLength / 1024).toFixed(1)} KB.`);
+      setStatus(`${report.valid ? 'STL preflight PASS' : 'STL exported with mesh warnings'} · ${report.fileName} · ${report.triangleCount} triangles · ${(report.byteLength / 1024).toFixed(1)} KB · ${report.kernelId}.`);
     } catch (error) {
       setStatus(error instanceof Error ? `STL export blocked: ${error.message}` : 'STL export failed.');
+    } finally {
+      setStlBusy(false);
     }
   };
 
@@ -327,7 +332,7 @@ export default function App() {
       setStatus(`Exact edge selected · ${selection.signature.curveKind} · ${selection.signature.lengthMm.toFixed(2)} mm · ${selection.adjacentFaceLineageIds.length} lineage anchor(s).`);
     } else {
       const ref = createFaceTopologyRef(selection, lastEnabledFeatureId(project.features));
-      setStatus(`Exact face selected · ${selection.signature.areaMm2.toFixed(2)} mm² · ${selection.lineageIds.length} lineage anchor(s) · ${isSupportedHorizontalFace(ref) ? 'Hole/Cut binding ready' : 'inspection only in current face-placement MVP'}.`);
+      setStatus(`Exact face selected · ${selection.signature.areaMm2.toFixed(2)} mm² · ${selection.lineageIds.length} lineage anchor(s) · ${isSupportedPlanarFace(ref) ? 'oriented Hole/Cut binding ready' : 'inspection only: current feature binding accepts base planar descendants'}.`);
     }
   };
 
@@ -356,7 +361,7 @@ export default function App() {
         {faceBound ? <>
           <label><span>Face U</span><div><input type="number" step="0.1" value={selectedFeature.params.placement.mode === 'face' ? selectedFeature.params.placement.uMm : 0} onChange={(e) => updateFaceLocalCoordinate(selectedFeature.id, 'uMm', e.target.value)} /><b>mm</b></div></label>
           <label><span>Face V</span><div><input type="number" step="0.1" value={selectedFeature.params.placement.mode === 'face' ? selectedFeature.params.placement.vMm : 0} onChange={(e) => updateFaceLocalCoordinate(selectedFeature.id, 'vMm', e.target.value)} /><b>mm</b></div></label>
-          <div className="constraint-state" data-ready><strong>Persisted exact-face target</strong><small>{selectedFeature.params.placement.mode === 'face' ? `${selectedFeature.params.placement.ref.lineageIds.length} lineage anchor(s) · local U/V placement` : ''}</small></div>
+          <div className="constraint-state" data-ready><strong>Persisted exact-face target</strong><small>{selectedFeature.params.placement.mode === 'face' ? `${selectedFeature.params.placement.ref.lineageIds.length} lineage anchor(s) · local U/V · tool axis follows face normal` : ''}</small></div>
         </> : <>
           <label><span>X</span><div><input type="number" step="0.1" value={selectedFeature.params.x} onChange={(e) => updateFeature(selectedFeature.id, (feature) => feature.kind === 'hole' ? { ...feature, params: { ...feature.params, x: Number(e.target.value) || 0 } } : feature)} /><b>mm</b></div></label>
           <label><span>Z</span><div><input type="number" step="0.1" value={selectedFeature.params.z} onChange={(e) => updateFeature(selectedFeature.id, (feature) => feature.kind === 'hole' ? { ...feature, params: { ...feature.params, z: Number(e.target.value) || 0 } } : feature)} /><b>mm</b></div></label>
@@ -376,7 +381,7 @@ export default function App() {
         {faceBound ? <>
           <label><span>Face U</span><div><input type="number" step="0.1" value={selectedFeature.params.placement.mode === 'face' ? selectedFeature.params.placement.uMm : 0} onChange={(e) => updateFaceLocalCoordinate(selectedFeature.id, 'uMm', e.target.value)} /><b>mm</b></div></label>
           <label><span>Face V</span><div><input type="number" step="0.1" value={selectedFeature.params.placement.mode === 'face' ? selectedFeature.params.placement.vMm : 0} onChange={(e) => updateFaceLocalCoordinate(selectedFeature.id, 'vMm', e.target.value)} /><b>mm</b></div></label>
-          <div className="constraint-state" data-ready><strong>Persisted exact-face target</strong><small>{selectedFeature.params.placement.mode === 'face' ? `${selectedFeature.params.placement.ref.lineageIds.length} lineage anchor(s) · local U/V placement` : ''}</small></div>
+          <div className="constraint-state" data-ready><strong>Persisted exact-face target</strong><small>{selectedFeature.params.placement.mode === 'face' ? `${selectedFeature.params.placement.ref.lineageIds.length} lineage anchor(s) · local U/V · tool axis follows face normal` : ''}</small></div>
         </> : <>
           <label><span>X</span><div><input type="number" step="0.1" value={selectedFeature.params.x} onChange={(e) => updateFeature(selectedFeature.id, (feature) => feature.kind === 'cut' ? { ...feature, params: { ...feature.params, x: Number(e.target.value) || 0 } } : feature)} /><b>mm</b></div></label>
           <label><span>Z</span><div><input type="number" step="0.1" value={selectedFeature.params.z} onChange={(e) => updateFeature(selectedFeature.id, (feature) => feature.kind === 'cut' ? { ...feature, params: { ...feature.params, z: Number(e.target.value) || 0 } } : feature)} /><b>mm</b></div></label>
@@ -419,7 +424,7 @@ export default function App() {
           <span className="kernel-badge" title={`Kernel id: ${activeCadKernel.id}`}>{activeCadKernel.label}</span>
           <button type="button" onClick={saveProject}>Save Project</button>
           <button type="button" onClick={() => projectInputRef.current?.click()}>Open Project</button>
-          <button type="button" onClick={exportStl} disabled={!rebuilt.hasSolid || !activeCadKernel.capabilities.stlExport}>Export STL</button>
+          <button type="button" onClick={() => void exportStl()} disabled={!rebuilt.hasSolid || stlBusy}>{stlBusy ? 'Building STL…' : 'Export STL'}</button>
           <button type="button" onClick={() => void exportStep()} disabled={!rebuilt.hasSolid || exactBusy}>{exactBusy ? 'Building B-Rep…' : 'Export STEP'}</button>
           <button type="button" onClick={reset}>Reset</button>
           <input
@@ -459,10 +464,10 @@ export default function App() {
                 ? `${topologySelection.signature.areaMm2.toFixed(2)} mm²`
                 : 'Use Face / Edge controls in the viewport.'}</span>
             <small>{topologySelection?.kind === 'edge'
-              ? 'Adding Fillet now stores semantic ancestry + geometry signature in the project.'
+              ? 'Adding Fillet stores semantic ancestry + geometry signature in the project.'
               : topologySelection?.kind === 'face'
-                ? 'Adding Hole/Cut binds horizontal top/bottom faces to schema-v3 local U/V placement.'
-                : 'Exact selection is lazy-loaded only when requested.'}</small>
+                ? 'Adding Hole/Cut stores face-local U/V; side-face features automatically use exact preview/STL.'
+                : 'Exact selection is lazy-loaded only when requested or required by a feature.'}</small>
           </div>
 
           <h2>Master parameters</h2>
@@ -531,12 +536,12 @@ export default function App() {
           <div className="profile-card">
             <strong>{activeCadKernel.label}</strong>
             <span>{activeCadKernel.capabilities.exactBrep ? 'Exact B-Rep' : 'Fast deterministic mesh'} · STL {activeCadKernel.capabilities.stlExport ? 'ready' : 'off'}</span>
-            <small>Interactive preview stays lightweight. Exact manufacturing interchange is lazy-loaded only when needed.</small>
+            <small>Simple vertical features stay on the lightweight path. Exact-only features promote preview/STL automatically.</small>
           </div>
           <div className="profile-card">
             <strong>{exactKernelDescriptor.label}</strong>
-            <span>Exact B-Rep · STEP ready · edge + face topology references</span>
-            <small>Selected edges drive exact Fillet; horizontal top/bottom face references now drive Hole/Cut local placement with conservative rebuild resolution.</small>
+            <span>Exact B-Rep · STEP/STL · edge + face topology references</span>
+            <small>Selected edges drive Fillet; supported planar face references drive oriented Hole/Cut through the resolved face normal.</small>
           </div>
 
           <h2>Management</h2>
