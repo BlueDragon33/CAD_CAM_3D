@@ -1,5 +1,5 @@
 import { solveSketch } from './constraints';
-import type { CadProject, CutFeature, HoleFeature } from './model';
+import type { CadProject, CutFeature, FilletFeature, HoleFeature } from './model';
 
 export type RebuildDiagnostic = {
   level: 'info' | 'warning' | 'error';
@@ -7,12 +7,16 @@ export type RebuildDiagnostic = {
   message: string;
 };
 
+export type SolidOperationFeature = HoleFeature | CutFeature | FilletFeature;
+
 export type RebuiltPart = {
   width: number;
   depth: number;
   height: number;
   holes: HoleFeature[];
   cuts: CutFeature[];
+  /** Ordered solid operations used by the exact kernel. Never regroup subtractive/edge features here. */
+  operationSequence: SolidOperationFeature[];
   filletRadius: number;
   hasSolid: boolean;
   fullyConstrainedSketch: boolean;
@@ -25,8 +29,9 @@ function insideRectangle(x: number, z: number, halfWidth: number, halfDepth: num
 
 /**
  * Deterministic feature-history rebuild. This is deliberately independent from
- * Three.js and from the future OpenCascade adapter. It acts as the semantic
- * source of truth for the current MVP feature chain.
+ * Three.js and from the OpenCascade adapter. It acts as the semantic source of
+ * truth for the current MVP feature chain and preserves feature order for exact
+ * topology evolution.
  */
 export function rebuildProject(project: CadProject): RebuiltPart {
   let width = Math.max(0.1, project.dimensions.width);
@@ -38,6 +43,7 @@ export function rebuildProject(project: CadProject): RebuiltPart {
   let filletRadius = 0;
   const holes: HoleFeature[] = [];
   const cuts: CutFeature[] = [];
+  const operationSequence: SolidOperationFeature[] = [];
   const diagnostics: RebuildDiagnostic[] = [];
 
   for (const feature of project.features) {
@@ -74,6 +80,7 @@ export function rebuildProject(project: CadProject): RebuiltPart {
         continue;
       }
       holes.push(feature);
+      operationSequence.push(feature);
       continue;
     }
 
@@ -89,6 +96,7 @@ export function rebuildProject(project: CadProject): RebuiltPart {
         continue;
       }
       cuts.push(feature);
+      operationSequence.push(feature);
       continue;
     }
 
@@ -98,7 +106,8 @@ export function rebuildProject(project: CadProject): RebuiltPart {
         continue;
       }
       filletRadius = Math.max(0, Math.min(feature.params.radius, width / 2, depth / 2, height / 2));
-      diagnostics.push({ level: 'info', featureId: feature.id, message: 'Fillet is recorded parametrically; exact B-Rep filleting will be delegated to the CAD kernel.' });
+      if (filletRadius > 0) operationSequence.push(feature);
+      diagnostics.push({ level: 'info', featureId: feature.id, message: 'Fillet is recorded parametrically; exact B-Rep filleting is delegated to the CAD kernel.' });
     }
   }
 
@@ -111,6 +120,7 @@ export function rebuildProject(project: CadProject): RebuiltPart {
     height: hasSolid ? height : 0,
     holes,
     cuts,
+    operationSequence,
     filletRadius,
     hasSolid,
     fullyConstrainedSketch,
