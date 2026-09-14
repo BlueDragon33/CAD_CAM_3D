@@ -3,6 +3,7 @@ import { createDefaultProject, type CadProject, type FeatureKind } from './cad/m
 import { interpretCommand } from './cad/command';
 import { validateForPrint } from './manufacturing/validate';
 import { Viewport } from './components/Viewport';
+import { defaultManagementPolicy, managementIdentity } from './management/policy';
 
 const featureLabels: Record<FeatureKind, string> = {
   sketch: 'Sketch',
@@ -20,6 +21,7 @@ export default function App() {
   const [project, setProject] = useState<CadProject>(() => createDefaultProject());
   const [command, setCommand] = useState('');
   const [status, setStatus] = useState('General CAD foundation ready.');
+  const policy = defaultManagementPolicy;
   const checks = useMemo(() => validateForPrint(project), [project]);
 
   const setDimension = (key: keyof CadProject['dimensions'], raw: string) => {
@@ -62,13 +64,16 @@ export default function App() {
   };
 
   return (
-    <main className="app-shell">
+    <main className="app-shell" data-density={policy.workspaceDensity}>
       <header className="topbar">
         <div>
           <strong>CAD_CAM_3D</strong>
           <span>AI-first parametric design for printable parts</span>
         </div>
         <div className="topbar-actions">
+          <span className="managed-badge" title={`${managementIdentity.appName} được quản lý dưới ${managementIdentity.controlPlane}`}>
+            Managed · Quản trị Ứng dụng
+          </span>
           <span className="kernel-badge">Preview kernel</span>
           <button type="button" onClick={reset}>Reset</button>
         </div>
@@ -119,14 +124,23 @@ export default function App() {
           <ul className="checks">
             {checks.map((check, index) => <li key={index} data-level={check.level}>{check.message}</li>)}
           </ul>
+
+          <h2>Management</h2>
+          <div className="management-card">
+            <strong>{managementIdentity.controlPlane}</strong>
+            <span>UI policy · feature flags · print policy</span>
+            <small>Project geometry and export files remain inside CAD_CAM_3D.</small>
+          </div>
         </aside>
       </section>
 
-      <form className="commandbar" onSubmit={runCommand}>
-        <div className="command-copy"><strong>AI command bridge</strong><span>{status}</span></div>
-        <input value={command} onChange={(e) => setCommand(e.target.value)} placeholder="Try: create a 80x50x25 mm enclosure" aria-label="Design instruction" />
-        <button type="submit">Apply</button>
-      </form>
+      {policy.aiCommandBridge ? (
+        <form className="commandbar" onSubmit={runCommand}>
+          <div className="command-copy"><strong>AI command bridge</strong><span>{status}</span></div>
+          <input value={command} onChange={(e) => setCommand(e.target.value)} placeholder="Try: create a 80x50x25 mm enclosure" aria-label="Design instruction" />
+          <button type="submit">Apply</button>
+        </form>
+      ) : null}
     </main>
   );
 }
