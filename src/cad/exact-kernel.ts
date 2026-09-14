@@ -2,15 +2,23 @@ import * as THREE from 'three';
 import type { Mesh, OcctKernel, ShapeHandle } from 'occt-wasm';
 import type { CadProject } from './model';
 import { rebuildProject, type RebuiltPart } from './rebuild';
+import {
+  deriveFaceTopology,
+  type ExactEdgeTopology,
+  type ExactFaceTopology,
+  type Vec3Tuple,
+} from './topology-selection';
 
 const HASH_UPPER_BOUND = 2_000_000_000;
 const CUT_OVERRUN_MM = 1;
 
 export type ExactTopologySnapshot = {
-  /** Runtime-local OCCT hashes. Stable selection remapping is not implemented yet. */
+  /** Runtime-local OCCT topology. Geometry signatures are used for conservative remapping across rebuilds. */
   faceIds: string[];
   edgeIds: string[];
   faceGroups: Int32Array | null;
+  faces: ExactFaceTopology[];
+  edges: ExactEdgeTopology[];
 };
 
 export type ExactKernelReport = {
@@ -30,9 +38,14 @@ export type ExactKernelReport = {
 export type ExactKernelSnapshot = {
   rebuilt: RebuiltPart;
   geometry: THREE.BufferGeometry;
-  stepText: string;
+  stepText: string | null;
   topology: ExactTopologySnapshot;
   report: ExactKernelReport;
+};
+
+export type ExactKernelBuildOptions = {
+  /** STEP serialization is intentionally optional because topology picking should not pay the I/O cost on every rebuild. */
+  includeStep?: boolean;
 };
 
 type OcctModule = typeof import('occt-wasm');
@@ -167,9 +180,63 @@ function buildExactShape(kernel: OcctKernel, rebuilt: RebuiltPart) {
   return { shape, warnings, filletApplied };
 }
 
-async function buildSnapshotUnsafe(project: CadProject): Promise<ExactKernelSnapshot> {
+function appPoint(point: { x: number; y: number; z: number }): Vec3Tuple {
+  return [point.x, point.z, point.y];
+}
+
+function sampleExactEdges(kernel: OcctKernel, shape: ShapeHandle, spanMm: number, warnings: string[]) {
+  const handles = kernel.getSubShapes(shape, 'edge');
+  const edges: ExactEdgeTopology[] = [];
+
+  for (const edge of handles) {
+    try {
+      const hash = kernel.hashCode(edge, HASH_UPPER_BOUND);
+      const curveKind = kernel.curveType(edge);
+      const lengthMm = kernel.curveLength(edge);
+      const { first, last } = kernel.curveParameters(edge);
+      if (!Number.isFinite(first) || !Number.isFinite(last) || !Number.isFinite(lengthMm) || lengthMm <= 1e-9) {
+        continue;
+      }
+
+      const targetSegmentMm = Math.max(0.6, spanMm / 45);
+      const sampleCount = curveKind === 'line'
+        ? 2
+        : Math.min(96, Math.max(12, Math.ceil(lengthMm / targetSegmentMm) + 1));
+      const points = new Float32Array(sampleCount * 3);
+
+      for (let sample = 0; sample < sampleCount; sample += 1) {
+        const ratio = sampleCount === 1 ? 0 : sample / (sampleCount - 1);
+        const parameter = first + (last - first) * ratio;
+        const point = appPoint(kernel.curvePointAtParam(edge, parameter));
+        const offset = sample * 3;
+        points[offset] = point[0];
+        points[offset + 1] = point[1];
+        points[offset + 2] = point[2];
+      }
+
+      const midpoint = appPoint(kernel.curvePointAtParam(edge, first + (last - first) / 2));
+      edges.push({
+        kind: 'edge',
+        runtimeId: `edge:${hash}`,
+        hash,
+        curveKind,
+        lengthMm,
+        midpoint,
+        points,
+      });
+    } catch (error) {
+      warnings.push(error instanceof Error ? `An exact edge could not be sampled: ${error.message}` : 'An exact edge could not be sampled.');
+    } finally {
+      kernel.release(edge);
+    }
+  }
+
+  return edges;
+}
+
+async function buildSnapshotUnsafe(project: CadProject, options: ExactKernelBuildOptions): Promise<ExactKernelSnapshot> {
   const rebuilt = rebuildProject(project);
-  if (!rebuilt.hasSolid) throw new Error('A valid rebuilt solid is required before exact-kernel export.');
+  if (!rebuilt.hasSolid) throw new Error('A valid rebuilt solid is required before exact-kernel processing.');
 
   const kernel = await getKernel();
   kernel.releaseAll();
@@ -178,20 +245,33 @@ async function buildSnapshotUnsafe(project: CadProject): Promise<ExactKernelSnap
     const { shape, warnings, filletApplied } = buildExactShape(kernel, rebuilt);
     const mesh = kernel.meshShape(shape, { linearDeflection: 0.08, angularDeflection: 0.35 });
     const geometry = mapOcctMeshToThree(mesh);
-    const stepText = kernel.exportStep(shape);
+    const faceGroups = mesh.faceGroups ? new Int32Array(mesh.faceGroups) : null;
+    const faces = deriveFaceTopology(geometry, faceGroups);
+    const spanMm = Math.max(rebuilt.width, rebuilt.depth, rebuilt.height, 1);
+    const edges = sampleExactEdges(kernel, shape, spanMm, warnings);
+    const stepText = options.includeStep === false ? null : kernel.exportStep(shape);
     const bbox = kernel.getBoundingBox(shape, false);
     const faceHashes = kernel.subShapeHashes(shape, 'face', HASH_UPPER_BOUND);
     const edgeHashes = kernel.subShapeHashes(shape, 'edge', HASH_UPPER_BOUND);
     const valid = kernel.isValid(shape);
+
+    if (faces.length !== faceHashes.length) {
+      warnings.push(`Exact picking mapped ${faces.length} of ${faceHashes.length} B-Rep faces from tessellation groups.`);
+    }
+    if (edges.length !== edgeHashes.length) {
+      warnings.push(`Exact picking sampled ${edges.length} of ${edgeHashes.length} B-Rep edges.`);
+    }
 
     return {
       rebuilt,
       geometry,
       stepText,
       topology: {
-        faceIds: faceHashes.map((hash) => `face:${hash}`),
-        edgeIds: edgeHashes.map((hash) => `edge:${hash}`),
-        faceGroups: mesh.faceGroups ? new Int32Array(mesh.faceGroups) : null,
+        faceIds: faces.map((face) => face.runtimeId),
+        edgeIds: edges.map((edge) => edge.runtimeId),
+        faceGroups,
+        faces,
+        edges,
       },
       report: {
         kernelId: 'occt-wasm-v5',
@@ -220,14 +300,14 @@ async function buildSnapshotUnsafe(project: CadProject): Promise<ExactKernelSnap
  * OCCT is arena-based and one kernel instance is single-threaded. Serialize
  * exact operations so two UI actions cannot release each other's shape handles.
  */
-export async function buildExactKernelSnapshot(project: CadProject) {
+export async function buildExactKernelSnapshot(project: CadProject, options: ExactKernelBuildOptions = {}) {
   let resolveGate!: () => void;
   const gate = new Promise<void>((resolve) => { resolveGate = resolve; });
   const previous = operationTail;
   operationTail = previous.then(() => gate, () => gate);
   await previous;
   try {
-    return await buildSnapshotUnsafe(project);
+    return await buildSnapshotUnsafe(project, options);
   } finally {
     resolveGate();
   }
