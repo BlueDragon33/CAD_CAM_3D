@@ -8,17 +8,26 @@ import {
   type ExactFaceTopology,
   type Vec3Tuple,
 } from './topology-selection';
+import {
+  FaceLineageTracker,
+  type BaseFaceSeed,
+  type TopologyEvolutionTrace,
+} from './topology-evolution';
 
-const HASH_UPPER_BOUND = 2_000_000_000;
+// OCCT mesh face groups use TopTools_ShapeMapHasher % 2147483647. Keep every
+// topology query/history call in the same hash domain so groups, evolution and
+// edge adjacency can be compared directly.
+const HASH_UPPER_BOUND = 2_147_483_647;
 const CUT_OVERRUN_MM = 1;
 
 export type ExactTopologySnapshot = {
-  /** Runtime-local OCCT topology. Geometry signatures are used for conservative remapping across rebuilds. */
+  /** Runtime-local OCCT topology enriched with semantic face ancestry. */
   faceIds: string[];
   edgeIds: string[];
   faceGroups: Int32Array | null;
   faces: ExactFaceTopology[];
   edges: ExactEdgeTopology[];
+  evolution: TopologyEvolutionTrace;
 };
 
 export type ExactKernelReport = {
@@ -32,6 +41,7 @@ export type ExactKernelReport = {
   surfaceAreaMm2: number;
   dimensionsMm: { width: number; depth: number; height: number };
   filletApplied: boolean;
+  evolutionStepCount: number;
   warnings: string[];
 };
 
@@ -65,7 +75,7 @@ function mapOcctMeshToThree(mesh: Mesh) {
   const positions = new Float32Array(mesh.positions.length);
   const normals = new Float32Array(mesh.normals.length);
 
-  // OCCT model convention in this adapter: X=width, Y=depth, Z=height.
+  // OCCT model convention: X=width, Y=depth, Z=height.
   // Application convention: X=width, Y=height, Z=depth.
   for (let i = 0; i < mesh.positions.length; i += 3) {
     positions[i] = mesh.positions[i];
@@ -106,6 +116,39 @@ function singleSolid(kernel: OcctKernel, shape: ShapeHandle) {
   return solids[0];
 }
 
+function currentFaceHashes(kernel: OcctKernel, shape: ShapeHandle) {
+  return kernel.subShapeHashes(shape, 'face', HASH_UPPER_BOUND);
+}
+
+function classifyBaseFaces(kernel: OcctKernel, shape: ShapeHandle, rebuilt: RebuiltPart): BaseFaceSeed[] {
+  const handles = kernel.getSubShapes(shape, 'face');
+  const result: BaseFaceSeed[] = [];
+  const tolerance = Math.max(rebuilt.width, rebuilt.depth, rebuilt.height, 1) * 1e-6;
+
+  for (const face of handles) {
+    try {
+      const box = kernel.getBoundingBox(face, false);
+      const cx = (box.xmin + box.xmax) / 2;
+      const cy = (box.ymin + box.ymax) / 2;
+      const cz = (box.zmin + box.zmax) / 2;
+      const ex = box.xmax - box.xmin;
+      const ey = box.ymax - box.ymin;
+      const ez = box.zmax - box.zmin;
+      let role = 'base-face';
+
+      if (ez <= tolerance) role = Math.abs(cz - rebuilt.height) <= tolerance ? 'top' : 'bottom';
+      else if (ex <= tolerance) role = cx >= 0 ? 'side:+x' : 'side:-x';
+      else if (ey <= tolerance) role = cy >= 0 ? 'side:+depth' : 'side:-depth';
+
+      result.push({ hash: kernel.hashCode(face, HASH_UPPER_BOUND), role });
+    } finally {
+      kernel.release(face);
+    }
+  }
+
+  return result;
+}
+
 function findOuterVerticalEdges(kernel: OcctKernel, shape: ShapeHandle, width: number, depth: number) {
   const candidates = kernel.getSubShapes(shape, 'edge');
   const selected: ShapeHandle[] = [];
@@ -133,60 +176,110 @@ function findOuterVerticalEdges(kernel: OcctKernel, shape: ShapeHandle, width: n
   return selected;
 }
 
-function buildExactShape(kernel: OcctKernel, rebuilt: RebuiltPart) {
+function buildExactShape(kernel: OcctKernel, project: CadProject, rebuilt: RebuiltPart) {
   const warnings: string[] = [];
   let filletApplied = false;
 
   let shape = kernel.makeBox(rebuilt.width, rebuilt.depth, rebuilt.height);
   shape = kernel.translate(shape, -rebuilt.width / 2, -rebuilt.depth / 2, 0);
 
-  for (const hole of rebuilt.holes) {
-    let tool = kernel.makeCylinder(hole.params.diameter / 2, rebuilt.height + CUT_OVERRUN_MM * 2);
-    tool = kernel.translate(tool, hole.params.x, hole.params.z, -CUT_OVERRUN_MM);
-    shape = kernel.cut(shape, tool);
-  }
+  const baseFeatureId = project.features.find((feature) => feature.enabled && feature.kind === 'extrude')?.id ?? 'base-extrude';
+  const tracker = new FaceLineageTracker(
+    HASH_UPPER_BOUND,
+    baseFeatureId,
+    classifyBaseFaces(kernel, shape, rebuilt),
+  );
 
-  for (const cut of rebuilt.cuts) {
-    let tool = kernel.makeBox(cut.params.width, cut.params.depth, rebuilt.height + CUT_OVERRUN_MM * 2);
-    tool = kernel.translate(
-      tool,
-      cut.params.x - cut.params.width / 2,
-      cut.params.z - cut.params.depth / 2,
-      -CUT_OVERRUN_MM,
-    );
-    shape = kernel.cut(shape, tool);
-  }
+  for (const feature of rebuilt.operationSequence) {
+    if (feature.kind === 'hole') {
+      let tool = kernel.makeCylinder(feature.params.diameter / 2, rebuilt.height + CUT_OVERRUN_MM * 2);
+      tool = kernel.translate(tool, feature.params.x, feature.params.z, -CUT_OVERRUN_MM);
+      const before = currentFaceHashes(kernel, shape);
+      const evolution = kernel.cutWithHistory(shape, tool, before, HASH_UPPER_BOUND);
+      shape = evolution.result;
+      const after = currentFaceHashes(kernel, shape);
+      tracker.record(feature.id, 'hole', before, after, evolution);
+      continue;
+    }
 
-  if (rebuilt.filletRadius > 0) {
+    if (feature.kind === 'cut') {
+      let tool = kernel.makeBox(feature.params.width, feature.params.depth, rebuilt.height + CUT_OVERRUN_MM * 2);
+      tool = kernel.translate(
+        tool,
+        feature.params.x - feature.params.width / 2,
+        feature.params.z - feature.params.depth / 2,
+        -CUT_OVERRUN_MM,
+      );
+      const before = currentFaceHashes(kernel, shape);
+      const evolution = kernel.cutWithHistory(shape, tool, before, HASH_UPPER_BOUND);
+      shape = evolution.result;
+      const after = currentFaceHashes(kernel, shape);
+      tracker.record(feature.id, 'cut', before, after, evolution);
+      continue;
+    }
+
+    const radius = Math.max(0, Math.min(feature.params.radius, rebuilt.width / 2, rebuilt.depth / 2, rebuilt.height / 2));
+    if (radius <= 0) continue;
+
     try {
       const solid = singleSolid(kernel, shape);
       const edges = findOuterVerticalEdges(kernel, solid, rebuilt.width, rebuilt.depth);
       if (edges.length === 4) {
-        shape = kernel.fillet(solid, edges, rebuilt.filletRadius);
+        const before = currentFaceHashes(kernel, solid);
+        const evolution = kernel.filletWithHistory(solid, edges, radius, before, HASH_UPPER_BOUND);
+        shape = evolution.result;
+        const after = currentFaceHashes(kernel, shape);
+        tracker.record(feature.id, 'fillet', before, after, evolution);
         filletApplied = true;
       } else {
-        warnings.push(`Exact fillet skipped: expected 4 outer vertical edges but found ${edges.length}.`);
+        warnings.push(`${feature.name}: exact fillet skipped; expected 4 outer vertical edges but found ${edges.length}.`);
       }
       for (const edge of edges) kernel.release(edge);
     } catch (error) {
-      warnings.push(error instanceof Error ? `Exact fillet skipped: ${error.message}` : 'Exact fillet skipped because OCCT rejected the selected edges.');
+      warnings.push(error instanceof Error ? `${feature.name}: exact fillet skipped: ${error.message}` : `${feature.name}: exact fillet skipped because OCCT rejected the selected edges.`);
     }
   }
 
-  if (!kernel.isValid(shape)) {
-    warnings.push('OCCT reports that the rebuilt B-Rep is not fully valid.');
-  }
+  if (!kernel.isValid(shape)) warnings.push('OCCT reports that the rebuilt B-Rep is not fully valid.');
 
-  return { shape, warnings, filletApplied };
+  return { shape, warnings, filletApplied, evolution: tracker.snapshot() };
 }
 
 function appPoint(point: { x: number; y: number; z: number }): Vec3Tuple {
   return [point.x, point.z, point.y];
 }
 
-function sampleExactEdges(kernel: OcctKernel, shape: ShapeHandle, spanMm: number, warnings: string[]) {
+function decodeEdgeToFaceMap(flat: number[]) {
+  const map = new Map<number, number[]>();
+  let cursor = 0;
+  while (cursor < flat.length) {
+    if (cursor + 1 >= flat.length) throw new Error('edgeToFaceMap ended before adjacent-face count.');
+    const edgeHash = flat[cursor++];
+    const count = flat[cursor++];
+    if (!Number.isInteger(count) || count < 0 || cursor + count > flat.length) {
+      throw new Error(`edgeToFaceMap contains invalid adjacent-face count ${String(count)}.`);
+    }
+    map.set(edgeHash, flat.slice(cursor, cursor + count));
+    cursor += count;
+  }
+  return map;
+}
+
+function sampleExactEdges(
+  kernel: OcctKernel,
+  shape: ShapeHandle,
+  spanMm: number,
+  evolution: TopologyEvolutionTrace,
+  warnings: string[],
+) {
   const handles = kernel.getSubShapes(shape, 'edge');
   const edges: ExactEdgeTopology[] = [];
+  let adjacency = new Map<number, number[]>();
+  try {
+    adjacency = decodeEdgeToFaceMap(kernel.edgeToFaceMap(shape, HASH_UPPER_BOUND));
+  } catch (error) {
+    warnings.push(error instanceof Error ? `Exact edge adjacency unavailable: ${error.message}` : 'Exact edge adjacency unavailable.');
+  }
 
   for (const edge of handles) {
     try {
@@ -194,9 +287,7 @@ function sampleExactEdges(kernel: OcctKernel, shape: ShapeHandle, spanMm: number
       const curveKind = kernel.curveType(edge);
       const lengthMm = kernel.curveLength(edge);
       const { first, last } = kernel.curveParameters(edge);
-      if (!Number.isFinite(first) || !Number.isFinite(last) || !Number.isFinite(lengthMm) || lengthMm <= 1e-9) {
-        continue;
-      }
+      if (!Number.isFinite(first) || !Number.isFinite(last) || !Number.isFinite(lengthMm) || lengthMm <= 1e-9) continue;
 
       const targetSegmentMm = Math.max(0.6, spanMm / 45);
       const sampleCount = curveKind === 'line'
@@ -215,6 +306,11 @@ function sampleExactEdges(kernel: OcctKernel, shape: ShapeHandle, spanMm: number
       }
 
       const midpoint = appPoint(kernel.curvePointAtParam(edge, first + (last - first) / 2));
+      const adjacentFaceHashes = adjacency.get(hash) ?? [];
+      const adjacentFaceLineageIds = [...new Set(
+        adjacentFaceHashes.flatMap((faceHash) => evolution.faceLineageByHash[String(faceHash)] ?? []),
+      )].sort();
+
       edges.push({
         kind: 'edge',
         runtimeId: `edge:${hash}`,
@@ -223,6 +319,8 @@ function sampleExactEdges(kernel: OcctKernel, shape: ShapeHandle, spanMm: number
         lengthMm,
         midpoint,
         points,
+        adjacentFaceHashes: [...adjacentFaceHashes],
+        adjacentFaceLineageIds,
       });
     } catch (error) {
       warnings.push(error instanceof Error ? `An exact edge could not be sampled: ${error.message}` : 'An exact edge could not be sampled.');
@@ -242,25 +340,25 @@ async function buildSnapshotUnsafe(project: CadProject, options: ExactKernelBuil
   kernel.releaseAll();
 
   try {
-    const { shape, warnings, filletApplied } = buildExactShape(kernel, rebuilt);
+    const { shape, warnings, filletApplied, evolution } = buildExactShape(kernel, project, rebuilt);
     const mesh = kernel.meshShape(shape, { linearDeflection: 0.08, angularDeflection: 0.35 });
     const geometry = mapOcctMeshToThree(mesh);
     const faceGroups = mesh.faceGroups ? new Int32Array(mesh.faceGroups) : null;
     const faces = deriveFaceTopology(geometry, faceGroups);
+    for (const face of faces) face.lineageIds = [...(evolution.faceLineageByHash[String(face.hash)] ?? [])];
+
     const spanMm = Math.max(rebuilt.width, rebuilt.depth, rebuilt.height, 1);
-    const edges = sampleExactEdges(kernel, shape, spanMm, warnings);
+    const edges = sampleExactEdges(kernel, shape, spanMm, evolution, warnings);
     const stepText = options.includeStep === false ? null : kernel.exportStep(shape);
     const bbox = kernel.getBoundingBox(shape, false);
-    const faceHashes = kernel.subShapeHashes(shape, 'face', HASH_UPPER_BOUND);
+    const faceHashes = currentFaceHashes(kernel, shape);
     const edgeHashes = kernel.subShapeHashes(shape, 'edge', HASH_UPPER_BOUND);
     const valid = kernel.isValid(shape);
 
-    if (faces.length !== faceHashes.length) {
-      warnings.push(`Exact picking mapped ${faces.length} of ${faceHashes.length} B-Rep faces from tessellation groups.`);
-    }
-    if (edges.length !== edgeHashes.length) {
-      warnings.push(`Exact picking sampled ${edges.length} of ${edgeHashes.length} B-Rep edges.`);
-    }
+    if (faces.length !== faceHashes.length) warnings.push(`Exact picking mapped ${faces.length} of ${faceHashes.length} B-Rep faces from tessellation groups.`);
+    if (edges.length !== edgeHashes.length) warnings.push(`Exact picking sampled ${edges.length} of ${edgeHashes.length} B-Rep edges.`);
+    const unanchoredFaces = faces.filter((face) => face.lineageIds.length === 0).length;
+    if (unanchoredFaces > 0) warnings.push(`${unanchoredFaces} exact face(s) have no semantic lineage anchor.`);
 
     return {
       rebuilt,
@@ -272,6 +370,7 @@ async function buildSnapshotUnsafe(project: CadProject, options: ExactKernelBuil
         faceGroups,
         faces,
         edges,
+        evolution,
       },
       report: {
         kernelId: 'occt-wasm-v5',
@@ -288,6 +387,7 @@ async function buildSnapshotUnsafe(project: CadProject, options: ExactKernelBuil
           height: bbox.zmax - bbox.zmin,
         },
         filletApplied,
+        evolutionStepCount: evolution.steps.length,
         warnings,
       },
     };
