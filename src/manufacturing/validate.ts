@@ -1,3 +1,4 @@
+import { rebuildProject } from '../cad/rebuild';
 import type { CadProject } from '../cad/model';
 
 export type PrintCheck = {
@@ -6,18 +7,35 @@ export type PrintCheck = {
 };
 
 export function validateForPrint(project: CadProject): PrintCheck[] {
-  const p = project.dimensions;
+  const part = rebuildProject(project);
   const v = project.printProfile.buildVolume;
   const checks: PrintCheck[] = [];
 
-  if (p.width > v.width || p.depth > v.depth || p.height > v.height) {
+  if (!part.hasSolid) {
+    return [{ level: 'warning', message: 'No valid solid is available for print validation.' }];
+  }
+
+  if (part.width > v.width || part.depth > v.depth || part.height > v.height) {
     checks.push({ level: 'warning', message: 'Part exceeds the selected printer build volume.' });
   } else {
     checks.push({ level: 'ok', message: 'Part fits inside the selected printer build volume.' });
   }
 
-  if (Math.min(p.width, p.depth, p.height) < project.printProfile.nozzleMm * 2) {
+  if (Math.min(part.width, part.depth, part.height) < project.printProfile.nozzleMm * 2) {
     checks.push({ level: 'warning', message: 'One envelope dimension is very small relative to nozzle size.' });
+  }
+
+  const tinyHoles = part.holes.filter((hole) => hole.params.diameter < project.printProfile.nozzleMm * 2);
+  if (tinyHoles.length > 0) {
+    checks.push({ level: 'warning', message: `${tinyHoles.length} hole(s) are smaller than 2× nozzle diameter and may print inaccurately.` });
+  } else if (part.holes.length > 0) {
+    checks.push({ level: 'ok', message: 'Through-hole diameters are reasonable for the selected nozzle.' });
+  }
+
+  if (!part.fullyConstrainedSketch) {
+    checks.push({ level: 'warning', message: 'Base sketch is not fully constrained; design intent can drift during edits.' });
+  } else {
+    checks.push({ level: 'ok', message: 'Base sketch is fully constrained by named parameters.' });
   }
 
   return checks;
