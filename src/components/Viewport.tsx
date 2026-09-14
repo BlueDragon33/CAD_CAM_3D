@@ -4,6 +4,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import type { CadProject } from '../cad/model';
 import { activeCadKernel } from '../cad/kernel';
 import { buildExactKernelSnapshot, type ExactKernelSnapshot } from '../cad/exact-kernel';
+import { projectRequiresExactGeometry } from '../cad/project-analysis';
 import {
   remapTopologySelection,
   resolveFaceFromTriangle,
@@ -71,6 +72,7 @@ export function Viewport({
 
   const effectiveMode = selectionMode ?? localMode;
   const effectiveSelection = selection === undefined ? localSelection : selection;
+  const exactGeometryRequired = projectRequiresExactGeometry(project);
 
   const mountRef = useRef<HTMLDivElement>(null);
   const partGroupRef = useRef<THREE.Group | null>(null);
@@ -257,7 +259,7 @@ export function Viewport({
       }
     };
 
-    if (effectiveMode === 'off') {
+    if (effectiveMode === 'off' && !exactGeometryRequired) {
       onExactStatusRef.current('idle', 'Fast mesh preview active.');
       const { rebuilt, geometry } = activeCadKernel.buildMesh(project);
       if (!geometry) return;
@@ -272,7 +274,12 @@ export function Viewport({
       return;
     }
 
-    onExactStatusRef.current('loading', `Loading exact ${effectiveMode} topology…`);
+    onExactStatusRef.current(
+      'loading',
+      effectiveMode === 'off'
+        ? 'Loading exact geometry required by oriented or filleted features…'
+        : `Loading exact ${effectiveMode} topology…`,
+    );
     void (async () => {
       try {
         const snapshot = await buildExactKernelSnapshot(project, { includeStep: false });
@@ -315,13 +322,15 @@ export function Viewport({
           : '';
         onExactStatusRef.current(
           'ready',
-          `Exact topology ready · ${snapshot.topology.faces.length} faces · ${snapshot.topology.edges.length} edges${warningSuffix}`,
+          effectiveMode === 'off'
+            ? `Exact geometry preview ready · ${snapshot.report.triangleCount} triangles${warningSuffix}`
+            : `Exact topology ready · ${snapshot.topology.faces.length} faces · ${snapshot.topology.edges.length} edges${warningSuffix}`,
         );
       } catch (error) {
         if (cancelled) return;
         onExactStatusRef.current(
           'error',
-          error instanceof Error ? `Exact topology failed: ${error.message}` : 'Exact topology failed.',
+          error instanceof Error ? `Exact geometry failed: ${error.message}` : 'Exact geometry failed.',
         );
       }
     })();
@@ -329,7 +338,7 @@ export function Viewport({
     return () => {
       cancelled = true;
     };
-  }, [project, effectiveMode]);
+  }, [project, effectiveMode, exactGeometryRequired]);
 
   useEffect(() => {
     const group = partGroupRef.current;
@@ -405,7 +414,7 @@ export function Viewport({
         </button>
       </div>
       <div className="topology-status" data-status={localStatus.status}>
-        <strong>{effectiveMode === 'off' ? 'Fast preview' : `Exact ${effectiveMode} selection`}</strong>
+        <strong>{effectiveMode === 'off' ? (exactGeometryRequired ? 'Exact preview' : 'Fast preview') : `Exact ${effectiveMode} selection`}</strong>
         <span>{localStatus.message}</span>
         {effectiveSelection ? <small>Selected {effectiveSelection.runtimeId}</small> : null}
       </div>
