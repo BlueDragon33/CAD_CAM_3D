@@ -10,6 +10,9 @@ export type ExactFaceTopology = {
   indexStart: number;
   /** Number of indices contributed by this face. Always a multiple of three. */
   indexCount: number;
+  /** Triangle aliases retained for Three.js draw-range consumers. */
+  triangleStart: number;
+  triangleCount: number;
   centroid: Vec3Tuple;
   normal: Vec3Tuple;
   areaMm2: number;
@@ -148,6 +151,8 @@ export function deriveFaceTopology(geometry: THREE.BufferGeometry, faceGroups: I
       hash,
       indexStart,
       indexCount,
+      triangleStart: indexStart / 3,
+      triangleCount: indexCount / 3,
       centroid,
       normal,
       areaMm2,
