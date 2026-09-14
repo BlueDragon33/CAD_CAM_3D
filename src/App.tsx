@@ -106,7 +106,7 @@ export default function App() {
         z: point[2],
         placement: { mode: 'face', ref, uMm: local.uMm, vMm: local.vMm },
       },
-    };
+    } as CadFeature;
   };
 
   const addFeature = (kind: FeatureKind) => {
@@ -157,7 +157,7 @@ export default function App() {
       return {
         ...feature,
         params: { ...feature.params, placement, x: point[0], z: point[2] },
-      };
+      } as CadFeature;
     });
   };
 
@@ -209,7 +209,7 @@ export default function App() {
     if (!selectedFeature || (selectedFeature.kind !== 'hole' && selectedFeature.kind !== 'cut')) return;
     updateFeature(selectedFeature.id, (feature) => {
       if (feature.kind !== 'hole' && feature.kind !== 'cut') return feature;
-      return { ...feature, params: { ...feature.params, placement: { mode: 'global-xz' } } };
+      return { ...feature, params: { ...feature.params, placement: { mode: 'global-xz' } } } as CadFeature;
     });
     setStatus(`${selectedFeature.name} now uses global X/Z placement.`);
   };
