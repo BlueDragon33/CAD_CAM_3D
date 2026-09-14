@@ -6,6 +6,8 @@ export type ExactFaceTopology = {
   kind: 'face';
   runtimeId: string;
   hash: number;
+  /** Semantic face ancestry resolved by the exact-kernel evolution tracker. */
+  lineageIds: string[];
   /** Start offset in the indexed triangle buffer, measured in indices. */
   indexStart: number;
   /** Number of indices contributed by this face. Always a multiple of three. */
@@ -26,12 +28,16 @@ export type ExactEdgeTopology = {
   lengthMm: number;
   midpoint: Vec3Tuple;
   points: Float32Array;
+  adjacentFaceHashes: number[];
+  /** Semantic ancestry of the faces that bound this edge. */
+  adjacentFaceLineageIds: string[];
 };
 
 export type FaceSelection = {
   kind: 'face';
   runtimeId: string;
   hash: number;
+  lineageIds: string[];
   signature: {
     centroid: Vec3Tuple;
     normal: Vec3Tuple;
@@ -43,6 +49,7 @@ export type EdgeSelection = {
   kind: 'edge';
   runtimeId: string;
   hash: number;
+  adjacentFaceLineageIds: string[];
   signature: {
     curveKind: string;
     lengthMm: number;
@@ -149,6 +156,7 @@ export function deriveFaceTopology(geometry: THREE.BufferGeometry, faceGroups: I
       kind: 'face',
       runtimeId: `face:${hash}`,
       hash,
+      lineageIds: [],
       indexStart,
       indexCount,
       triangleStart: indexStart / 3,
@@ -172,6 +180,7 @@ export function selectionFromFace(face: ExactFaceTopology): FaceSelection {
     kind: 'face',
     runtimeId: face.runtimeId,
     hash: face.hash,
+    lineageIds: [...face.lineageIds],
     signature: {
       centroid: [...face.centroid],
       normal: [...face.normal],
@@ -191,6 +200,7 @@ export function selectionFromEdge(edge: ExactEdgeTopology): EdgeSelection {
     kind: 'edge',
     runtimeId: edge.runtimeId,
     hash: edge.hash,
+    adjacentFaceLineageIds: [...edge.adjacentFaceLineageIds],
     signature: {
       curveKind: edge.curveKind,
       lengthMm: edge.lengthMm,
@@ -201,17 +211,28 @@ export function selectionFromEdge(edge: ExactEdgeTopology): EdgeSelection {
   };
 }
 
+function lineageOverlap(a: string[], b: string[]) {
+  if (a.length === 0 || b.length === 0) return 0;
+  const right = new Set(b);
+  let matches = 0;
+  for (const id of a) if (right.has(id)) matches += 1;
+  return matches / Math.max(a.length, b.length);
+}
+
 function remapFace(selection: FaceSelection, faces: ExactFaceTopology[], spanMm: number) {
   const sameHash = faces.find((face) => face.hash === selection.hash);
   if (sameHash) return selectionFromFace(sameHash);
 
+  const sameLineage = faces.filter((face) => lineageOverlap(selection.lineageIds, face.lineageIds) > 0);
+  const candidates = sameLineage.length > 0 ? sameLineage : faces;
   const span = Math.max(spanMm, 1);
   let best: { face: ExactFaceTopology; score: number } | null = null;
-  for (const face of faces) {
+  for (const face of candidates) {
     const positionPenalty = distance(selection.signature.centroid, face.centroid) / span;
     const normalPenalty = 1 - Math.abs(normalizedDot(selection.signature.normal, face.normal));
     const areaPenalty = ratioPenalty(selection.signature.areaMm2, face.areaMm2);
-    const score = positionPenalty * 2.2 + normalPenalty * 0.8 + areaPenalty * 0.35;
+    const lineageBonus = lineageOverlap(selection.lineageIds, face.lineageIds);
+    const score = positionPenalty * 2.2 + normalPenalty * 0.8 + areaPenalty * 0.35 - lineageBonus * 0.8;
     if (!best || score < best.score) best = { face, score };
   }
 
@@ -222,9 +243,11 @@ function remapEdge(selection: EdgeSelection, edges: ExactEdgeTopology[], spanMm:
   const sameHash = edges.find((edge) => edge.hash === selection.hash);
   if (sameHash) return selectionFromEdge(sameHash);
 
+  const sameLineage = edges.filter((edge) => lineageOverlap(selection.adjacentFaceLineageIds, edge.adjacentFaceLineageIds) > 0);
+  const candidates = sameLineage.length > 0 ? sameLineage : edges;
   const span = Math.max(spanMm, 1);
   let best: { edge: ExactEdgeTopology; score: number } | null = null;
-  for (const edge of edges) {
+  for (const edge of candidates) {
     const pointCount = edge.points.length / 3;
     if (pointCount === 0) continue;
     const endOffset = edge.points.length - 3;
@@ -236,7 +259,8 @@ function remapEdge(selection: EdgeSelection, edges: ExactEdgeTopology[], spanMm:
     const midpointPenalty = distance(selection.signature.midpoint, edge.midpoint) / span;
     const lengthPenalty = ratioPenalty(selection.signature.lengthMm, edge.lengthMm);
     const kindPenalty = selection.signature.curveKind === edge.curveKind ? 0 : 0.75;
-    const score = midpointPenalty * 1.6 + endpointPenalty + lengthPenalty * 0.4 + kindPenalty;
+    const lineageBonus = lineageOverlap(selection.adjacentFaceLineageIds, edge.adjacentFaceLineageIds);
+    const score = midpointPenalty * 1.6 + endpointPenalty + lengthPenalty * 0.4 + kindPenalty - lineageBonus * 0.9;
     if (!best || score < best.score) best = { edge, score };
   }
 
@@ -244,10 +268,9 @@ function remapEdge(selection: EdgeSelection, edges: ExactEdgeTopology[], spanMm:
 }
 
 /**
- * Runtime hashes are preferred when they survive a rebuild. When they do not,
- * geometry signatures provide a conservative fallback so common parameter edits
- * can keep a user's face/edge selection without pretending topology naming is
- * solved for every possible CAD operation.
+ * Runtime hashes are preferred when they survive a rebuild. Semantic face
+ * lineages are the second choice; geometry signatures are a conservative final
+ * fallback. Ambiguous matches are dropped instead of targeting wrong topology.
  */
 export function remapTopologySelection(
   selection: TopologySelection,
