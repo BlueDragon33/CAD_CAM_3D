@@ -9,6 +9,7 @@
 body { margin: 0; min-width: 320px; min-height: 100vh; }
 button, input { font: inherit; }
 button { cursor: pointer; }
+button:disabled { cursor: default; }
 .file-input { display: none; }
 
 .app-shell { min-height: 100vh; display: grid; grid-template-rows: auto 1fr auto; background: #e2e8f0; }
@@ -72,6 +73,10 @@ button { cursor: pointer; }
 .constraint-state { display: grid; gap: 3px; padding: 8px; border-radius: 8px; background: #fff7ed; color: #9a3412; }
 .constraint-state[data-ready="true"] { background: #ecfdf5; color: #166534; }
 .constraint-state small { color: inherit; opacity: .78; line-height: 1.4; }
+.topology-bind-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
+.topology-bind-actions button { min-width: 0; border: 1px solid #bfdbfe; border-radius: 8px; padding: 8px; background: #eff6ff; color: #1d4ed8; font-size: 11px; font-weight: 650; }
+.topology-bind-actions button:hover:not(:disabled) { background: #dbeafe; }
+.topology-bind-actions button:disabled { opacity: .42; }
 
 .profile-card, .management-card { display: grid; gap: 4px; border: 1px solid #cbd5e1; border-radius: 9px; padding: 10px; background: #fff; }
 .profile-card span, .management-card span { color: #64748b; font-size: 12px; }
@@ -105,7 +110,7 @@ button { cursor: pointer; }
   .managed-badge { font-size: 10px !important; }
   .workspace { display: flex; flex-direction: column; }
   .tools-panel { display: grid; grid-template-columns: 1fr 1fr; }
-  .tools-panel h2, .dimension-grid { grid-column: 1 / -1; }
+  .tools-panel h2, .dimension-grid, .tools-panel .profile-card { grid-column: 1 / -1; }
   .canvas-panel { min-height: 420px; order: -1; }
   .history-panel { max-height: none; }
   .commandbar { grid-template-columns: 1fr; }
