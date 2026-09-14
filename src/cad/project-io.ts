@@ -1,6 +1,7 @@
 import type {
   CadFeature,
   CadProject,
+  ChamferSelection,
   Dimensions,
   EdgeTopologyRef,
   FaceTopologyRef,
@@ -12,28 +13,18 @@ import type {
 } from './model';
 
 const PROJECT_FORMAT = 'cad-cam-3d-project';
-const PROJECT_SCHEMA_VERSION = 3;
+const PROJECT_SCHEMA_VERSION = 4;
 const materials = new Set<PrintProfile['material']>(['PLA', 'PETG', 'ABS', 'ASA', 'PA-CF', 'Other']);
 
-export type ProjectDocumentV3 = {
+export type ProjectDocumentV4 = {
   format: typeof PROJECT_FORMAT;
   schemaVersion: typeof PROJECT_SCHEMA_VERSION;
   savedAt: string;
   project: CadProject;
 };
 
-export type ProjectSaveReport = {
-  fileName: string;
-  byteLength: number;
-  schemaVersion: number;
-};
-
-export type ProjectLoadReport = {
-  fileName: string;
-  schemaVersion: number;
-  sourceSchemaVersion: number;
-  migrated: boolean;
-};
+export type ProjectSaveReport = { fileName: string; byteLength: number; schemaVersion: number };
+export type ProjectLoadReport = { fileName: string; schemaVersion: number; sourceSchemaVersion: number; migrated: boolean };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -86,9 +77,7 @@ function readStringArray(value: unknown, label: string) {
 }
 
 function readCapturedFeatureId(value: unknown, label: string) {
-  if (value !== null && (typeof value !== 'string' || value.trim().length === 0)) {
-    throw new Error(`${label} must be null or a non-empty string.`);
-  }
+  if (value !== null && (typeof value !== 'string' || value.trim().length === 0)) throw new Error(`${label} must be null or a non-empty string.`);
   return value as string | null;
 }
 
@@ -160,20 +149,17 @@ function readPlacement(value: unknown, label: string, sourceSchemaVersion: numbe
   throw new Error(`${label}.mode must be global-xz or face.`);
 }
 
-function readFilletSelection(value: unknown, label: string, sourceSchemaVersion: number): FilletSelection {
-  if (sourceSchemaVersion === 1) {
-    if (value !== 'outer-vertical-edges') throw new Error(`${label} contains an unsupported legacy fillet selection.`);
+function readEdgeTreatmentSelection(value: unknown, label: string, sourceSchemaVersion: number): FilletSelection | ChamferSelection {
+  if (sourceSchemaVersion === 1 && typeof value === 'string') {
+    if (value !== 'outer-vertical-edges') throw new Error(`${label} contains an unsupported legacy edge selection.`);
     return { mode: 'preset', preset: 'outer-vertical-edges' };
   }
-
   if (!isRecord(value)) throw new Error(`${label} must be an object.`);
   if (value.mode === 'preset') {
     if (value.preset !== 'outer-vertical-edges') throw new Error(`${label}.preset is unsupported.`);
     return { mode: 'preset', preset: 'outer-vertical-edges' };
   }
-  if (value.mode === 'topology') {
-    return { mode: 'topology', ref: readEdgeTopologyRef(value.ref, `${label}.ref`) };
-  }
+  if (value.mode === 'topology') return { mode: 'topology', ref: readEdgeTopologyRef(value.ref, `${label}.ref`) };
   throw new Error(`${label}.mode must be preset or topology.`);
 }
 
@@ -189,73 +175,41 @@ function readFeature(value: unknown, index: number, sourceSchemaVersion: number)
 
   if (kind === 'sketch') {
     if (params.plane !== 'XZ' || params.profile !== 'rectangle') throw new Error(`${label} contains an unsupported sketch definition.`);
-    return {
-      id,
-      kind,
-      name,
-      enabled,
-      params: {
-        plane: 'XZ',
-        profile: 'rectangle',
-        constraints: readConstraints(params.constraints, `${label}.params.constraints`),
-      },
-    };
+    return { id, kind, name, enabled, params: { plane: 'XZ', profile: 'rectangle', constraints: readConstraints(params.constraints, `${label}.params.constraints`) } };
   }
-
   if (kind === 'extrude') {
     if (params.distanceParameter !== 'height' || params.direction !== 'positive') throw new Error(`${label} contains an unsupported extrude definition.`);
     return { id, kind, name, enabled, params: { distanceParameter: 'height', direction: 'positive' } };
   }
-
   if (kind === 'hole') {
     if (params.through !== true) throw new Error(`${label}.params.through must be true.`);
-    return {
-      id,
-      kind,
-      name,
-      enabled,
-      params: {
-        diameter: readNumber(params, 'diameter', `${label}.params.diameter`, 0.1),
-        x: readNumber(params, 'x', `${label}.params.x`),
-        z: readNumber(params, 'z', `${label}.params.z`),
-        through: true,
-        placement: readPlacement(params.placement, `${label}.params.placement`, sourceSchemaVersion),
-      },
-    };
+    return { id, kind, name, enabled, params: {
+      diameter: readNumber(params, 'diameter', `${label}.params.diameter`, 0.1),
+      x: readNumber(params, 'x', `${label}.params.x`), z: readNumber(params, 'z', `${label}.params.z`), through: true,
+      placement: readPlacement(params.placement, `${label}.params.placement`, sourceSchemaVersion),
+    } };
   }
-
   if (kind === 'cut') {
     if (params.shape !== 'rectangle' || params.through !== true) throw new Error(`${label} contains an unsupported cut definition.`);
-    return {
-      id,
-      kind,
-      name,
-      enabled,
-      params: {
-        shape: 'rectangle',
-        width: readNumber(params, 'width', `${label}.params.width`, 0.1),
-        depth: readNumber(params, 'depth', `${label}.params.depth`, 0.1),
-        x: readNumber(params, 'x', `${label}.params.x`),
-        z: readNumber(params, 'z', `${label}.params.z`),
-        through: true,
-        placement: readPlacement(params.placement, `${label}.params.placement`, sourceSchemaVersion),
-      },
-    };
+    return { id, kind, name, enabled, params: {
+      shape: 'rectangle', width: readNumber(params, 'width', `${label}.params.width`, 0.1), depth: readNumber(params, 'depth', `${label}.params.depth`, 0.1),
+      x: readNumber(params, 'x', `${label}.params.x`), z: readNumber(params, 'z', `${label}.params.z`), through: true,
+      placement: readPlacement(params.placement, `${label}.params.placement`, sourceSchemaVersion),
+    } };
   }
-
   if (kind === 'fillet') {
-    return {
-      id,
-      kind,
-      name,
-      enabled,
-      params: {
-        radius: readNumber(params, 'radius', `${label}.params.radius`, 0),
-        selection: readFilletSelection(params.selection, `${label}.params.selection`, sourceSchemaVersion),
-      },
-    };
+    return { id, kind, name, enabled, params: {
+      radius: readNumber(params, 'radius', `${label}.params.radius`, 0),
+      selection: readEdgeTreatmentSelection(params.selection, `${label}.params.selection`, sourceSchemaVersion) as FilletSelection,
+    } };
   }
-
+  if (kind === 'chamfer') {
+    if (sourceSchemaVersion < 4) throw new Error(`${label} contains Chamfer but schema ${sourceSchemaVersion} predates Chamfer support.`);
+    return { id, kind, name, enabled, params: {
+      distance: readNumber(params, 'distance', `${label}.params.distance`, 0),
+      selection: readEdgeTreatmentSelection(params.selection, `${label}.params.selection`, sourceSchemaVersion) as ChamferSelection,
+    } };
+  }
   throw new Error(`${label} has unsupported feature kind ${kind}.`);
 }
 
@@ -275,8 +229,7 @@ function readProject(value: unknown, sourceSchemaVersion: number): CadProject {
   if (!isRecord(value)) throw new Error('project must be an object.');
   if (!Array.isArray(value.features)) throw new Error('project.features must be an array.');
   return {
-    id: readString(value, 'id', 'project.id'),
-    name: readString(value, 'name', 'project.name'),
+    id: readString(value, 'id', 'project.id'), name: readString(value, 'name', 'project.name'),
     dimensions: readDimensions(value.dimensions, 'project.dimensions'),
     features: value.features.map((feature, index) => readFeature(feature, index, sourceSchemaVersion)),
     printProfile: readPrintProfile(value.printProfile),
@@ -289,40 +242,22 @@ function safeFileName(name: string) {
 }
 
 export function serializeProject(project: CadProject): string {
-  const document: ProjectDocumentV3 = {
-    format: PROJECT_FORMAT,
-    schemaVersion: PROJECT_SCHEMA_VERSION,
-    savedAt: new Date().toISOString(),
-    project,
-  };
+  const document: ProjectDocumentV4 = { format: PROJECT_FORMAT, schemaVersion: PROJECT_SCHEMA_VERSION, savedAt: new Date().toISOString(), project };
   return JSON.stringify(document, null, 2);
 }
 
-export function parseProjectDocument(text: string): {
-  project: CadProject;
-  schemaVersion: number;
-  sourceSchemaVersion: number;
-  migrated: boolean;
-} {
+export function parseProjectDocument(text: string): { project: CadProject; schemaVersion: number; sourceSchemaVersion: number; migrated: boolean } {
   let raw: unknown;
-  try {
-    raw = JSON.parse(text) as unknown;
-  } catch {
-    throw new Error('Project file is not valid JSON.');
-  }
-
+  try { raw = JSON.parse(text) as unknown; } catch { throw new Error('Project file is not valid JSON.'); }
   if (!isRecord(raw)) throw new Error('Project document must be an object.');
   if (raw.format !== PROJECT_FORMAT) throw new Error('This file is not a CAD_CAM_3D project document.');
   const sourceSchemaVersion = raw.schemaVersion;
-  if (sourceSchemaVersion !== 1 && sourceSchemaVersion !== 2 && sourceSchemaVersion !== PROJECT_SCHEMA_VERSION) {
-    throw new Error(`Unsupported project schema version ${String(sourceSchemaVersion)}. Supported versions are 1, 2 and ${PROJECT_SCHEMA_VERSION}.`);
+  if (![1, 2, 3, PROJECT_SCHEMA_VERSION].includes(sourceSchemaVersion as number)) {
+    throw new Error(`Unsupported project schema version ${String(sourceSchemaVersion)}. Supported versions are 1, 2, 3 and ${PROJECT_SCHEMA_VERSION}.`);
   }
-
   return {
-    project: readProject(raw.project, sourceSchemaVersion),
-    schemaVersion: PROJECT_SCHEMA_VERSION,
-    sourceSchemaVersion,
-    migrated: sourceSchemaVersion !== PROJECT_SCHEMA_VERSION,
+    project: readProject(raw.project, sourceSchemaVersion as number), schemaVersion: PROJECT_SCHEMA_VERSION,
+    sourceSchemaVersion: sourceSchemaVersion as number, migrated: sourceSchemaVersion !== PROJECT_SCHEMA_VERSION,
   };
 }
 
@@ -332,26 +267,15 @@ export function downloadProjectFile(project: CadProject): ProjectSaveReport {
   const fileName = `${safeFileName(project.name)}.cad3d.json`;
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement('a');
-  anchor.href = url;
-  anchor.download = fileName;
-  anchor.style.display = 'none';
-  document.body.appendChild(anchor);
-  anchor.click();
-  anchor.remove();
+  anchor.href = url; anchor.download = fileName; anchor.style.display = 'none';
+  document.body.appendChild(anchor); anchor.click(); anchor.remove();
   window.setTimeout(() => URL.revokeObjectURL(url), 0);
   return { fileName, byteLength: blob.size, schemaVersion: PROJECT_SCHEMA_VERSION };
 }
 
 export async function loadProjectFile(file: File): Promise<{ project: CadProject; report: ProjectLoadReport }> {
-  const text = await file.text();
-  const parsed = parseProjectDocument(text);
-  return {
-    project: parsed.project,
-    report: {
-      fileName: file.name,
-      schemaVersion: parsed.schemaVersion,
-      sourceSchemaVersion: parsed.sourceSchemaVersion,
-      migrated: parsed.migrated,
-    },
-  };
+  const parsed = parseProjectDocument(await file.text());
+  return { project: parsed.project, report: {
+    fileName: file.name, schemaVersion: parsed.schemaVersion, sourceSchemaVersion: parsed.sourceSchemaVersion, migrated: parsed.migrated,
+  } };
 }
