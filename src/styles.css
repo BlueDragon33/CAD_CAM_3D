@@ -9,6 +9,7 @@
 body { margin: 0; min-width: 320px; min-height: 100vh; }
 button, input { font: inherit; }
 button { cursor: pointer; }
+.file-input { display: none; }
 
 .app-shell { min-height: 100vh; display: grid; grid-template-rows: auto 1fr auto; background: #e2e8f0; }
 .topbar { min-height: 64px; padding: 10px 16px; background: #0f172a; color: #fff; display: flex; align-items: center; justify-content: space-between; gap: 16px; }
