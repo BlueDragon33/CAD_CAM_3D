@@ -6,6 +6,32 @@ export type Dimensions = {
   height: number;
 };
 
+export type Vec3Tuple = [number, number, number];
+
+/**
+ * Persisted application-level reference to an exact B-Rep edge.
+ *
+ * Runtime OCCT handles/hashes are intentionally excluded because they are not
+ * durable across sessions or rebuilds. The semantic ancestry of adjacent faces
+ * is the primary anchor; the geometric signature is a conservative fallback.
+ */
+export type EdgeTopologyRef = {
+  kind: 'edge';
+  adjacentFaceLineageIds: string[];
+  capturedAfterFeatureId: string | null;
+  signature: {
+    curveKind: string;
+    lengthMm: number;
+    midpoint: Vec3Tuple;
+    start: Vec3Tuple;
+    end: Vec3Tuple;
+  };
+};
+
+export type FilletSelection =
+  | { mode: 'preset'; preset: 'outer-vertical-edges' }
+  | { mode: 'topology'; ref: EdgeTopologyRef };
+
 export type SketchConstraint =
   | { id: string; kind: 'centered' }
   | { id: string; kind: 'width'; parameter: 'width' }
@@ -48,7 +74,7 @@ export type HoleFeature = FeatureBase<'hole', {
 
 export type FilletFeature = FeatureBase<'fillet', {
   radius: number;
-  selection: 'outer-vertical-edges';
+  selection: FilletSelection;
 }>;
 
 export type CadFeature = SketchFeature | ExtrudeFeature | CutFeature | HoleFeature | FilletFeature;
@@ -116,7 +142,14 @@ export function createFeature(kind: FeatureKind, project: CadProject): CadFeatur
     return { ...base, kind, params: { shape: 'rectangle', width: 12, depth: 8, x: 0, z: 0, through: true } };
   }
 
-  return { ...base, kind: 'fillet', params: { radius: 2, selection: 'outer-vertical-edges' } };
+  return {
+    ...base,
+    kind: 'fillet',
+    params: {
+      radius: 2,
+      selection: { mode: 'preset', preset: 'outer-vertical-edges' },
+    },
+  };
 }
 
 export function createDefaultProject(): CadProject {
