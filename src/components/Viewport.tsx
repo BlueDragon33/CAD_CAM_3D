@@ -188,7 +188,9 @@ export function Viewport({
           return;
         }
         const face = resolveFaceFromTriangle(snapshot.topology.faces, hit.faceIndex);
-        onSelectionChangeRef.current(face ? selectionFromFace(face) : null);
+        onSelectionChangeRef.current(
+          face ? selectionFromFace(face, [hit.point.x, hit.point.y, hit.point.z]) : null,
+        );
         return;
       }
 
