@@ -1,4 +1,4 @@
-import { FormEvent, useMemo, useState } from 'react';
+import { FormEvent, useMemo, useRef, useState } from 'react';
 import {
   createDefaultProject,
   createFeature,
@@ -7,6 +7,8 @@ import {
   type FeatureKind,
 } from './cad/model';
 import { interpretCommand } from './cad/command';
+import { activeCadKernel } from './cad/kernel';
+import { downloadProjectFile, loadProjectFile } from './cad/project-io';
 import { rebuildProject } from './cad/rebuild';
 import { validateForPrint } from './manufacturing/validate';
 import { downloadProjectStl, type StlExportReport } from './manufacturing/export';
@@ -36,6 +38,7 @@ export default function App() {
   const [command, setCommand] = useState('');
   const [status, setStatus] = useState('General CAD foundation ready.');
   const [lastExport, setLastExport] = useState<StlExportReport | null>(null);
+  const projectInputRef = useRef<HTMLInputElement>(null);
   const policy = defaultManagementPolicy;
   const rebuilt = useMemo(() => rebuildProject(project), [project]);
   const checks = useMemo(() => validateForPrint(project), [project]);
@@ -110,6 +113,28 @@ export default function App() {
     setCommand('');
   };
 
+  const saveProject = () => {
+    try {
+      const report = downloadProjectFile(project);
+      setStatus(`Project saved · schema v${report.schemaVersion} · ${report.fileName} · ${(report.byteLength / 1024).toFixed(1)} KB.`);
+    } catch (error) {
+      setStatus(error instanceof Error ? `Project save failed: ${error.message}` : 'Project save failed.');
+    }
+  };
+
+  const openProject = async (file: File | undefined) => {
+    if (!file) return;
+    try {
+      const loaded = await loadProjectFile(file);
+      setProject(loaded.project);
+      setSelectedFeatureId(loaded.project.features[1]?.id ?? loaded.project.features[0]?.id ?? null);
+      setLastExport(null);
+      setStatus(`Project opened · schema v${loaded.report.schemaVersion} · ${loaded.report.fileName}.`);
+    } catch (error) {
+      setStatus(error instanceof Error ? `Project open blocked: ${error.message}` : 'Project open failed.');
+    }
+  };
+
   const exportStl = () => {
     try {
       const report = downloadProjectStl(project);
@@ -180,9 +205,22 @@ export default function App() {
           <span className="managed-badge" title={`${managementIdentity.appName} được quản lý dưới ${managementIdentity.controlPlane}`}>
             Managed · Quản trị Ứng dụng
           </span>
-          <span className="kernel-badge">Deterministic MVP kernel</span>
-          <button type="button" onClick={exportStl} disabled={!rebuilt.hasSolid}>Export STL</button>
+          <span className="kernel-badge" title={`Kernel id: ${activeCadKernel.id}`}>{activeCadKernel.label}</span>
+          <button type="button" onClick={saveProject}>Save Project</button>
+          <button type="button" onClick={() => projectInputRef.current?.click()}>Open Project</button>
+          <button type="button" onClick={exportStl} disabled={!rebuilt.hasSolid || !activeCadKernel.capabilities.stlExport}>Export STL</button>
           <button type="button" onClick={reset}>Reset</button>
+          <input
+            ref={projectInputRef}
+            className="file-input"
+            type="file"
+            accept=".json,.cad3d.json,application/json"
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              void openProject(file);
+              event.target.value = '';
+            }}
+          />
         </div>
       </header>
 
@@ -248,7 +286,15 @@ export default function App() {
             <strong>Last STL · {lastExport.valid ? 'PASS' : 'WARN'}</strong>
             <span>{lastExport.triangleCount} triangles · {(lastExport.byteLength / 1024).toFixed(1)} KB</span>
             <small>{lastExport.messages.join(' ')}</small>
+            <small>Kernel: {lastExport.kernelId}</small>
           </div> : null}
+
+          <h2>Kernel</h2>
+          <div className="profile-card">
+            <strong>{activeCadKernel.label}</strong>
+            <span>{activeCadKernel.capabilities.exactBrep ? 'Exact B-Rep' : 'Deterministic printable mesh'} · STL {activeCadKernel.capabilities.stlExport ? 'ready' : 'off'} · STEP {activeCadKernel.capabilities.stepExport ? 'ready' : 'pending'}</span>
+            <small>Exact topology, fillet/chamfer/shell and STEP remain gated until the B-Rep adapter is installed.</small>
+          </div>
 
           <h2>Management</h2>
           <div className="management-card">
