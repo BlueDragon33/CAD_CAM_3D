@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import type { CadProject } from '../cad/model';
-import { buildPartGeometry } from '../cad/geometry';
+import { activeCadKernel } from '../cad/kernel';
 
 type Props = { project: CadProject };
 
@@ -97,7 +97,7 @@ export function Viewport({ project }: Props) {
     if (!group) return;
     disposeGroup(group);
 
-    const { rebuilt, geometry } = buildPartGeometry(project);
+    const { rebuilt, geometry } = activeCadKernel.buildMesh(project);
     if (!geometry) return;
 
     const material = new THREE.MeshStandardMaterial({ color: 0x2563eb, roughness: 0.55, metalness: 0.05 });
