@@ -36,8 +36,21 @@ button { cursor: pointer; }
 .dimension-grid b, .inspector-grid b { padding-right: 8px; font-size: 11px; color: #94a3b8; font-weight: 600; }
 
 .canvas-panel { min-width: 0; min-height: 520px; position: relative; background: #f8fafc; }
+.viewport-shell { position: absolute; inset: 0; overflow: hidden; }
 .viewport { position: absolute; inset: 0; }
 .viewport canvas { display: block; width: 100%; height: 100%; }
+.viewport[data-selection-mode="face"] canvas, .viewport[data-selection-mode="edge"] canvas { cursor: crosshair; }
+.topology-toolbar { position: absolute; top: 12px; left: 12px; display: flex; gap: 6px; padding: 5px; border: 1px solid #cbd5e1; border-radius: 10px; background: rgba(255,255,255,.94); box-shadow: 0 8px 24px rgba(15,23,42,.08); }
+.topology-toolbar button { border: 1px solid transparent; border-radius: 7px; padding: 7px 10px; background: transparent; color: #475569; font-size: 12px; font-weight: 650; }
+.topology-toolbar button:hover:not(:disabled) { background: #f1f5f9; }
+.topology-toolbar button[data-active="true"] { border-color: #93c5fd; background: #eff6ff; color: #1d4ed8; }
+.topology-toolbar button:disabled { opacity: .45; cursor: default; }
+.topology-status { position: absolute; top: 58px; left: 12px; max-width: min(430px, calc(100% - 24px)); display: grid; gap: 2px; padding: 8px 10px; border: 1px solid #cbd5e1; border-radius: 9px; background: rgba(255,255,255,.92); color: #475569; pointer-events: none; }
+.topology-status strong { color: #0f172a; font-size: 12px; }
+.topology-status span, .topology-status small { font-size: 11px; line-height: 1.35; }
+.topology-status[data-status="loading"] { border-color: #fde68a; background: rgba(255,251,235,.94); }
+.topology-status[data-status="ready"] { border-color: #bbf7d0; background: rgba(240,253,244,.94); }
+.topology-status[data-status="error"] { border-color: #fecaca; background: rgba(254,242,242,.95); color: #b91c1c; }
 .canvas-caption { position: absolute; left: 12px; bottom: 12px; max-width: calc(100% - 24px); padding: 7px 9px; border: 1px solid #cbd5e1; border-radius: 8px; background: rgba(255,255,255,.92); color: #475569; font-size: 12px; pointer-events: none; }
 
 .feature-tree { list-style: none; padding: 0; margin: 0; display: grid; gap: 6px; }
@@ -96,4 +109,6 @@ button { cursor: pointer; }
   .canvas-panel { min-height: 420px; order: -1; }
   .history-panel { max-height: none; }
   .commandbar { grid-template-columns: 1fr; }
+  .topology-toolbar { top: 8px; left: 8px; }
+  .topology-status { top: 54px; left: 8px; max-width: calc(100% - 16px); }
 }
