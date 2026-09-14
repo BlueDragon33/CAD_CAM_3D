@@ -7,6 +7,7 @@ const HASH_UPPER_BOUND = 2_000_000_000;
 const CUT_OVERRUN_MM = 1;
 
 export type ExactTopologySnapshot = {
+  /** Runtime-local OCCT hashes. Stable selection remapping is not implemented yet. */
   faceIds: string[];
   edgeIds: string[];
   faceGroups: Int32Array | null;
@@ -99,7 +100,10 @@ function findOuterVerticalEdges(kernel: OcctKernel, shape: ShapeHandle, width: n
 
   for (const edge of candidates) {
     try {
-      if (kernel.curveType(edge) !== 'line') continue;
+      if (kernel.curveType(edge) !== 'line') {
+        kernel.release(edge);
+        continue;
+      }
       const { first, last } = kernel.curveParameters(edge);
       const a = kernel.curvePointAtParam(edge, first);
       const b = kernel.curvePointAtParam(edge, last);
@@ -116,7 +120,7 @@ function findOuterVerticalEdges(kernel: OcctKernel, shape: ShapeHandle, width: n
   return selected;
 }
 
-function buildExactShape(kernel: OcctKernel, project: CadProject, rebuilt: RebuiltPart) {
+function buildExactShape(kernel: OcctKernel, rebuilt: RebuiltPart) {
   const warnings: string[] = [];
   let filletApplied = false;
 
@@ -171,7 +175,7 @@ async function buildSnapshotUnsafe(project: CadProject): Promise<ExactKernelSnap
   kernel.releaseAll();
 
   try {
-    const { shape, warnings, filletApplied } = buildExactShape(kernel, project, rebuilt);
+    const { shape, warnings, filletApplied } = buildExactShape(kernel, rebuilt);
     const mesh = kernel.meshShape(shape, { linearDeflection: 0.08, angularDeflection: 0.35 });
     const geometry = mapOcctMeshToThree(mesh);
     const stepText = kernel.exportStep(shape);
@@ -229,6 +233,10 @@ export async function buildExactKernelSnapshot(project: CadProject) {
   }
 }
 
+/**
+ * Capability flags below describe what CAD_CAM_3D exposes through this adapter,
+ * not every operation that the upstream OCCT wrapper happens to contain.
+ */
 export const exactKernelDescriptor = {
   id: 'occt-wasm-v5',
   label: 'OpenCascade exact B-Rep',
@@ -236,12 +244,12 @@ export const exactKernelDescriptor = {
   lazy: true,
   capabilities: {
     exactBrep: true,
-    editableTopology: true,
+    editableTopology: false,
     meshPreview: true,
-    stlExport: true,
+    stlExport: false,
     stepExport: true,
     exactFillet: true,
-    exactChamfer: true,
-    shell: true,
+    exactChamfer: false,
+    shell: false,
   },
 };
