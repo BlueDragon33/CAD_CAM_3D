@@ -286,13 +286,14 @@ export default function App() {
       </div>;
     }
 
-    const topologyBound = selectedFeature.params.selection.mode === 'topology';
+    const filletSelection = selectedFeature.params.selection;
+    const topologyBound = filletSelection.mode === 'topology';
     return <div className="inspector-grid">
       <label><span>Radius</span><div><input type="number" step="0.1" value={selectedFeature.params.radius} onChange={(e) => updateFeature(selectedFeature.id, (feature) => feature.kind === 'fillet' ? { ...feature, params: { ...feature.params, radius: numberValue(e.target.value, 0) } } : feature)} /><b>mm</b></div></label>
       <div className="constraint-state" data-ready={exactKernelDescriptor.capabilities.exactFillet}>
         <strong>{topologyBound ? 'Persisted exact-edge target' : 'Outer-edge preset'}</strong>
-        <small>{topologyBound
-          ? `${selectedFeature.params.selection.ref.adjacentFaceLineageIds.length} semantic lineage anchor(s) · ${selectedFeature.params.selection.ref.signature.curveKind} · ${selectedFeature.params.selection.ref.signature.lengthMm.toFixed(2)} mm`
+        <small>{filletSelection.mode === 'topology'
+          ? `${filletSelection.ref.adjacentFaceLineageIds.length} semantic lineage anchor(s) · ${filletSelection.ref.signature.curveKind} · ${filletSelection.ref.signature.lengthMm.toFixed(2)} mm`
           : 'Current preset fillets all four outer vertical edges in the exact B-Rep path.'}</small>
       </div>
       <div className="topology-bind-actions">
