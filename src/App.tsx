@@ -12,7 +12,14 @@ import { activeCadKernel } from './cad/kernel';
 import { exactKernelDescriptor } from './cad/exact-kernel';
 import { downloadProjectFile, loadProjectFile } from './cad/project-io';
 import { rebuildProject } from './cad/rebuild';
-import { createEdgeTopologyRef } from './cad/topology-ref';
+import {
+  createEdgeTopologyRef,
+  createFaceLocalFrame,
+  createFaceTopologyRef,
+  isSupportedHorizontalFace,
+  localCoordinatesOnFace,
+  pointFromFaceLocal,
+} from './cad/topology-ref';
 import type { TopologySelection } from './cad/topology-selection';
 import { validateForPrint } from './manufacturing/validate';
 import { downloadProjectStl, type StlExportReport } from './manufacturing/export';
@@ -84,6 +91,24 @@ export default function App() {
     };
   };
 
+  const bindFeatureToCurrentFace = (feature: CadFeature, featuresBefore: CadFeature[]): CadFeature | null => {
+    if (topologySelection?.kind !== 'face' || (feature.kind !== 'hole' && feature.kind !== 'cut')) return null;
+    const ref = createFaceTopologyRef(topologySelection, lastEnabledFeatureId(featuresBefore));
+    if (!isSupportedHorizontalFace(ref)) return null;
+    const frame = createFaceLocalFrame(ref.signature);
+    const local = localCoordinatesOnFace(frame, topologySelection.pickedPoint);
+    const point = pointFromFaceLocal(frame, local.uMm, local.vMm);
+    return {
+      ...feature,
+      params: {
+        ...feature.params,
+        x: point[0],
+        z: point[2],
+        placement: { mode: 'face', ref, uMm: local.uMm, vMm: local.vMm },
+      },
+    };
+  };
+
   const addFeature = (kind: FeatureKind) => {
     let feature = createFeature(kind, project);
     if (feature.kind === 'fillet') {
@@ -98,6 +123,19 @@ export default function App() {
       );
       return;
     }
+
+    if (feature.kind === 'hole' || feature.kind === 'cut') {
+      const faceBound = bindFeatureToCurrentFace(feature, project.features);
+      if (faceBound) {
+        appendFeature(faceBound, `${featureLabels[feature.kind]} added on the selected exact face with a durable local placement.`);
+        return;
+      }
+      if (topologySelection?.kind === 'face') {
+        appendFeature(feature, `${featureLabels[feature.kind]} added in global X/Z mode. Current face-bound MVP accepts only horizontal top/bottom faces.`);
+        return;
+      }
+    }
+
     appendFeature(feature);
   };
 
@@ -106,6 +144,21 @@ export default function App() {
       ...current,
       features: current.features.map((feature) => feature.id === id ? updater(feature) : feature),
     }));
+  };
+
+  const updateFaceLocalCoordinate = (id: string, key: 'uMm' | 'vMm', raw: string) => {
+    const value = Number(raw);
+    if (!Number.isFinite(value)) return;
+    updateFeature(id, (feature) => {
+      if (feature.kind !== 'hole' && feature.kind !== 'cut') return feature;
+      if (feature.params.placement.mode !== 'face') return feature;
+      const placement = { ...feature.params.placement, [key]: value };
+      const point = pointFromFaceLocal(createFaceLocalFrame(placement.ref.signature), placement.uMm, placement.vMm);
+      return {
+        ...feature,
+        params: { ...feature.params, placement, x: point[0], z: point[2] },
+      };
+    });
   };
 
   const toggleSelectedFeature = () => {
@@ -139,6 +192,28 @@ export default function App() {
     setStatus(`${selectedFeature.name} now targets the outer vertical-edge preset.`);
   };
 
+  const bindSelectedFeatureToFace = () => {
+    if (!selectedFeature || (selectedFeature.kind !== 'hole' && selectedFeature.kind !== 'cut') || topologySelection?.kind !== 'face') return;
+    const featureIndex = project.features.findIndex((feature) => feature.id === selectedFeature.id);
+    const before = featureIndex > 0 ? project.features.slice(0, featureIndex) : [];
+    const bound = bindFeatureToCurrentFace(selectedFeature, before);
+    if (!bound) {
+      setStatus(`${selectedFeature.name} was not rebound. Face-bound Hole/Cut currently requires a horizontal top/bottom face.`);
+      return;
+    }
+    updateFeature(selectedFeature.id, () => bound);
+    setStatus(`${selectedFeature.name} rebound to the selected exact face using local U/V coordinates.`);
+  };
+
+  const useGlobalPlacement = () => {
+    if (!selectedFeature || (selectedFeature.kind !== 'hole' && selectedFeature.kind !== 'cut')) return;
+    updateFeature(selectedFeature.id, (feature) => {
+      if (feature.kind !== 'hole' && feature.kind !== 'cut') return feature;
+      return { ...feature, params: { ...feature.params, placement: { mode: 'global-xz' } } };
+    });
+    setStatus(`${selectedFeature.name} now uses global X/Z placement.`);
+  };
+
   const runCommand = (event: FormEvent) => {
     event.preventDefault();
     const result = interpretCommand(command);
@@ -151,6 +226,7 @@ export default function App() {
       let feature = createFeature(result.feature.kind, project);
       if (feature.kind === 'hole' && result.feature.kind === 'hole') {
         feature = { ...feature, params: { ...feature.params, diameter: clampDimension(result.feature.diameter) } };
+        feature = bindFeatureToCurrentFace(feature, project.features) ?? feature;
       } else if (feature.kind === 'cut' && result.feature.kind === 'cut') {
         feature = {
           ...feature,
@@ -160,6 +236,7 @@ export default function App() {
             depth: clampDimension(result.feature.depth),
           },
         };
+        feature = bindFeatureToCurrentFace(feature, project.features) ?? feature;
       } else if (feature.kind === 'fillet' && result.feature.kind === 'fillet') {
         feature = bindFilletToCurrentEdge(
           { ...feature, params: { ...feature.params, radius: clampDimension(result.feature.radius, 0) } },
@@ -170,7 +247,9 @@ export default function App() {
         feature,
         feature.kind === 'fillet' && feature.params.selection.mode === 'topology'
           ? `${result.message} Bound to the currently selected exact edge.`
-          : result.message,
+          : (feature.kind === 'hole' || feature.kind === 'cut') && feature.params.placement.mode === 'face'
+            ? `${result.message} Bound to the currently selected exact face.`
+            : result.message,
       );
     } else {
       setStatus(result.message);
@@ -247,7 +326,8 @@ export default function App() {
     if (selection.kind === 'edge') {
       setStatus(`Exact edge selected · ${selection.signature.curveKind} · ${selection.signature.lengthMm.toFixed(2)} mm · ${selection.adjacentFaceLineageIds.length} lineage anchor(s).`);
     } else {
-      setStatus(`Exact face selected · ${selection.signature.areaMm2.toFixed(2)} mm² · ${selection.lineageIds.length} lineage anchor(s).`);
+      const ref = createFaceTopologyRef(selection, lastEnabledFeatureId(project.features));
+      setStatus(`Exact face selected · ${selection.signature.areaMm2.toFixed(2)} mm² · ${selection.lineageIds.length} lineage anchor(s) · ${isSupportedHorizontalFace(ref) ? 'Hole/Cut binding ready' : 'inspection only in current face-placement MVP'}.`);
     }
   };
 
@@ -270,19 +350,41 @@ export default function App() {
     }
 
     if (selectedFeature.kind === 'hole') {
+      const faceBound = selectedFeature.params.placement.mode === 'face';
       return <div className="inspector-grid">
         <label><span>Diameter</span><div><input type="number" step="0.1" value={selectedFeature.params.diameter} onChange={(e) => updateFeature(selectedFeature.id, (feature) => feature.kind === 'hole' ? { ...feature, params: { ...feature.params, diameter: numberValue(e.target.value, 0.1) } } : feature)} /><b>mm</b></div></label>
-        <label><span>X</span><div><input type="number" step="0.1" value={selectedFeature.params.x} onChange={(e) => updateFeature(selectedFeature.id, (feature) => feature.kind === 'hole' ? { ...feature, params: { ...feature.params, x: Number(e.target.value) || 0 } } : feature)} /><b>mm</b></div></label>
-        <label><span>Z</span><div><input type="number" step="0.1" value={selectedFeature.params.z} onChange={(e) => updateFeature(selectedFeature.id, (feature) => feature.kind === 'hole' ? { ...feature, params: { ...feature.params, z: Number(e.target.value) || 0 } } : feature)} /><b>mm</b></div></label>
+        {faceBound ? <>
+          <label><span>Face U</span><div><input type="number" step="0.1" value={selectedFeature.params.placement.mode === 'face' ? selectedFeature.params.placement.uMm : 0} onChange={(e) => updateFaceLocalCoordinate(selectedFeature.id, 'uMm', e.target.value)} /><b>mm</b></div></label>
+          <label><span>Face V</span><div><input type="number" step="0.1" value={selectedFeature.params.placement.mode === 'face' ? selectedFeature.params.placement.vMm : 0} onChange={(e) => updateFaceLocalCoordinate(selectedFeature.id, 'vMm', e.target.value)} /><b>mm</b></div></label>
+          <div className="constraint-state" data-ready><strong>Persisted exact-face target</strong><small>{selectedFeature.params.placement.mode === 'face' ? `${selectedFeature.params.placement.ref.lineageIds.length} lineage anchor(s) · local U/V placement` : ''}</small></div>
+        </> : <>
+          <label><span>X</span><div><input type="number" step="0.1" value={selectedFeature.params.x} onChange={(e) => updateFeature(selectedFeature.id, (feature) => feature.kind === 'hole' ? { ...feature, params: { ...feature.params, x: Number(e.target.value) || 0 } } : feature)} /><b>mm</b></div></label>
+          <label><span>Z</span><div><input type="number" step="0.1" value={selectedFeature.params.z} onChange={(e) => updateFeature(selectedFeature.id, (feature) => feature.kind === 'hole' ? { ...feature, params: { ...feature.params, z: Number(e.target.value) || 0 } } : feature)} /><b>mm</b></div></label>
+        </>}
+        <div className="topology-bind-actions">
+          <button type="button" onClick={bindSelectedFeatureToFace} disabled={topologySelection?.kind !== 'face'}>Bind selected face</button>
+          <button type="button" onClick={useGlobalPlacement} disabled={!faceBound}>Use global X/Z</button>
+        </div>
       </div>;
     }
 
     if (selectedFeature.kind === 'cut') {
+      const faceBound = selectedFeature.params.placement.mode === 'face';
       return <div className="inspector-grid">
         <label><span>Width</span><div><input type="number" step="0.1" value={selectedFeature.params.width} onChange={(e) => updateFeature(selectedFeature.id, (feature) => feature.kind === 'cut' ? { ...feature, params: { ...feature.params, width: numberValue(e.target.value, 0.1) } } : feature)} /><b>mm</b></div></label>
         <label><span>Depth</span><div><input type="number" step="0.1" value={selectedFeature.params.depth} onChange={(e) => updateFeature(selectedFeature.id, (feature) => feature.kind === 'cut' ? { ...feature, params: { ...feature.params, depth: numberValue(e.target.value, 0.1) } } : feature)} /><b>mm</b></div></label>
-        <label><span>X</span><div><input type="number" step="0.1" value={selectedFeature.params.x} onChange={(e) => updateFeature(selectedFeature.id, (feature) => feature.kind === 'cut' ? { ...feature, params: { ...feature.params, x: Number(e.target.value) || 0 } } : feature)} /><b>mm</b></div></label>
-        <label><span>Z</span><div><input type="number" step="0.1" value={selectedFeature.params.z} onChange={(e) => updateFeature(selectedFeature.id, (feature) => feature.kind === 'cut' ? { ...feature, params: { ...feature.params, z: Number(e.target.value) || 0 } } : feature)} /><b>mm</b></div></label>
+        {faceBound ? <>
+          <label><span>Face U</span><div><input type="number" step="0.1" value={selectedFeature.params.placement.mode === 'face' ? selectedFeature.params.placement.uMm : 0} onChange={(e) => updateFaceLocalCoordinate(selectedFeature.id, 'uMm', e.target.value)} /><b>mm</b></div></label>
+          <label><span>Face V</span><div><input type="number" step="0.1" value={selectedFeature.params.placement.mode === 'face' ? selectedFeature.params.placement.vMm : 0} onChange={(e) => updateFaceLocalCoordinate(selectedFeature.id, 'vMm', e.target.value)} /><b>mm</b></div></label>
+          <div className="constraint-state" data-ready><strong>Persisted exact-face target</strong><small>{selectedFeature.params.placement.mode === 'face' ? `${selectedFeature.params.placement.ref.lineageIds.length} lineage anchor(s) · local U/V placement` : ''}</small></div>
+        </> : <>
+          <label><span>X</span><div><input type="number" step="0.1" value={selectedFeature.params.x} onChange={(e) => updateFeature(selectedFeature.id, (feature) => feature.kind === 'cut' ? { ...feature, params: { ...feature.params, x: Number(e.target.value) || 0 } } : feature)} /><b>mm</b></div></label>
+          <label><span>Z</span><div><input type="number" step="0.1" value={selectedFeature.params.z} onChange={(e) => updateFeature(selectedFeature.id, (feature) => feature.kind === 'cut' ? { ...feature, params: { ...feature.params, z: Number(e.target.value) || 0 } } : feature)} /><b>mm</b></div></label>
+        </>}
+        <div className="topology-bind-actions">
+          <button type="button" onClick={bindSelectedFeatureToFace} disabled={topologySelection?.kind !== 'face'}>Bind selected face</button>
+          <button type="button" onClick={useGlobalPlacement} disabled={!faceBound}>Use global X/Z</button>
+        </div>
       </div>;
     }
 
@@ -340,7 +442,11 @@ export default function App() {
           {(['sketch', 'extrude', 'hole', 'cut', 'fillet'] as FeatureKind[]).map((kind) => (
             <button key={kind} type="button" className="tool-button" onClick={() => addFeature(kind)}>
               <span>{featureLabels[kind]}</span>
-              <small>{kind === 'fillet' && topologySelection?.kind === 'edge' ? 'Use selected edge' : 'Add feature'}</small>
+              <small>{kind === 'fillet' && topologySelection?.kind === 'edge'
+                ? 'Use selected edge'
+                : (kind === 'hole' || kind === 'cut') && topologySelection?.kind === 'face'
+                  ? 'Use selected face'
+                  : 'Add feature'}</small>
             </button>
           ))}
 
@@ -354,7 +460,9 @@ export default function App() {
                 : 'Use Face / Edge controls in the viewport.'}</span>
             <small>{topologySelection?.kind === 'edge'
               ? 'Adding Fillet now stores semantic ancestry + geometry signature in the project.'
-              : 'Exact selection is lazy-loaded only when requested.'}</small>
+              : topologySelection?.kind === 'face'
+                ? 'Adding Hole/Cut binds horizontal top/bottom faces to schema-v3 local U/V placement.'
+                : 'Exact selection is lazy-loaded only when requested.'}</small>
           </div>
 
           <h2>Master parameters</h2>
@@ -380,7 +488,7 @@ export default function App() {
               <li key={feature.id} data-selected={feature.id === selectedFeatureId} data-disabled={!feature.enabled}>
                 <button type="button" onClick={() => setSelectedFeatureId(feature.id)}>
                   <span className="feature-dot" />
-                  <div><strong>{feature.name}</strong><small>{feature.kind}{feature.kind === 'fillet' && feature.params.selection.mode === 'topology' ? ' · topology-bound' : ''}{feature.enabled ? '' : ' · suppressed'}</small></div>
+                  <div><strong>{feature.name}</strong><small>{feature.kind}{feature.kind === 'fillet' && feature.params.selection.mode === 'topology' ? ' · topology-bound' : ''}{(feature.kind === 'hole' || feature.kind === 'cut') && feature.params.placement.mode === 'face' ? ' · face-bound' : ''}{feature.enabled ? '' : ' · suppressed'}</small></div>
                 </button>
               </li>
             ))}
@@ -427,8 +535,8 @@ export default function App() {
           </div>
           <div className="profile-card">
             <strong>{exactKernelDescriptor.label}</strong>
-            <span>Exact B-Rep · STEP ready · topology references</span>
-            <small>Selected edges can now be persisted through semantic ancestry and resolved again during exact Fillet rebuilds.</small>
+            <span>Exact B-Rep · STEP ready · edge + face topology references</span>
+            <small>Selected edges drive exact Fillet; horizontal top/bottom face references now drive Hole/Cut local placement with conservative rebuild resolution.</small>
           </div>
 
           <h2>Management</h2>
