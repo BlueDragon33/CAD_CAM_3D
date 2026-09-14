@@ -13,6 +13,7 @@ import {
   type BaseFaceSeed,
   type TopologyEvolutionTrace,
 } from './topology-evolution';
+import { resolveEdgeTopologyRef } from './topology-ref';
 
 // OCCT mesh face groups use TopTools_ShapeMapHasher % 2147483647. Keep every
 // topology query/history call in the same hash domain so groups, evolution and
@@ -176,6 +177,21 @@ function findOuterVerticalEdges(kernel: OcctKernel, shape: ShapeHandle, width: n
   return selected;
 }
 
+function findEdgeHandleByHash(kernel: OcctKernel, shape: ShapeHandle, targetHash: number) {
+  const handles = kernel.getSubShapes(shape, 'edge');
+  let selected: ShapeHandle | null = null;
+  for (const edge of handles) {
+    let keep = false;
+    try {
+      keep = selected === null && kernel.hashCode(edge, HASH_UPPER_BOUND) === targetHash;
+      if (keep) selected = edge;
+    } finally {
+      if (!keep) kernel.release(edge);
+    }
+  }
+  return selected;
+}
+
 function buildExactShape(kernel: OcctKernel, project: CadProject, rebuilt: RebuiltPart) {
   const warnings: string[] = [];
   let filletApplied = false;
@@ -221,22 +237,46 @@ function buildExactShape(kernel: OcctKernel, project: CadProject, rebuilt: Rebui
     const radius = Math.max(0, Math.min(feature.params.radius, rebuilt.width / 2, rebuilt.depth / 2, rebuilt.height / 2));
     if (radius <= 0) continue;
 
+    let edges: ShapeHandle[] = [];
     try {
       const solid = singleSolid(kernel, shape);
-      const edges = findOuterVerticalEdges(kernel, solid, rebuilt.width, rebuilt.depth);
-      if (edges.length === 4) {
-        const before = currentFaceHashes(kernel, solid);
-        const evolution = kernel.filletWithHistory(solid, edges, radius, before, HASH_UPPER_BOUND);
-        shape = evolution.result;
-        const after = currentFaceHashes(kernel, shape);
-        tracker.record(feature.id, 'fillet', before, after, evolution);
-        filletApplied = true;
+
+      if (feature.params.selection.mode === 'preset') {
+        edges = findOuterVerticalEdges(kernel, solid, rebuilt.width, rebuilt.depth);
+        if (edges.length !== 4) {
+          warnings.push(`${feature.name}: exact fillet skipped; expected 4 outer vertical edges but found ${edges.length}.`);
+          continue;
+        }
       } else {
-        warnings.push(`${feature.name}: exact fillet skipped; expected 4 outer vertical edges but found ${edges.length}.`);
+        const spanMm = Math.max(rebuilt.width, rebuilt.depth, rebuilt.height, 1);
+        const topologyBeforeFillet = tracker.snapshot();
+        const candidateEdges = sampleExactEdges(kernel, solid, spanMm, topologyBeforeFillet, warnings);
+        const resolution = resolveEdgeTopologyRef(feature.params.selection.ref, candidateEdges, spanMm);
+        if (!resolution) {
+          warnings.push(`${feature.name}: exact fillet skipped because the persisted edge reference could not be resolved safely.`);
+          continue;
+        }
+        const handle = findEdgeHandleByHash(kernel, solid, resolution.edge.hash);
+        if (!handle) {
+          warnings.push(`${feature.name}: exact fillet skipped because the resolved edge disappeared before the operation.`);
+          continue;
+        }
+        edges = [handle];
+        if (resolution.confidence === 'medium') {
+          warnings.push(`${feature.name}: persisted edge resolved with medium confidence after rebuild.`);
+        }
       }
-      for (const edge of edges) kernel.release(edge);
+
+      const before = currentFaceHashes(kernel, solid);
+      const evolution = kernel.filletWithHistory(solid, edges, radius, before, HASH_UPPER_BOUND);
+      shape = evolution.result;
+      const after = currentFaceHashes(kernel, shape);
+      tracker.record(feature.id, 'fillet', before, after, evolution);
+      filletApplied = true;
     } catch (error) {
       warnings.push(error instanceof Error ? `${feature.name}: exact fillet skipped: ${error.message}` : `${feature.name}: exact fillet skipped because OCCT rejected the selected edges.`);
+    } finally {
+      for (const edge of edges) kernel.release(edge);
     }
   }
 
