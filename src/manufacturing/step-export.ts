@@ -12,10 +12,13 @@ function safeFileName(name: string) {
 }
 
 export async function createStepExport(project: CadProject) {
-  const snapshot = await buildExactKernelSnapshot(project);
+  const snapshot = await buildExactKernelSnapshot(project, { includeStep: true });
   try {
     if (!snapshot.report.valid) {
       throw new Error(`Exact B-Rep validation failed. ${snapshot.report.warnings.join(' ')}`.trim());
+    }
+    if (!snapshot.stepText) {
+      throw new Error('Exact B-Rep rebuild completed without a STEP payload.');
     }
 
     const blob = new Blob([snapshot.stepText], { type: 'model/step' });
