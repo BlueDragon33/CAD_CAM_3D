@@ -8,7 +8,7 @@ export type EvolutionRelation = {
 
 export type TopologyEvolutionStep = {
   featureId: string;
-  featureKind: Extract<FeatureKind, 'hole' | 'cut' | 'fillet'>;
+  featureKind: Extract<FeatureKind, 'hole' | 'cut' | 'fillet' | 'chamfer'>;
   beforeFaceHashes: number[];
   afterFaceHashes: number[];
   modified: EvolutionRelation[];
@@ -37,11 +37,6 @@ export type BaseFaceSeed = {
   role: string;
 };
 
-/**
- * occt-wasm encodes modified/generated relations as a compact flat stream:
- * [sourceHash, resultCount, resultHash0, ...resultHashN, sourceHash, ...].
- * The public type is number[] so decoding belongs in the application adapter.
- */
 export function decodeEvolutionRelations(flat: number[], label: string): EvolutionRelation[] {
   const relations: EvolutionRelation[] = [];
   let cursor = 0;
@@ -66,11 +61,6 @@ function sanitizeRole(role: string) {
   return role.replace(/[^a-zA-Z0-9:+._-]+/g, '-');
 }
 
-/**
- * Tracks semantic face ancestry across exact-kernel operations. Raw OCCT handles
- * never leave the exact build. This is deliberately a lineage layer rather than
- * a claim that the general CAD topological-naming problem is solved.
- */
 export class FaceLineageTracker {
   private readonly lineageHashes = new Map<string, Set<number>>();
   private readonly metadata = new Map<string, { bornAtFeatureId: string; role: string }>();
@@ -107,8 +97,6 @@ export class FaceLineageTracker {
     const deletedSet = new Set(deleted);
     const modifiedMap = new Map(modified.map((relation) => [relation.sourceHash, relation.resultHashes]));
 
-    // Capture membership before mutating it so generated faces can inherit a
-    // stable semantic parent even when their source face is also modified.
     const sourceLineages = new Map<number, string[]>();
     for (const [lineageId, hashes] of this.lineageHashes) {
       for (const hash of hashes) {
@@ -152,9 +140,6 @@ export class FaceLineageTracker {
       }
     }
 
-    // Boolean operations can introduce tool/intersection faces that OCCT does
-    // not attribute to an input face. Give them feature-owned lineage IDs so a
-    // later selection still has a semantic anchor.
     let unmappedOrdinal = 0;
     for (const hash of uniqueSorted(after)) {
       if (claimed.has(hash)) continue;
