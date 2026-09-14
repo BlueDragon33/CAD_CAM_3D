@@ -15,9 +15,10 @@ button { cursor: pointer; }
 .topbar > div:first-child { display: flex; flex-direction: column; gap: 2px; }
 .topbar strong { letter-spacing: .04em; }
 .topbar span { color: #cbd5e1; font-size: 12px; }
-.topbar-actions { display: flex; align-items: center; gap: 8px; }
+.topbar-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
 .topbar button { border: 1px solid #475569; background: #1e293b; color: #fff; border-radius: 8px; padding: 8px 12px; }
-.kernel-badge { border: 1px solid #475569; border-radius: 999px; padding: 5px 9px; }
+.kernel-badge, .managed-badge { border: 1px solid #475569; border-radius: 999px; padding: 5px 9px; }
+.managed-badge { border-color: #4f7662; background: rgba(21, 128, 61, .16); color: #dcfce7 !important; }
 
 .workspace { min-height: 0; display: grid; grid-template-columns: 220px minmax(360px, 1fr) 250px; gap: 1px; background: #cbd5e1; }
 .panel { background: #f8fafc; padding: 14px; overflow: auto; }
@@ -43,8 +44,11 @@ button { cursor: pointer; }
 .feature-tree li div { display: grid; gap: 2px; }
 .feature-tree small { color: #94a3b8; text-transform: capitalize; }
 .feature-dot { width: 8px; height: 8px; border-radius: 50%; background: #2563eb; flex: 0 0 auto; }
-.profile-card { display: grid; gap: 4px; border: 1px solid #cbd5e1; border-radius: 9px; padding: 10px; background: #fff; }
-.profile-card span { color: #64748b; font-size: 12px; }
+.profile-card, .management-card { display: grid; gap: 4px; border: 1px solid #cbd5e1; border-radius: 9px; padding: 10px; background: #fff; }
+.profile-card span, .management-card span { color: #64748b; font-size: 12px; }
+.management-card { border-color: #bbd4c5; background: #f5fbf7; }
+.management-card strong { color: #166534; }
+.management-card small { color: #64748b; line-height: 1.35; }
 .checks { margin: 10px 0 0; padding: 0; list-style: none; display: grid; gap: 7px; }
 .checks li { padding: 8px; border-radius: 8px; font-size: 12px; background: #ecfdf5; color: #166534; }
 .checks li[data-level="warning"] { background: #fff7ed; color: #9a3412; }
@@ -59,13 +63,14 @@ button { cursor: pointer; }
 
 @media (max-width: 900px) {
   .workspace { grid-template-columns: 180px minmax(300px, 1fr); }
-  .history-panel { grid-column: 1 / -1; max-height: 260px; }
+  .history-panel { grid-column: 1 / -1; max-height: 300px; }
   .commandbar { grid-template-columns: 1fr auto; }
   .command-copy { grid-column: 1 / -1; }
 }
 
 @media (max-width: 620px) {
-  .topbar span, .kernel-badge { display: none; }
+  .topbar > div:first-child span, .kernel-badge { display: none; }
+  .managed-badge { font-size: 10px !important; }
   .workspace { display: flex; flex-direction: column; }
   .tools-panel { display: grid; grid-template-columns: 1fr 1fr; }
   .tools-panel h2, .dimension-grid { grid-column: 1 / -1; }
