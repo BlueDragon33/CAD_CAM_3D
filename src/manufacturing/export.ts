@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { STLExporter } from 'three/examples/jsm/exporters/STLExporter.js';
 import type { CadProject } from '../cad/model';
-import { buildPartGeometry } from '../cad/geometry';
+import { activeCadKernel } from '../cad/kernel';
 
 export type StlInspection = {
   triangleCount: number;
@@ -16,6 +16,7 @@ export type StlInspection = {
 export type StlExportReport = StlInspection & {
   fileName: string;
   byteLength: number;
+  kernelId: string;
 };
 
 const EDGE_TOLERANCE_MM = 1e-6;
@@ -121,7 +122,8 @@ function binaryOutputToBlob(output: string | DataView) {
 }
 
 export function createStlExport(project: CadProject) {
-  const { rebuilt, geometry } = buildPartGeometry(project);
+  if (!activeCadKernel.capabilities.stlExport) throw new Error(`${activeCadKernel.label} does not support STL export.`);
+  const { rebuilt, geometry } = activeCadKernel.buildMesh(project);
   if (!geometry || !rebuilt.hasSolid) throw new Error('A valid rebuilt solid is required before STL export.');
 
   const inspection = inspectGeometry(geometry);
@@ -140,6 +142,7 @@ export function createStlExport(project: CadProject) {
     ...inspection,
     fileName,
     byteLength: blob.size,
+    kernelId: activeCadKernel.id,
   };
 
   geometry.dispose();
