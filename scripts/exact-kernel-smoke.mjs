@@ -3,26 +3,69 @@ import { OcctKernel } from 'occt-wasm';
 const HASH_UPPER_BOUND = 2_147_483_647;
 const kernel = await OcctKernel.init();
 
+function decodeRelations(flat, label) {
+  const relations = [];
+  let cursor = 0;
+  while (cursor < flat.length) {
+    if (cursor + 1 >= flat.length) throw new Error(`${label} stream ended before count.`);
+    const sourceHash = flat[cursor++];
+    const count = flat[cursor++];
+    if (!Number.isInteger(count) || count < 0 || cursor + count > flat.length) {
+      throw new Error(`${label} contains invalid count ${String(count)}.`);
+    }
+    relations.push({ sourceHash, results: flat.slice(cursor, cursor + count) });
+    cursor += count;
+  }
+  return relations;
+}
+
+function decodeEdgeMap(flat) {
+  const entries = [];
+  let cursor = 0;
+  while (cursor < flat.length) {
+    if (cursor + 1 >= flat.length) throw new Error('edgeToFaceMap stream ended before face count.');
+    const edgeHash = flat[cursor++];
+    const count = flat[cursor++];
+    if (!Number.isInteger(count) || count < 0 || cursor + count > flat.length) {
+      throw new Error(`edgeToFaceMap contains invalid count ${String(count)}.`);
+    }
+    entries.push({ edgeHash, faces: flat.slice(cursor, cursor + count) });
+    cursor += count;
+  }
+  return entries;
+}
+
 try {
   let base = kernel.makeBox(60, 40, 12);
   base = kernel.translate(base, -30, -20, 0);
 
   let holeTool = kernel.makeCylinder(2, 14);
   holeTool = kernel.translate(holeTool, 0, 0, -1);
-  const cut = kernel.cut(base, holeTool);
+  const beforeFaceHashes = kernel.subShapeHashes(base, 'face', HASH_UPPER_BOUND);
+  const evolution = kernel.cutWithHistory(base, holeTool, beforeFaceHashes, HASH_UPPER_BOUND);
+  const cut = evolution.result;
 
-  if (!kernel.isValid(cut)) {
-    throw new Error('OCCT smoke geometry is not a valid B-Rep.');
+  if (!kernel.isValid(cut)) throw new Error('OCCT smoke geometry is not a valid B-Rep.');
+
+  const modified = decodeRelations(evolution.modified, 'cut.modified');
+  const generated = decodeRelations(evolution.generated, 'cut.generated');
+  const beforeSet = new Set(beforeFaceHashes);
+  for (const relation of [...modified, ...generated]) {
+    if (!beforeSet.has(relation.sourceHash)) {
+      throw new Error(`Evolution source hash ${relation.sourceHash} is not an input face.`);
+    }
+  }
+  for (const hash of evolution.deleted) {
+    if (!beforeSet.has(hash)) throw new Error(`Deleted face hash ${hash} is not an input face.`);
   }
 
-  const mesh = kernel.meshShape(cut, {
-    linearDeflection: 0.1,
-    angularDeflection: 0.5,
-  });
-
-  if (mesh.triangleCount <= 0) {
-    throw new Error('OCCT tessellation returned no triangles.');
+  const afterFaceHashes = kernel.subShapeHashes(cut, 'face', HASH_UPPER_BOUND);
+  if (afterFaceHashes.length <= beforeFaceHashes.length) {
+    throw new Error('Hole cut did not create the expected additional face topology.');
   }
+
+  const mesh = kernel.meshShape(cut, { linearDeflection: 0.1, angularDeflection: 0.5 });
+  if (mesh.triangleCount <= 0) throw new Error('OCCT tessellation returned no triangles.');
 
   if (!mesh.faceGroups || mesh.faceGroups.length === 0 || mesh.faceGroups.length % 3 !== 0) {
     throw new Error('OCCT tessellation did not expose [indexStart, indexCount, faceHash] groups.');
@@ -41,17 +84,22 @@ try {
     throw new Error(`Face groups cover ${groupedIndices} indices but mesh contains ${mesh.indices.length}.`);
   }
 
-  const step = kernel.exportStep(cut);
-  if (!step.includes('ISO-10303-21')) {
-    throw new Error('OCCT STEP export did not return a STEP exchange document.');
-  }
-
-  const faceHashes = kernel.subShapeHashes(cut, 'face', HASH_UPPER_BOUND);
-  const edgeHashes = kernel.subShapeHashes(cut, 'edge', HASH_UPPER_BOUND);
-  const faceHashSet = new Set(faceHashes);
+  const faceHashSet = new Set(afterFaceHashes);
   for (let i = 2; i < mesh.faceGroups.length; i += 3) {
     if (!faceHashSet.has(mesh.faceGroups[i])) {
       throw new Error(`Tessellation face hash ${mesh.faceGroups[i]} is missing from exact B-Rep topology.`);
+    }
+  }
+
+  const edgeHashes = kernel.subShapeHashes(cut, 'edge', HASH_UPPER_BOUND);
+  const edgeHashSet = new Set(edgeHashes);
+  const adjacency = decodeEdgeMap(kernel.edgeToFaceMap(cut, HASH_UPPER_BOUND));
+  if (adjacency.length === 0) throw new Error('OCCT edgeToFaceMap returned no adjacency data.');
+  for (const entry of adjacency) {
+    if (!edgeHashSet.has(entry.edgeHash)) throw new Error(`Adjacency references unknown edge ${entry.edgeHash}.`);
+    if (entry.faces.length === 0) throw new Error(`Edge ${entry.edgeHash} has no adjacent face.`);
+    for (const faceHash of entry.faces) {
+      if (!faceHashSet.has(faceHash)) throw new Error(`Edge ${entry.edgeHash} references unknown face ${faceHash}.`);
     }
   }
 
@@ -71,14 +119,30 @@ try {
       kernel.release(edge);
     }
   }
-  if (!sampledEdge) {
-    throw new Error('OCCT edge topology could not be sampled for viewport picking.');
-  }
+  if (!sampledEdge) throw new Error('OCCT edge topology could not be sampled for viewport picking.');
+
+  // Gate the fillet history path separately so the application can safely use
+  // feature-by-feature evolution instead of only Boolean history.
+  const filletBox = kernel.makeBox(20, 16, 8);
+  const filletEdges = kernel.getSubShapes(filletBox, 'edge');
+  const filletInputFaces = kernel.subShapeHashes(filletBox, 'face', HASH_UPPER_BOUND);
+  const filletEvolution = kernel.filletWithHistory(
+    filletBox,
+    filletEdges.slice(0, 1),
+    1,
+    filletInputFaces,
+    HASH_UPPER_BOUND,
+  );
+  decodeRelations(filletEvolution.modified, 'fillet.modified');
+  decodeRelations(filletEvolution.generated, 'fillet.generated');
+  if (!kernel.isValid(filletEvolution.result)) throw new Error('Fillet evolution returned an invalid B-Rep.');
+
+  const step = kernel.exportStep(cut);
+  if (!step.includes('ISO-10303-21')) throw new Error('OCCT STEP export did not return a STEP exchange document.');
 
   const bbox = kernel.getBoundingBox(cut, false);
   const volume = kernel.getVolume(cut);
-
-  if (faceHashes.length === 0 || edgeHashes.length === 0 || volume <= 0) {
+  if (afterFaceHashes.length === 0 || edgeHashes.length === 0 || volume <= 0) {
     throw new Error('OCCT topology/query smoke checks failed.');
   }
 
@@ -86,13 +150,12 @@ try {
   const depth = bbox.ymax - bbox.ymin;
   const height = bbox.zmax - bbox.zmin;
   const close = (actual, expected) => Math.abs(actual - expected) <= 1e-6;
-
   if (!close(width, 60) || !close(depth, 40) || !close(height, 12)) {
     throw new Error(`Unexpected exact bounds: ${width} x ${depth} x ${height} mm.`);
   }
 
   console.log(
-    `OCCT smoke PASS | ${mesh.triangleCount} triangles | ${faceHashes.length} faces | ${edgeHashes.length} edges | ${mesh.faceGroups.length / 3} pick groups | volume ${volume.toFixed(3)} mm^3`,
+    `OCCT smoke PASS | ${mesh.triangleCount} triangles | ${afterFaceHashes.length} faces | ${edgeHashes.length} edges | ${adjacency.length} adjacency records | ${modified.length + generated.length} evolution relations | volume ${volume.toFixed(3)} mm^3`,
   );
 } finally {
   kernel.releaseAll();
