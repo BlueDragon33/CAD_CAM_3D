@@ -17,7 +17,8 @@ Current exact feature coverage:
 - through cylindrical holes;
 - through rectangular cuts;
 - outer vertical-edge fillet preset;
-- single-edge Fillet bound to a persisted application-level topology reference;
+- single selected-edge Fillet bound to a persisted `EdgeTopologyRef`;
+- horizontal top/bottom face-bound Hole/Cut through a persisted `FaceTopologyRef` + local U/V coordinates;
 - ordered execution of Hole / Cut / Fillet according to the semantic feature history;
 - B-Rep validity check;
 - exact bounding box, volume and surface area;
@@ -27,7 +28,7 @@ Current exact feature coverage:
 - face lineage/evolution tracking through Boolean and Fillet operations;
 - STEP export.
 
-The exact path does **not** yet expose app-level chamfer, shell, face-bound Hole/Cut placement, exact STL export switching, or general interactive sketch geometry. Capability flags must describe what CAD_CAM_3D actually exposes, not every operation available in the underlying OCCT wrapper.
+The exact path does **not** yet expose app-level chamfer, shell, arbitrary side-face/angled-face drilling, exact STL export switching, or general interactive sketch geometry. Capability flags must describe what CAD_CAM_3D actually exposes, not every operation available in the underlying OCCT wrapper.
 
 ## Topology identity
 
@@ -48,35 +49,55 @@ This is a practical topology-evolution layer, not a claim that the general topol
 
 ## Persisted edge references
 
-Project schema v2 introduces `EdgeTopologyRef`. It deliberately stores no OCCT handle or runtime hash. The durable payload is:
-
-```text
-kind: edge
-adjacentFaceLineageIds[]
-capturedAfterFeatureId
-signature:
-  curveKind
-  lengthMm
-  midpoint
-  start
-  end
-```
-
-`src/cad/topology-ref.ts` converts a selected exact edge into this reference and resolves it again during a later exact rebuild. Resolution prefers semantic adjacent-face ancestry and uses the geometric signature to disambiguate. Weak or ambiguous matches are rejected instead of silently applying a feature to the wrong edge.
+Project schema v2 introduced `EdgeTopologyRef`. It deliberately stores no OCCT handle or runtime hash. The durable payload is semantic adjacent-face ancestry plus a compact edge geometry signature.
 
 The first end-to-end topology-bound feature is Fillet:
 
 ```text
 select exact edge
     -> Add Fillet
-        -> persist EdgeTopologyRef in CadProject
+        -> persist EdgeTopologyRef
             -> edit upstream dimensions
                 -> rebuild topology/evolution
                     -> resolve the intended edge
                         -> exact OpenCascade fillet
 ```
 
-The Fillet inspector can also rebind an existing Fillet to the currently selected edge or return it to the four-outer-edge preset.
+Weak or ambiguous matches are rejected instead of silently applying a feature to the wrong edge.
+
+## Persisted face references and local placement
+
+Project schema v3 adds `FaceTopologyRef` and face-local placement for Hole/Cut. Schema v1 and v2 files remain loadable; older Hole/Cut features are migrated to explicit `global-xz` placement.
+
+A face reference stores:
+
+```text
+kind: face
+lineageIds[]
+capturedAfterFeatureId
+signature:
+  centroid
+  normal
+  areaMm2
+```
+
+`src/cad/topology-ref.ts` builds a deterministic local frame for the referenced face. The frame origin is the world origin projected onto the face plane, U is the projected global X direction where possible, and V completes the in-plane frame. Hole/Cut then store local `uMm` / `vMm` values rather than depending only on transient runtime topology.
+
+Current end-to-end face workflow:
+
+```text
+select exact horizontal top/bottom face
+    -> Add Hole / Cut
+        -> persist FaceTopologyRef + local U/V
+            -> save/reload schema v3
+                -> change upstream width/depth/height
+                    -> rebuild topology evolution
+                        -> resolve intended face conservatively
+                            -> rebuild local frame
+                                -> exact through Hole/Cut
+```
+
+For this first face-bound milestone, only horizontal faces descended from the base `top`/`bottom` lineages are accepted. This restriction keeps the lightweight mesh/STL path and the exact STEP path aligned. Arbitrary side-face and angled-face drilling requires an oriented-tool path in both kernels and is intentionally not claimed yet.
 
 ## Feature order
 
@@ -86,28 +107,27 @@ A topology reference is resolved at the point in the ordered history where its o
 
 ## Project schema migration
 
-Editable project files now save as schema v2. The loader still accepts schema v1 and migrates the legacy Fillet selection string:
+Editable project files now save as schema v3.
 
-```text
-outer-vertical-edges
-```
+- schema v1: legacy Fillet string + global Hole/Cut coordinates;
+- schema v2: durable edge refs for Fillet;
+- schema v3: durable face refs + local U/V placement for Hole/Cut.
 
-to the explicit v2 preset object. New topology-bound Fillets are stored directly as `EdgeTopologyRef` values. Unsupported or malformed topology references are rejected during project loading.
+The loader accepts v1, v2 and v3. Unsupported or malformed topology references are rejected before a project can enter runtime state.
 
 ## Next topology milestone
 
-The next target is a persisted face reference that can drive local coordinate frames for Hole/Cut placement:
+The next target is an oriented face-tool path:
 
 ```text
-select exact face
-    -> create face reference
-        -> place hole/cut in face-local coordinates
-            -> rebuild upstream geometry
-                -> resolve face ancestry safely
-                    -> regenerate the feature on the intended face
+select exact side/angled face
+    -> resolve FaceTopologyRef
+        -> construct current local frame
+            -> orient Hole/Cut tool along face normal
+                -> preserve fast-preview parity
 ```
 
-After that, the same reference model can support selected-edge Chamfer and more general per-edge/per-face feature editing.
+After that, selected-edge Chamfer can reuse the same durable edge-reference model.
 
 ## Threading and lifecycle
 
