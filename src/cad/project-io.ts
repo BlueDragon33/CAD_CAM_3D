@@ -2,15 +2,18 @@ import type {
   CadFeature,
   CadProject,
   Dimensions,
+  EdgeTopologyRef,
+  FilletSelection,
   PrintProfile,
   SketchConstraint,
+  Vec3Tuple,
 } from './model';
 
 const PROJECT_FORMAT = 'cad-cam-3d-project';
-const PROJECT_SCHEMA_VERSION = 1;
+const PROJECT_SCHEMA_VERSION = 2;
 const materials = new Set<PrintProfile['material']>(['PLA', 'PETG', 'ABS', 'ASA', 'PA-CF', 'Other']);
 
-export type ProjectDocumentV1 = {
+export type ProjectDocumentV2 = {
   format: typeof PROJECT_FORMAT;
   schemaVersion: typeof PROJECT_SCHEMA_VERSION;
   savedAt: string;
@@ -26,6 +29,8 @@ export type ProjectSaveReport = {
 export type ProjectLoadReport = {
   fileName: string;
   schemaVersion: number;
+  sourceSchemaVersion: number;
+  migrated: boolean;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -60,6 +65,24 @@ function readDimensions(value: unknown, label: string): Dimensions {
   };
 }
 
+function readTuple(value: unknown, label: string): Vec3Tuple {
+  if (!Array.isArray(value) || value.length !== 3) throw new Error(`${label} must be a three-number tuple.`);
+  const result = value.map((entry) => {
+    if (typeof entry !== 'number' || !Number.isFinite(entry)) throw new Error(`${label} must contain finite numbers.`);
+    return entry;
+  });
+  return [result[0], result[1], result[2]];
+}
+
+function readStringArray(value: unknown, label: string) {
+  if (!Array.isArray(value)) throw new Error(`${label} must be an array.`);
+  const result = value.map((entry, index) => {
+    if (typeof entry !== 'string' || entry.trim().length === 0) throw new Error(`${label}[${index}] must be a non-empty string.`);
+    return entry;
+  });
+  return [...new Set(result)].sort();
+}
+
 function readConstraints(value: unknown, label: string): SketchConstraint[] {
   if (!Array.isArray(value)) throw new Error(`${label} must be an array.`);
   return value.map((entry, index) => {
@@ -79,7 +102,46 @@ function readConstraints(value: unknown, label: string): SketchConstraint[] {
   });
 }
 
-function readFeature(value: unknown, index: number): CadFeature {
+function readEdgeTopologyRef(value: unknown, label: string): EdgeTopologyRef {
+  if (!isRecord(value) || value.kind !== 'edge') throw new Error(`${label} must be an edge topology reference.`);
+  const signature = value.signature;
+  if (!isRecord(signature)) throw new Error(`${label}.signature must be an object.`);
+  const captured = value.capturedAfterFeatureId;
+  if (captured !== null && (typeof captured !== 'string' || captured.trim().length === 0)) {
+    throw new Error(`${label}.capturedAfterFeatureId must be null or a non-empty string.`);
+  }
+  return {
+    kind: 'edge',
+    adjacentFaceLineageIds: readStringArray(value.adjacentFaceLineageIds, `${label}.adjacentFaceLineageIds`),
+    capturedAfterFeatureId: captured as string | null,
+    signature: {
+      curveKind: readString(signature, 'curveKind', `${label}.signature.curveKind`),
+      lengthMm: readNumber(signature, 'lengthMm', `${label}.signature.lengthMm`, 1e-9),
+      midpoint: readTuple(signature.midpoint, `${label}.signature.midpoint`),
+      start: readTuple(signature.start, `${label}.signature.start`),
+      end: readTuple(signature.end, `${label}.signature.end`),
+    },
+  };
+}
+
+function readFilletSelection(value: unknown, label: string, sourceSchemaVersion: number): FilletSelection {
+  if (sourceSchemaVersion === 1) {
+    if (value !== 'outer-vertical-edges') throw new Error(`${label} contains an unsupported legacy fillet selection.`);
+    return { mode: 'preset', preset: 'outer-vertical-edges' };
+  }
+
+  if (!isRecord(value)) throw new Error(`${label} must be an object.`);
+  if (value.mode === 'preset') {
+    if (value.preset !== 'outer-vertical-edges') throw new Error(`${label}.preset is unsupported.`);
+    return { mode: 'preset', preset: 'outer-vertical-edges' };
+  }
+  if (value.mode === 'topology') {
+    return { mode: 'topology', ref: readEdgeTopologyRef(value.ref, `${label}.ref`) };
+  }
+  throw new Error(`${label}.mode must be preset or topology.`);
+}
+
+function readFeature(value: unknown, index: number, sourceSchemaVersion: number): CadFeature {
   const label = `project.features[${index}]`;
   if (!isRecord(value)) throw new Error(`${label} must be an object.`);
   const id = readString(value, 'id', `${label}.id`);
@@ -144,7 +206,6 @@ function readFeature(value: unknown, index: number): CadFeature {
   }
 
   if (kind === 'fillet') {
-    if (params.selection !== 'outer-vertical-edges') throw new Error(`${label} contains an unsupported fillet selection.`);
     return {
       id,
       kind,
@@ -152,7 +213,7 @@ function readFeature(value: unknown, index: number): CadFeature {
       enabled,
       params: {
         radius: readNumber(params, 'radius', `${label}.params.radius`, 0),
-        selection: 'outer-vertical-edges',
+        selection: readFilletSelection(params.selection, `${label}.params.selection`, sourceSchemaVersion),
       },
     };
   }
@@ -172,14 +233,14 @@ function readPrintProfile(value: unknown): PrintProfile {
   };
 }
 
-function readProject(value: unknown): CadProject {
+function readProject(value: unknown, sourceSchemaVersion: number): CadProject {
   if (!isRecord(value)) throw new Error('project must be an object.');
   if (!Array.isArray(value.features)) throw new Error('project.features must be an array.');
   return {
     id: readString(value, 'id', 'project.id'),
     name: readString(value, 'name', 'project.name'),
     dimensions: readDimensions(value.dimensions, 'project.dimensions'),
-    features: value.features.map(readFeature),
+    features: value.features.map((feature, index) => readFeature(feature, index, sourceSchemaVersion)),
     printProfile: readPrintProfile(value.printProfile),
   };
 }
@@ -190,7 +251,7 @@ function safeFileName(name: string) {
 }
 
 export function serializeProject(project: CadProject): string {
-  const document: ProjectDocumentV1 = {
+  const document: ProjectDocumentV2 = {
     format: PROJECT_FORMAT,
     schemaVersion: PROJECT_SCHEMA_VERSION,
     savedAt: new Date().toISOString(),
@@ -199,7 +260,12 @@ export function serializeProject(project: CadProject): string {
   return JSON.stringify(document, null, 2);
 }
 
-export function parseProjectDocument(text: string): { project: CadProject; schemaVersion: number } {
+export function parseProjectDocument(text: string): {
+  project: CadProject;
+  schemaVersion: number;
+  sourceSchemaVersion: number;
+  migrated: boolean;
+} {
   let raw: unknown;
   try {
     raw = JSON.parse(text) as unknown;
@@ -209,13 +275,16 @@ export function parseProjectDocument(text: string): { project: CadProject; schem
 
   if (!isRecord(raw)) throw new Error('Project document must be an object.');
   if (raw.format !== PROJECT_FORMAT) throw new Error('This file is not a CAD_CAM_3D project document.');
-  if (raw.schemaVersion !== PROJECT_SCHEMA_VERSION) {
-    throw new Error(`Unsupported project schema version ${String(raw.schemaVersion)}. Expected ${PROJECT_SCHEMA_VERSION}.`);
+  const sourceSchemaVersion = raw.schemaVersion;
+  if (sourceSchemaVersion !== 1 && sourceSchemaVersion !== PROJECT_SCHEMA_VERSION) {
+    throw new Error(`Unsupported project schema version ${String(sourceSchemaVersion)}. Supported versions are 1 and ${PROJECT_SCHEMA_VERSION}.`);
   }
 
   return {
-    project: readProject(raw.project),
+    project: readProject(raw.project, sourceSchemaVersion),
     schemaVersion: PROJECT_SCHEMA_VERSION,
+    sourceSchemaVersion,
+    migrated: sourceSchemaVersion !== PROJECT_SCHEMA_VERSION,
   };
 }
 
@@ -243,6 +312,8 @@ export async function loadProjectFile(file: File): Promise<{ project: CadProject
     report: {
       fileName: file.name,
       schemaVersion: parsed.schemaVersion,
+      sourceSchemaVersion: parsed.sourceSchemaVersion,
+      migrated: parsed.migrated,
     },
   };
 }
