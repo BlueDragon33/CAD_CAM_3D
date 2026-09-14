@@ -1,4 +1,4 @@
-export type FeatureKind = 'sketch' | 'extrude' | 'cut' | 'hole' | 'fillet';
+export type FeatureKind = 'sketch' | 'extrude' | 'cut' | 'hole' | 'fillet' | 'chamfer';
 
 export type Dimensions = {
   width: number;
@@ -8,11 +8,7 @@ export type Dimensions = {
 
 export type Vec3Tuple = [number, number, number];
 
-/**
- * Persisted application-level reference to an exact B-Rep edge.
- * Runtime OCCT handles/hashes are intentionally excluded because they are not
- * durable across sessions or rebuilds.
- */
+/** Persisted application-level reference to an exact B-Rep edge. */
 export type EdgeTopologyRef = {
   kind: 'edge';
   adjacentFaceLineageIds: string[];
@@ -26,11 +22,7 @@ export type EdgeTopologyRef = {
   };
 };
 
-/**
- * Persisted application-level reference to an exact B-Rep face. The semantic
- * lineage is the primary anchor and the geometric signature is used only as a
- * conservative disambiguation/fallback signal.
- */
+/** Persisted application-level reference to an exact B-Rep face. */
 export type FaceTopologyRef = {
   kind: 'face';
   lineageIds: string[];
@@ -42,16 +34,13 @@ export type FaceTopologyRef = {
   };
 };
 
-export type FilletSelection =
+export type EdgeTreatmentSelection =
   | { mode: 'preset'; preset: 'outer-vertical-edges' }
   | { mode: 'topology'; ref: EdgeTopologyRef };
 
-/**
- * The lightweight mesh path still consumes cached global X/Z coordinates.
- * Face-bound placement adds a durable exact-face anchor plus local in-plane
- * coordinates. The first integrated face workflow is intentionally limited to
- * horizontal planar faces so the fast preview, STL and exact B-Rep stay aligned.
- */
+export type FilletSelection = EdgeTreatmentSelection;
+export type ChamferSelection = EdgeTreatmentSelection;
+
 export type FeaturePlacement =
   | { mode: 'global-xz' }
   | { mode: 'face'; ref: FaceTopologyRef; uMm: number; vMm: number };
@@ -103,7 +92,12 @@ export type FilletFeature = FeatureBase<'fillet', {
   selection: FilletSelection;
 }>;
 
-export type CadFeature = SketchFeature | ExtrudeFeature | CutFeature | HoleFeature | FilletFeature;
+export type ChamferFeature = FeatureBase<'chamfer', {
+  distance: number;
+  selection: ChamferSelection;
+}>;
+
+export type CadFeature = SketchFeature | ExtrudeFeature | CutFeature | HoleFeature | FilletFeature | ChamferFeature;
 
 export type PrintProfile = {
   name: string;
@@ -129,6 +123,7 @@ function featureName(kind: FeatureKind, project: CadProject) {
     cut: 'Cut',
     hole: 'Hole',
     fillet: 'Fillet',
+    chamfer: 'Chamfer',
   };
   return `${label[kind]} ${count}`;
 }
@@ -161,34 +156,29 @@ export function createFeature(kind: FeatureKind, project: CadProject): CadFeatur
   }
 
   if (kind === 'hole') {
-    return {
-      ...base,
-      kind,
-      params: { diameter: 4, x: 0, z: 0, through: true, placement: { mode: 'global-xz' } },
-    };
+    return { ...base, kind, params: { diameter: 4, x: 0, z: 0, through: true, placement: { mode: 'global-xz' } } };
   }
 
   if (kind === 'cut') {
+    return { ...base, kind, params: { shape: 'rectangle', width: 12, depth: 8, x: 0, z: 0, through: true, placement: { mode: 'global-xz' } } };
+  }
+
+  if (kind === 'fillet') {
     return {
       ...base,
       kind,
       params: {
-        shape: 'rectangle',
-        width: 12,
-        depth: 8,
-        x: 0,
-        z: 0,
-        through: true,
-        placement: { mode: 'global-xz' },
+        radius: 2,
+        selection: { mode: 'preset', preset: 'outer-vertical-edges' },
       },
     };
   }
 
   return {
     ...base,
-    kind: 'fillet',
+    kind: 'chamfer',
     params: {
-      radius: 2,
+      distance: 1.5,
       selection: { mode: 'preset', preset: 'outer-vertical-edges' },
     },
   };
