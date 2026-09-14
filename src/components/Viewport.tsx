@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import type { CadProject } from '../cad/model';
@@ -56,11 +56,22 @@ function edgeLine(edge: ExactEdgeTopology) {
 
 export function Viewport({
   project,
-  selectionMode = 'off',
-  selection = null,
+  selectionMode,
+  selection,
   onSelectionChange,
   onExactStatus,
 }: Props) {
+  const [localMode, setLocalMode] = useState<TopologySelectionMode>('off');
+  const [localSelection, setLocalSelection] = useState<TopologySelection | null>(null);
+  const [localStatus, setLocalStatus] = useState<{ status: ExactStatus; message: string }>({
+    status: 'idle',
+    message: 'Fast mesh preview active.',
+  });
+  const [exactRevision, setExactRevision] = useState(0);
+
+  const effectiveMode = selectionMode ?? localMode;
+  const effectiveSelection = selection === undefined ? localSelection : selection;
+
   const mountRef = useRef<HTMLDivElement>(null);
   const partGroupRef = useRef<THREE.Group | null>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
@@ -70,26 +81,32 @@ export function Viewport({
   const exactEdgeLinesRef = useRef<THREE.Line[]>([]);
   const exactSnapshotRef = useRef<ExactKernelSnapshot | null>(null);
   const highlightRef = useRef<THREE.Object3D | null>(null);
-  const selectionModeRef = useRef<TopologySelectionMode>(selectionMode);
-  const selectionRef = useRef<TopologySelection | null>(selection);
-  const onSelectionChangeRef = useRef(onSelectionChange);
-  const onExactStatusRef = useRef(onExactStatus);
+  const selectionModeRef = useRef<TopologySelectionMode>(effectiveMode);
+  const selectionRef = useRef<TopologySelection | null>(effectiveSelection);
+  const onSelectionChangeRef = useRef<(next: TopologySelection | null) => void>(() => undefined);
+  const onExactStatusRef = useRef<(status: ExactStatus, message: string) => void>(() => undefined);
   const edgePickThresholdRef = useRef(1.2);
 
   useEffect(() => {
-    selectionModeRef.current = selectionMode;
-  }, [selectionMode]);
+    selectionModeRef.current = effectiveMode;
+  }, [effectiveMode]);
 
   useEffect(() => {
-    selectionRef.current = selection;
-  }, [selection]);
+    selectionRef.current = effectiveSelection;
+  }, [effectiveSelection]);
 
   useEffect(() => {
-    onSelectionChangeRef.current = onSelectionChange;
-  }, [onSelectionChange]);
+    onSelectionChangeRef.current = (next) => {
+      if (selection === undefined) setLocalSelection(next);
+      onSelectionChange?.(next);
+    };
+  }, [selection, onSelectionChange]);
 
   useEffect(() => {
-    onExactStatusRef.current = onExactStatus;
+    onExactStatusRef.current = (status, message) => {
+      setLocalStatus({ status, message });
+      onExactStatus?.(status, message);
+    };
   }, [onExactStatus]);
 
   useEffect(() => {
@@ -167,18 +184,18 @@ export function Viewport({
         if (!mesh) return;
         const hit = raycaster.intersectObject(mesh, false)[0];
         if (!hit || hit.faceIndex == null) {
-          onSelectionChangeRef.current?.(null);
+          onSelectionChangeRef.current(null);
           return;
         }
         const face = resolveFaceFromTriangle(snapshot.topology.faces, hit.faceIndex);
-        onSelectionChangeRef.current?.(face ? selectionFromFace(face) : null);
+        onSelectionChangeRef.current(face ? selectionFromFace(face) : null);
         return;
       }
 
       raycaster.params.Line = { threshold: edgePickThresholdRef.current };
       const hit = raycaster.intersectObjects(exactEdgeLinesRef.current, false)[0];
       const edge = hit?.object.userData.edgeTopology as ExactEdgeTopology | undefined;
-      onSelectionChangeRef.current?.(edge ? selectionFromEdge(edge) : null);
+      onSelectionChangeRef.current(edge ? selectionFromEdge(edge) : null);
     };
 
     renderer.domElement.addEventListener('pointerdown', onPointerDown);
@@ -238,8 +255,8 @@ export function Viewport({
       }
     };
 
-    if (selectionMode === 'off') {
-      onExactStatusRef.current?.('idle', 'Fast mesh preview active.');
+    if (effectiveMode === 'off') {
+      onExactStatusRef.current('idle', 'Fast mesh preview active.');
       const { rebuilt, geometry } = activeCadKernel.buildMesh(project);
       if (!geometry) return;
 
@@ -253,7 +270,7 @@ export function Viewport({
       return;
     }
 
-    onExactStatusRef.current?.('loading', `Loading exact ${selectionMode} topology…`);
+    onExactStatusRef.current('loading', `Loading exact ${effectiveMode} topology…`);
     void (async () => {
       try {
         const snapshot = await buildExactKernelSnapshot(project, { includeStep: false });
@@ -276,8 +293,8 @@ export function Viewport({
 
         const currentSelection = selectionRef.current;
         if (currentSelection) {
-          if (currentSelection.kind !== selectionMode) {
-            onSelectionChangeRef.current?.(null);
+          if (currentSelection.kind !== effectiveMode) {
+            onSelectionChangeRef.current(null);
           } else {
             const span = Math.max(snapshot.rebuilt.width, snapshot.rebuilt.depth, snapshot.rebuilt.height, 1);
             const remapped = remapTopologySelection(
@@ -286,20 +303,21 @@ export function Viewport({
               snapshot.topology.edges,
               span,
             );
-            if (!sameSelection(currentSelection, remapped)) onSelectionChangeRef.current?.(remapped);
+            if (!sameSelection(currentSelection, remapped)) onSelectionChangeRef.current(remapped);
           }
         }
 
+        setExactRevision((revision) => revision + 1);
         const warningSuffix = snapshot.report.warnings.length > 0
           ? ` · ${snapshot.report.warnings.length} warning(s)`
           : '';
-        onExactStatusRef.current?.(
+        onExactStatusRef.current(
           'ready',
           `Exact topology ready · ${snapshot.topology.faces.length} faces · ${snapshot.topology.edges.length} edges${warningSuffix}`,
         );
       } catch (error) {
         if (cancelled) return;
-        onExactStatusRef.current?.(
+        onExactStatusRef.current(
           'error',
           error instanceof Error ? `Exact topology failed: ${error.message}` : 'Exact topology failed.',
         );
@@ -309,7 +327,7 @@ export function Viewport({
     return () => {
       cancelled = true;
     };
-  }, [project, selectionMode]);
+  }, [project, effectiveMode]);
 
   useEffect(() => {
     const group = partGroupRef.current;
@@ -322,12 +340,12 @@ export function Viewport({
       highlightRef.current = null;
     }
 
-    if (!selection || selectionMode === 'off') return;
+    if (!effectiveSelection || effectiveMode === 'off') return;
     const snapshot = exactSnapshotRef.current;
     if (!snapshot) return;
 
-    if (selection.kind === 'face') {
-      const face = snapshot.topology.faces.find((entry) => entry.runtimeId === selection.runtimeId || entry.hash === selection.hash);
+    if (effectiveSelection.kind === 'face') {
+      const face = snapshot.topology.faces.find((entry) => entry.runtimeId === effectiveSelection.runtimeId || entry.hash === effectiveSelection.hash);
       if (!face) return;
       const geometry = snapshot.geometry.clone();
       geometry.setDrawRange(face.triangleStart * 3, face.triangleCount * 3);
@@ -347,7 +365,7 @@ export function Viewport({
       return;
     }
 
-    const edge = snapshot.topology.edges.find((entry) => entry.runtimeId === selection.runtimeId || entry.hash === selection.hash);
+    const edge = snapshot.topology.edges.find((entry) => entry.runtimeId === effectiveSelection.runtimeId || entry.hash === effectiveSelection.hash);
     if (!edge) return;
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(edge.points), 3));
@@ -356,14 +374,39 @@ export function Viewport({
     highlight.renderOrder = 10;
     highlightRef.current = highlight;
     group.add(highlight);
-  }, [selection, selectionMode]);
+  }, [effectiveSelection, effectiveMode, exactRevision]);
+
+  const setMode = (mode: TopologySelectionMode) => {
+    if (selectionMode !== undefined) return;
+    const nextMode = effectiveMode === mode ? 'off' : mode;
+    setLocalMode(nextMode);
+    if (nextMode === 'off' || localSelection?.kind !== nextMode) setLocalSelection(null);
+  };
 
   return (
-    <div
-      ref={mountRef}
-      className="viewport"
-      data-selection-mode={selectionMode}
-      aria-label="3D parametric preview viewport"
-    />
+    <div className="viewport-shell">
+      <div
+        ref={mountRef}
+        className="viewport"
+        data-selection-mode={effectiveMode}
+        aria-label="3D parametric preview viewport"
+      />
+      <div className="topology-toolbar" aria-label="Exact topology selection tools">
+        <button type="button" data-active={effectiveMode === 'face'} onClick={() => setMode('face')} disabled={selectionMode !== undefined}>
+          Face
+        </button>
+        <button type="button" data-active={effectiveMode === 'edge'} onClick={() => setMode('edge')} disabled={selectionMode !== undefined}>
+          Edge
+        </button>
+        <button type="button" onClick={() => onSelectionChangeRef.current(null)} disabled={!effectiveSelection}>
+          Clear
+        </button>
+      </div>
+      <div className="topology-status" data-status={localStatus.status}>
+        <strong>{effectiveMode === 'off' ? 'Fast preview' : `Exact ${effectiveMode} selection`}</strong>
+        <span>{localStatus.message}</span>
+        {effectiveSelection ? <small>Selected {effectiveSelection.runtimeId}</small> : null}
+      </div>
+    </div>
   );
 }
