@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import type { Mesh, OcctKernel, ShapeHandle } from 'occt-wasm';
-import type { CadProject } from './model';
+import type { CadProject, FeaturePlacement } from './model';
 import { rebuildProject, type RebuiltPart } from './rebuild';
 import {
   deriveFaceTopology,
@@ -14,11 +14,13 @@ import {
   type TopologyEvolutionTrace,
 } from './topology-evolution';
 import {
-  isSupportedHorizontalFace,
+  isSupportedPlanarFace,
   pointFromFaceLocal,
   resolveEdgeTopologyRef,
   resolveFaceTopologyRef,
+  type FaceLocalFrame,
 } from './topology-ref';
+import { makeOrientedBoxTool, makeOrientedCylinderTool } from './oriented-tool';
 
 // OCCT mesh face groups use TopTools_ShapeMapHasher % 2147483647. Keep every
 // topology query/history call in the same hash domain so groups, evolution and
@@ -217,17 +219,22 @@ function currentExactFaces(
   }
 }
 
-function resolveFaceBoundPoint(
+type ResolvedFacePlacement = {
+  point: Vec3Tuple;
+  frame: FaceLocalFrame;
+};
+
+function resolveFaceBoundPlacement(
   kernel: OcctKernel,
   shape: ShapeHandle,
   tracker: FaceLineageTracker,
   rebuilt: RebuiltPart,
   featureName: string,
-  placement: Extract<import('./model').FeaturePlacement, { mode: 'face' }>,
+  placement: Extract<FeaturePlacement, { mode: 'face' }>,
   warnings: string[],
-): { x: number; z: number } | null {
-  if (!isSupportedHorizontalFace(placement.ref)) {
-    warnings.push(`${featureName}: face-bound placement currently supports only horizontal top/bottom planar faces.`);
+): ResolvedFacePlacement | null {
+  if (!isSupportedPlanarFace(placement.ref)) {
+    warnings.push(`${featureName}: face-bound placement currently accepts only planar descendants of the six base-extrusion faces.`);
     return null;
   }
 
@@ -238,16 +245,12 @@ function resolveFaceBoundPoint(
     warnings.push(`${featureName}: face-bound placement skipped because the persisted face reference could not be resolved safely.`);
     return null;
   }
-  if (Math.abs(resolution.face.normal[1]) < 0.985) {
-    warnings.push(`${featureName}: resolved face is no longer horizontal, so the current through-cut path refused to retarget it.`);
-    return null;
-  }
   if (resolution.confidence === 'medium') {
     warnings.push(`${featureName}: persisted face resolved with medium confidence after rebuild.`);
   }
 
   const point = pointFromFaceLocal(resolution.frame, placement.uMm, placement.vMm);
-  return { x: point[0], z: point[2] };
+  return { point, frame: resolution.frame };
 }
 
 function buildExactShape(kernel: OcctKernel, project: CadProject, rebuilt: RebuiltPart) {
@@ -266,13 +269,30 @@ function buildExactShape(kernel: OcctKernel, project: CadProject, rebuilt: Rebui
 
   for (const feature of rebuilt.operationSequence) {
     if (feature.kind === 'hole') {
-      const point = feature.params.placement.mode === 'face'
-        ? resolveFaceBoundPoint(kernel, shape, tracker, rebuilt, feature.name, feature.params.placement, warnings)
-        : { x: feature.params.x, z: feature.params.z };
-      if (!point) continue;
+      let tool: ShapeHandle;
+      if (feature.params.placement.mode === 'face') {
+        const placement = resolveFaceBoundPlacement(
+          kernel,
+          shape,
+          tracker,
+          rebuilt,
+          feature.name,
+          feature.params.placement,
+          warnings,
+        );
+        if (!placement) continue;
+        tool = makeOrientedCylinderTool(
+          kernel,
+          feature.params.diameter / 2,
+          placement.point,
+          placement.frame,
+          rebuilt,
+        );
+      } else {
+        tool = kernel.makeCylinder(feature.params.diameter / 2, rebuilt.height + CUT_OVERRUN_MM * 2);
+        tool = kernel.translate(tool, feature.params.x, feature.params.z, -CUT_OVERRUN_MM);
+      }
 
-      let tool = kernel.makeCylinder(feature.params.diameter / 2, rebuilt.height + CUT_OVERRUN_MM * 2);
-      tool = kernel.translate(tool, point.x, point.z, -CUT_OVERRUN_MM);
       const before = currentFaceHashes(kernel, shape);
       const evolution = kernel.cutWithHistory(shape, tool, before, HASH_UPPER_BOUND);
       shape = evolution.result;
@@ -282,18 +302,36 @@ function buildExactShape(kernel: OcctKernel, project: CadProject, rebuilt: Rebui
     }
 
     if (feature.kind === 'cut') {
-      const point = feature.params.placement.mode === 'face'
-        ? resolveFaceBoundPoint(kernel, shape, tracker, rebuilt, feature.name, feature.params.placement, warnings)
-        : { x: feature.params.x, z: feature.params.z };
-      if (!point) continue;
+      let tool: ShapeHandle;
+      if (feature.params.placement.mode === 'face') {
+        const placement = resolveFaceBoundPlacement(
+          kernel,
+          shape,
+          tracker,
+          rebuilt,
+          feature.name,
+          feature.params.placement,
+          warnings,
+        );
+        if (!placement) continue;
+        tool = makeOrientedBoxTool(
+          kernel,
+          feature.params.width,
+          feature.params.depth,
+          placement.point,
+          placement.frame,
+          rebuilt,
+        );
+      } else {
+        tool = kernel.makeBox(feature.params.width, feature.params.depth, rebuilt.height + CUT_OVERRUN_MM * 2);
+        tool = kernel.translate(
+          tool,
+          feature.params.x - feature.params.width / 2,
+          feature.params.z - feature.params.depth / 2,
+          -CUT_OVERRUN_MM,
+        );
+      }
 
-      let tool = kernel.makeBox(feature.params.width, feature.params.depth, rebuilt.height + CUT_OVERRUN_MM * 2);
-      tool = kernel.translate(
-        tool,
-        point.x - feature.params.width / 2,
-        point.z - feature.params.depth / 2,
-        -CUT_OVERRUN_MM,
-      );
       const before = currentFaceHashes(kernel, shape);
       const evolution = kernel.cutWithHistory(shape, tool, before, HASH_UPPER_BOUND);
       shape = evolution.result;
@@ -534,10 +572,11 @@ export const exactKernelDescriptor = {
     exactBrep: true,
     editableTopology: false,
     meshPreview: true,
-    stlExport: false,
+    stlExport: true,
     stepExport: true,
     exactFillet: true,
     faceBoundThroughFeatures: true,
+    orientedFaceBoundThroughFeatures: true,
     exactChamfer: false,
     shell: false,
   },
