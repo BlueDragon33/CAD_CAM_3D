@@ -5,12 +5,15 @@ import {
   type CadFeature,
   type CadProject,
   type FeatureKind,
+  type FilletFeature,
 } from './cad/model';
 import { interpretCommand } from './cad/command';
 import { activeCadKernel } from './cad/kernel';
 import { exactKernelDescriptor } from './cad/exact-kernel';
 import { downloadProjectFile, loadProjectFile } from './cad/project-io';
 import { rebuildProject } from './cad/rebuild';
+import { createEdgeTopologyRef } from './cad/topology-ref';
+import type { TopologySelection } from './cad/topology-selection';
 import { validateForPrint } from './manufacturing/validate';
 import { downloadProjectStl, type StlExportReport } from './manufacturing/export';
 import { downloadProjectStep, type StepExportReport } from './manufacturing/step-export';
@@ -34,9 +37,14 @@ function numberValue(raw: string, minimum = 0) {
   return clampDimension(Number(raw), minimum);
 }
 
+function lastEnabledFeatureId(features: CadFeature[]) {
+  return [...features].reverse().find((feature) => feature.enabled)?.id ?? null;
+}
+
 export default function App() {
   const [project, setProject] = useState<CadProject>(() => createDefaultProject());
   const [selectedFeatureId, setSelectedFeatureId] = useState<string | null>(() => project.features[1]?.id ?? project.features[0]?.id ?? null);
+  const [topologySelection, setTopologySelection] = useState<TopologySelection | null>(null);
   const [command, setCommand] = useState('');
   const [status, setStatus] = useState('General CAD foundation ready.');
   const [lastExport, setLastExport] = useState<StlExportReport | null>(null);
@@ -62,8 +70,35 @@ export default function App() {
     setStatus(message ?? `${featureLabels[feature.kind]} added to the parametric history.`);
   };
 
+  const bindFilletToCurrentEdge = (feature: FilletFeature, featuresBefore: CadFeature[]) => {
+    if (topologySelection?.kind !== 'edge') return feature;
+    return {
+      ...feature,
+      params: {
+        ...feature.params,
+        selection: {
+          mode: 'topology' as const,
+          ref: createEdgeTopologyRef(topologySelection, lastEnabledFeatureId(featuresBefore)),
+        },
+      },
+    };
+  };
+
   const addFeature = (kind: FeatureKind) => {
-    appendFeature(createFeature(kind, project));
+    let feature = createFeature(kind, project);
+    if (feature.kind === 'fillet') {
+      const bound = bindFilletToCurrentEdge(feature, project.features);
+      const boundToEdge = bound.params.selection.mode === 'topology';
+      feature = bound;
+      appendFeature(
+        feature,
+        boundToEdge
+          ? 'Fillet added with a durable exact-edge topology reference.'
+          : 'Fillet added using the outer vertical-edge preset. Select an exact edge first to bind one edge.',
+      );
+      return;
+    }
+    appendFeature(feature);
   };
 
   const updateFeature = (id: string, updater: (feature: CadFeature) => CadFeature) => {
@@ -83,6 +118,25 @@ export default function App() {
     setProject((current) => ({ ...current, features: current.features.filter((feature) => feature.id !== selectedFeature.id) }));
     setSelectedFeatureId(null);
     setStatus(`${selectedFeature.name} removed. Rebuild diagnostics will report any broken dependency.`);
+  };
+
+  const rebindSelectedFillet = () => {
+    if (!selectedFeature || selectedFeature.kind !== 'fillet' || topologySelection?.kind !== 'edge') return;
+    const featureIndex = project.features.findIndex((feature) => feature.id === selectedFeature.id);
+    const before = featureIndex > 0 ? project.features.slice(0, featureIndex) : [];
+    const ref = createEdgeTopologyRef(topologySelection, lastEnabledFeatureId(before));
+    updateFeature(selectedFeature.id, (feature) => feature.kind === 'fillet'
+      ? { ...feature, params: { ...feature.params, selection: { mode: 'topology', ref } } }
+      : feature);
+    setStatus(`${selectedFeature.name} rebound to the selected exact edge. The reference will be resolved after upstream rebuilds.`);
+  };
+
+  const useFilletPreset = () => {
+    if (!selectedFeature || selectedFeature.kind !== 'fillet') return;
+    updateFeature(selectedFeature.id, (feature) => feature.kind === 'fillet'
+      ? { ...feature, params: { ...feature.params, selection: { mode: 'preset', preset: 'outer-vertical-edges' } } }
+      : feature);
+    setStatus(`${selectedFeature.name} now targets the outer vertical-edge preset.`);
   };
 
   const runCommand = (event: FormEvent) => {
@@ -107,9 +161,17 @@ export default function App() {
           },
         };
       } else if (feature.kind === 'fillet' && result.feature.kind === 'fillet') {
-        feature = { ...feature, params: { ...feature.params, radius: clampDimension(result.feature.radius, 0) } };
+        feature = bindFilletToCurrentEdge(
+          { ...feature, params: { ...feature.params, radius: clampDimension(result.feature.radius, 0) } },
+          project.features,
+        );
       }
-      appendFeature(feature, result.message);
+      appendFeature(
+        feature,
+        feature.kind === 'fillet' && feature.params.selection.mode === 'topology'
+          ? `${result.message} Bound to the currently selected exact edge.`
+          : result.message,
+      );
     } else {
       setStatus(result.message);
     }
@@ -132,9 +194,13 @@ export default function App() {
       const loaded = await loadProjectFile(file);
       setProject(loaded.project);
       setSelectedFeatureId(loaded.project.features[1]?.id ?? loaded.project.features[0]?.id ?? null);
+      setTopologySelection(null);
       setLastExport(null);
       setLastStepExport(null);
-      setStatus(`Project opened · schema v${loaded.report.schemaVersion} · ${loaded.report.fileName}.`);
+      const migration = loaded.report.migrated
+        ? ` · migrated schema v${loaded.report.sourceSchemaVersion} → v${loaded.report.schemaVersion}`
+        : ` · schema v${loaded.report.schemaVersion}`;
+      setStatus(`Project opened${migration} · ${loaded.report.fileName}.`);
     } catch (error) {
       setStatus(error instanceof Error ? `Project open blocked: ${error.message}` : 'Project open failed.');
     }
@@ -169,9 +235,20 @@ export default function App() {
     const next = createDefaultProject();
     setProject(next);
     setSelectedFeatureId(next.features[1]?.id ?? next.features[0]?.id ?? null);
+    setTopologySelection(null);
     setLastExport(null);
     setLastStepExport(null);
     setStatus('Workspace reset.');
+  };
+
+  const handleTopologySelection = (selection: TopologySelection | null) => {
+    setTopologySelection(selection);
+    if (!selection) return;
+    if (selection.kind === 'edge') {
+      setStatus(`Exact edge selected · ${selection.signature.curveKind} · ${selection.signature.lengthMm.toFixed(2)} mm · ${selection.adjacentFaceLineageIds.length} lineage anchor(s).`);
+    } else {
+      setStatus(`Exact face selected · ${selection.signature.areaMm2.toFixed(2)} mm² · ${selection.lineageIds.length} lineage anchor(s).`);
+    }
   };
 
   const renderInspector = () => {
@@ -209,9 +286,19 @@ export default function App() {
       </div>;
     }
 
+    const topologyBound = selectedFeature.params.selection.mode === 'topology';
     return <div className="inspector-grid">
       <label><span>Radius</span><div><input type="number" step="0.1" value={selectedFeature.params.radius} onChange={(e) => updateFeature(selectedFeature.id, (feature) => feature.kind === 'fillet' ? { ...feature, params: { ...feature.params, radius: numberValue(e.target.value, 0) } } : feature)} /><b>mm</b></div></label>
-      <div className="constraint-state" data-ready={exactKernelDescriptor.capabilities.exactFillet}><strong>{exactKernelDescriptor.capabilities.exactFillet ? 'Exact-kernel path ready' : 'Kernel pending'}</strong><small>Outer vertical-edge fillet is rebuilt by OpenCascade for exact STEP export; the default viewport remains on the lightweight mesh kernel.</small></div>
+      <div className="constraint-state" data-ready={exactKernelDescriptor.capabilities.exactFillet}>
+        <strong>{topologyBound ? 'Persisted exact-edge target' : 'Outer-edge preset'}</strong>
+        <small>{topologyBound
+          ? `${selectedFeature.params.selection.ref.adjacentFaceLineageIds.length} semantic lineage anchor(s) · ${selectedFeature.params.selection.ref.signature.curveKind} · ${selectedFeature.params.selection.ref.signature.lengthMm.toFixed(2)} mm`
+          : 'Current preset fillets all four outer vertical edges in the exact B-Rep path.'}</small>
+      </div>
+      <div className="topology-bind-actions">
+        <button type="button" onClick={rebindSelectedFillet} disabled={topologySelection?.kind !== 'edge'}>Bind selected edge</button>
+        <button type="button" onClick={useFilletPreset} disabled={!topologyBound}>Use 4-edge preset</button>
+      </div>
     </div>;
   };
 
@@ -252,9 +339,22 @@ export default function App() {
           {(['sketch', 'extrude', 'hole', 'cut', 'fillet'] as FeatureKind[]).map((kind) => (
             <button key={kind} type="button" className="tool-button" onClick={() => addFeature(kind)}>
               <span>{featureLabels[kind]}</span>
-              <small>Add feature</small>
+              <small>{kind === 'fillet' && topologySelection?.kind === 'edge' ? 'Use selected edge' : 'Add feature'}</small>
             </button>
           ))}
+
+          <h2>Exact topology</h2>
+          <div className="profile-card">
+            <strong>{topologySelection ? `${topologySelection.kind} selected` : 'No topology selected'}</strong>
+            <span>{topologySelection?.kind === 'edge'
+              ? `${topologySelection.signature.curveKind} · ${topologySelection.signature.lengthMm.toFixed(2)} mm`
+              : topologySelection?.kind === 'face'
+                ? `${topologySelection.signature.areaMm2.toFixed(2)} mm²`
+                : 'Use Face / Edge controls in the viewport.'}</span>
+            <small>{topologySelection?.kind === 'edge'
+              ? 'Adding Fillet now stores semantic ancestry + geometry signature in the project.'
+              : 'Exact selection is lazy-loaded only when requested.'}</small>
+          </div>
 
           <h2>Master parameters</h2>
           <div className="dimension-grid">
@@ -268,8 +368,8 @@ export default function App() {
         </aside>
 
         <section className="canvas-panel">
-          <Viewport project={project} />
-          <div className="canvas-caption">Rebuilt solid · {rebuilt.width} × {rebuilt.depth} × {rebuilt.height} mm · {rebuilt.holes.length} hole(s) · {rebuilt.cuts.length} cut(s)</div>
+          <Viewport project={project} onSelectionChange={handleTopologySelection} />
+          <div className="canvas-caption">Rebuilt solid · {rebuilt.width} × {rebuilt.depth} × {rebuilt.height} mm · {rebuilt.holes.length} hole(s) · {rebuilt.cuts.length} cut(s){topologySelection ? ` · ${topologySelection.kind} selected` : ''}</div>
         </section>
 
         <aside className="panel history-panel">
@@ -279,7 +379,7 @@ export default function App() {
               <li key={feature.id} data-selected={feature.id === selectedFeatureId} data-disabled={!feature.enabled}>
                 <button type="button" onClick={() => setSelectedFeatureId(feature.id)}>
                   <span className="feature-dot" />
-                  <div><strong>{feature.name}</strong><small>{feature.kind}{feature.enabled ? '' : ' · suppressed'}</small></div>
+                  <div><strong>{feature.name}</strong><small>{feature.kind}{feature.kind === 'fillet' && feature.params.selection.mode === 'topology' ? ' · topology-bound' : ''}{feature.enabled ? '' : ' · suppressed'}</small></div>
                 </button>
               </li>
             ))}
@@ -326,8 +426,8 @@ export default function App() {
           </div>
           <div className="profile-card">
             <strong>{exactKernelDescriptor.label}</strong>
-            <span>Exact B-Rep · STEP ready · topology snapshot ready</span>
-            <small>Loaded on demand through WebAssembly; current exact path supports the MVP Sketch → Extrude → Hole/Cut chain and outer-edge Fillet.</small>
+            <span>Exact B-Rep · STEP ready · topology references</span>
+            <small>Selected edges can now be persisted through semantic ancestry and resolved again during exact Fillet rebuilds.</small>
           </div>
 
           <h2>Management</h2>
