@@ -6,8 +6,10 @@ export type ExactFaceTopology = {
   kind: 'face';
   runtimeId: string;
   hash: number;
-  triangleStart: number;
-  triangleCount: number;
+  /** Start offset in the indexed triangle buffer, measured in indices. */
+  indexStart: number;
+  /** Number of indices contributed by this face. Always a multiple of three. */
+  indexCount: number;
   centroid: Vec3Tuple;
   normal: Vec3Tuple;
   areaMm2: number;
@@ -75,8 +77,8 @@ function readVertex(position: THREE.BufferAttribute | THREE.InterleavedBufferAtt
 
 /**
  * Convert OCCT mesh face groups into selection-ready records. occt-wasm emits
- * [triangleStart, triangleCount, faceHash] triples, so a raycast faceIndex can
- * be mapped back to the exact B-Rep face that generated the triangle.
+ * [indexStart, indexCount, faceHash] triples. A Three.js raycast faceIndex is a
+ * triangle ordinal, so it is multiplied by three before group lookup.
  */
 export function deriveFaceTopology(geometry: THREE.BufferGeometry, faceGroups: Int32Array | null) {
   if (!faceGroups || faceGroups.length === 0) return [] as ExactFaceTopology[];
@@ -86,9 +88,13 @@ export function deriveFaceTopology(geometry: THREE.BufferGeometry, faceGroups: I
 
   const faces: ExactFaceTopology[] = [];
   for (let groupIndex = 0; groupIndex + 2 < faceGroups.length; groupIndex += 3) {
-    const triangleStart = faceGroups[groupIndex];
-    const triangleCount = faceGroups[groupIndex + 1];
+    const indexStart = faceGroups[groupIndex];
+    const indexCount = faceGroups[groupIndex + 1];
     const hash = faceGroups[groupIndex + 2];
+
+    if (indexStart < 0 || indexCount <= 0 || indexCount % 3 !== 0 || indexStart + indexCount > index.count) {
+      continue;
+    }
 
     let weightedX = 0;
     let weightedY = 0;
@@ -98,8 +104,7 @@ export function deriveFaceTopology(geometry: THREE.BufferGeometry, faceGroups: I
     let normalZ = 0;
     let areaMm2 = 0;
 
-    for (let triangle = triangleStart; triangle < triangleStart + triangleCount; triangle += 1) {
-      const indexOffset = triangle * 3;
+    for (let indexOffset = indexStart; indexOffset < indexStart + indexCount; indexOffset += 3) {
       const a = readVertex(position, index.getX(indexOffset));
       const b = readVertex(position, index.getX(indexOffset + 1));
       const c = readVertex(position, index.getX(indexOffset + 2));
@@ -141,8 +146,8 @@ export function deriveFaceTopology(geometry: THREE.BufferGeometry, faceGroups: I
       kind: 'face',
       runtimeId: `face:${hash}`,
       hash,
-      triangleStart,
-      triangleCount,
+      indexStart,
+      indexCount,
       centroid,
       normal,
       areaMm2,
@@ -153,7 +158,8 @@ export function deriveFaceTopology(geometry: THREE.BufferGeometry, faceGroups: I
 }
 
 export function resolveFaceFromTriangle(faces: ExactFaceTopology[], faceIndex: number) {
-  return faces.find((face) => faceIndex >= face.triangleStart && faceIndex < face.triangleStart + face.triangleCount) ?? null;
+  const indexOffset = faceIndex * 3;
+  return faces.find((face) => indexOffset >= face.indexStart && indexOffset < face.indexStart + face.indexCount) ?? null;
 }
 
 export function selectionFromFace(face: ExactFaceTopology): FaceSelection {
