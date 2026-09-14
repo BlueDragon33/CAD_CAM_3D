@@ -38,6 +38,8 @@ export type FaceSelection = {
   runtimeId: string;
   hash: number;
   lineageIds: string[];
+  /** Actual viewport hit point used when creating a face-local feature. */
+  pickedPoint: Vec3Tuple;
   signature: {
     centroid: Vec3Tuple;
     normal: Vec3Tuple;
@@ -175,12 +177,13 @@ export function resolveFaceFromTriangle(faces: ExactFaceTopology[], faceIndex: n
   return faces.find((face) => indexOffset >= face.indexStart && indexOffset < face.indexStart + face.indexCount) ?? null;
 }
 
-export function selectionFromFace(face: ExactFaceTopology): FaceSelection {
+export function selectionFromFace(face: ExactFaceTopology, pickedPoint: Vec3Tuple = face.centroid): FaceSelection {
   return {
     kind: 'face',
     runtimeId: face.runtimeId,
     hash: face.hash,
     lineageIds: [...face.lineageIds],
+    pickedPoint: [...pickedPoint],
     signature: {
       centroid: [...face.centroid],
       normal: [...face.normal],
@@ -221,7 +224,7 @@ function lineageOverlap(a: string[], b: string[]) {
 
 function remapFace(selection: FaceSelection, faces: ExactFaceTopology[], spanMm: number) {
   const sameHash = faces.find((face) => face.hash === selection.hash);
-  if (sameHash) return selectionFromFace(sameHash);
+  if (sameHash) return selectionFromFace(sameHash, selection.pickedPoint);
 
   const sameLineage = faces.filter((face) => lineageOverlap(selection.lineageIds, face.lineageIds) > 0);
   const candidates = sameLineage.length > 0 ? sameLineage : faces;
@@ -236,7 +239,7 @@ function remapFace(selection: FaceSelection, faces: ExactFaceTopology[], spanMm:
     if (!best || score < best.score) best = { face, score };
   }
 
-  return best && best.score <= 1.35 ? selectionFromFace(best.face) : null;
+  return best && best.score <= 1.35 ? selectionFromFace(best.face, selection.pickedPoint) : null;
 }
 
 function remapEdge(selection: EdgeSelection, edges: ExactEdgeTopology[], spanMm: number) {
