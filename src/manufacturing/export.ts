@@ -2,6 +2,8 @@ import * as THREE from 'three';
 import { STLExporter } from 'three/examples/jsm/exporters/STLExporter.js';
 import type { CadProject } from '../cad/model';
 import { activeCadKernel } from '../cad/kernel';
+import { buildExactKernelSnapshot } from '../cad/exact-kernel';
+import { projectRequiresExactGeometry } from '../cad/project-analysis';
 
 export type StlInspection = {
   triangleCount: number;
@@ -27,7 +29,7 @@ function vertexKey(position: THREE.BufferAttribute | THREE.InterleavedBufferAttr
   return `${q(position.getX(index))},${q(position.getY(index))},${q(position.getZ(index))}`;
 }
 
-function inspectGeometry(geometry: THREE.BufferGeometry): StlInspection {
+export function inspectGeometry(geometry: THREE.BufferGeometry): StlInspection {
   const position = geometry.getAttribute('position');
   const index = geometry.getIndex();
   const triangleCount = Math.floor((index?.count ?? position.count) / 3);
@@ -121,11 +123,12 @@ function binaryOutputToBlob(output: string | DataView) {
   return new Blob([bytes.buffer], { type: 'model/stl' });
 }
 
-export function createStlExport(project: CadProject) {
-  if (!activeCadKernel.capabilities.stlExport) throw new Error(`${activeCadKernel.label} does not support STL export.`);
-  const { rebuilt, geometry } = activeCadKernel.buildMesh(project);
-  if (!geometry || !rebuilt.hasSolid) throw new Error('A valid rebuilt solid is required before STL export.');
-
+function createStlFromGeometry(
+  project: CadProject,
+  geometry: THREE.BufferGeometry,
+  kernelId: string,
+  extraMessages: string[] = [],
+) {
   const inspection = inspectGeometry(geometry);
   if (!inspection.finiteCoordinates || inspection.triangleCount === 0) {
     geometry.dispose();
@@ -140,25 +143,63 @@ export function createStlExport(project: CadProject) {
   const fileName = `${safeFileName(project.name)}.stl`;
   const report: StlExportReport = {
     ...inspection,
+    messages: [...inspection.messages, ...extraMessages],
     fileName,
     byteLength: blob.size,
-    kernelId: activeCadKernel.id,
+    kernelId,
   };
 
   geometry.dispose();
   return { blob, report };
 }
 
-export function downloadProjectStl(project: CadProject): StlExportReport {
-  const { blob, report } = createStlExport(project);
+/** Fast synchronous STL path retained for simple vertical feature projects. */
+export function createStlExport(project: CadProject) {
+  if (projectRequiresExactGeometry(project)) {
+    throw new Error('This project contains oriented or exact-only features. Use the adaptive STL export path.');
+  }
+  if (!activeCadKernel.capabilities.stlExport) throw new Error(`${activeCadKernel.label} does not support STL export.`);
+  const { rebuilt, geometry } = activeCadKernel.buildMesh(project);
+  if (!geometry || !rebuilt.hasSolid) throw new Error('A valid rebuilt solid is required before STL export.');
+  return createStlFromGeometry(project, geometry, activeCadKernel.id);
+}
+
+export async function createAdaptiveStlExport(project: CadProject) {
+  if (!projectRequiresExactGeometry(project)) return createStlExport(project);
+
+  const snapshot = await buildExactKernelSnapshot(project, { includeStep: false });
+  if (!snapshot.report.valid) {
+    snapshot.geometry.dispose();
+    throw new Error('Exact B-Rep is invalid; STL export was blocked.');
+  }
+  return createStlFromGeometry(
+    project,
+    snapshot.geometry,
+    snapshot.report.kernelId,
+    snapshot.report.warnings,
+  );
+}
+
+function downloadBlob(blob: Blob, fileName: string) {
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement('a');
   anchor.href = url;
-  anchor.download = report.fileName;
+  anchor.download = fileName;
   anchor.style.display = 'none';
   document.body.appendChild(anchor);
   anchor.click();
   anchor.remove();
   window.setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
+export function downloadProjectStl(project: CadProject): StlExportReport {
+  const { blob, report } = createStlExport(project);
+  downloadBlob(blob, report.fileName);
+  return report;
+}
+
+export async function downloadProjectStlAdaptive(project: CadProject): Promise<StlExportReport> {
+  const { blob, report } = await createAdaptiveStlExport(project);
+  downloadBlob(blob, report.fileName);
   return report;
 }
