@@ -10,10 +10,8 @@ export type Vec3Tuple = [number, number, number];
 
 /**
  * Persisted application-level reference to an exact B-Rep edge.
- *
  * Runtime OCCT handles/hashes are intentionally excluded because they are not
- * durable across sessions or rebuilds. The semantic ancestry of adjacent faces
- * is the primary anchor; the geometric signature is a conservative fallback.
+ * durable across sessions or rebuilds.
  */
 export type EdgeTopologyRef = {
   kind: 'edge';
@@ -28,9 +26,35 @@ export type EdgeTopologyRef = {
   };
 };
 
+/**
+ * Persisted application-level reference to an exact B-Rep face. The semantic
+ * lineage is the primary anchor and the geometric signature is used only as a
+ * conservative disambiguation/fallback signal.
+ */
+export type FaceTopologyRef = {
+  kind: 'face';
+  lineageIds: string[];
+  capturedAfterFeatureId: string | null;
+  signature: {
+    centroid: Vec3Tuple;
+    normal: Vec3Tuple;
+    areaMm2: number;
+  };
+};
+
 export type FilletSelection =
   | { mode: 'preset'; preset: 'outer-vertical-edges' }
   | { mode: 'topology'; ref: EdgeTopologyRef };
+
+/**
+ * The lightweight mesh path still consumes cached global X/Z coordinates.
+ * Face-bound placement adds a durable exact-face anchor plus local in-plane
+ * coordinates. The first integrated face workflow is intentionally limited to
+ * horizontal planar faces so the fast preview, STL and exact B-Rep stay aligned.
+ */
+export type FeaturePlacement =
+  | { mode: 'global-xz' }
+  | { mode: 'face'; ref: FaceTopologyRef; uMm: number; vMm: number };
 
 export type SketchConstraint =
   | { id: string; kind: 'centered' }
@@ -63,6 +87,7 @@ export type CutFeature = FeatureBase<'cut', {
   x: number;
   z: number;
   through: true;
+  placement: FeaturePlacement;
 }>;
 
 export type HoleFeature = FeatureBase<'hole', {
@@ -70,6 +95,7 @@ export type HoleFeature = FeatureBase<'hole', {
   x: number;
   z: number;
   through: true;
+  placement: FeaturePlacement;
 }>;
 
 export type FilletFeature = FeatureBase<'fillet', {
@@ -135,11 +161,27 @@ export function createFeature(kind: FeatureKind, project: CadProject): CadFeatur
   }
 
   if (kind === 'hole') {
-    return { ...base, kind, params: { diameter: 4, x: 0, z: 0, through: true } };
+    return {
+      ...base,
+      kind,
+      params: { diameter: 4, x: 0, z: 0, through: true, placement: { mode: 'global-xz' } },
+    };
   }
 
   if (kind === 'cut') {
-    return { ...base, kind, params: { shape: 'rectangle', width: 12, depth: 8, x: 0, z: 0, through: true } };
+    return {
+      ...base,
+      kind,
+      params: {
+        shape: 'rectangle',
+        width: 12,
+        depth: 8,
+        x: 0,
+        z: 0,
+        through: true,
+        placement: { mode: 'global-xz' },
+      },
+    };
   }
 
   return {
