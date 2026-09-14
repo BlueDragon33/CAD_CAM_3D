@@ -19,5 +19,7 @@ jobs:
         run: npm install --no-audit --no-fund
       - name: Typecheck
         run: npm run typecheck
+      - name: Exact B-Rep smoke
+        run: npm run smoke:exact
       - name: Build
         run: npm run build
