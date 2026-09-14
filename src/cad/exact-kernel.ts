@@ -13,7 +13,12 @@ import {
   type BaseFaceSeed,
   type TopologyEvolutionTrace,
 } from './topology-evolution';
-import { resolveEdgeTopologyRef } from './topology-ref';
+import {
+  isSupportedHorizontalFace,
+  pointFromFaceLocal,
+  resolveEdgeTopologyRef,
+  resolveFaceTopologyRef,
+} from './topology-ref';
 
 // OCCT mesh face groups use TopTools_ShapeMapHasher % 2147483647. Keep every
 // topology query/history call in the same hash domain so groups, evolution and
@@ -192,6 +197,59 @@ function findEdgeHandleByHash(kernel: OcctKernel, shape: ShapeHandle, targetHash
   return selected;
 }
 
+function currentExactFaces(
+  kernel: OcctKernel,
+  shape: ShapeHandle,
+  tracker: FaceLineageTracker,
+): ExactFaceTopology[] {
+  const mesh = kernel.meshShape(shape, { linearDeflection: 0.08, angularDeflection: 0.35 });
+  const geometry = mapOcctMeshToThree(mesh);
+  try {
+    const faceGroups = mesh.faceGroups ? new Int32Array(mesh.faceGroups) : null;
+    const faces = deriveFaceTopology(geometry, faceGroups);
+    const evolution = tracker.snapshot();
+    for (const face of faces) {
+      face.lineageIds = [...(evolution.faceLineageByHash[String(face.hash)] ?? [])];
+    }
+    return faces;
+  } finally {
+    geometry.dispose();
+  }
+}
+
+function resolveFaceBoundPoint(
+  kernel: OcctKernel,
+  shape: ShapeHandle,
+  tracker: FaceLineageTracker,
+  rebuilt: RebuiltPart,
+  featureName: string,
+  placement: Extract<import('./model').FeaturePlacement, { mode: 'face' }>,
+  warnings: string[],
+): { x: number; z: number } | null {
+  if (!isSupportedHorizontalFace(placement.ref)) {
+    warnings.push(`${featureName}: face-bound placement currently supports only horizontal top/bottom planar faces.`);
+    return null;
+  }
+
+  const faces = currentExactFaces(kernel, shape, tracker);
+  const spanMm = Math.max(rebuilt.width, rebuilt.depth, rebuilt.height, 1);
+  const resolution = resolveFaceTopologyRef(placement.ref, faces, spanMm);
+  if (!resolution) {
+    warnings.push(`${featureName}: face-bound placement skipped because the persisted face reference could not be resolved safely.`);
+    return null;
+  }
+  if (Math.abs(resolution.face.normal[1]) < 0.985) {
+    warnings.push(`${featureName}: resolved face is no longer horizontal, so the current through-cut path refused to retarget it.`);
+    return null;
+  }
+  if (resolution.confidence === 'medium') {
+    warnings.push(`${featureName}: persisted face resolved with medium confidence after rebuild.`);
+  }
+
+  const point = pointFromFaceLocal(resolution.frame, placement.uMm, placement.vMm);
+  return { x: point[0], z: point[2] };
+}
+
 function buildExactShape(kernel: OcctKernel, project: CadProject, rebuilt: RebuiltPart) {
   const warnings: string[] = [];
   let filletApplied = false;
@@ -208,8 +266,13 @@ function buildExactShape(kernel: OcctKernel, project: CadProject, rebuilt: Rebui
 
   for (const feature of rebuilt.operationSequence) {
     if (feature.kind === 'hole') {
+      const point = feature.params.placement.mode === 'face'
+        ? resolveFaceBoundPoint(kernel, shape, tracker, rebuilt, feature.name, feature.params.placement, warnings)
+        : { x: feature.params.x, z: feature.params.z };
+      if (!point) continue;
+
       let tool = kernel.makeCylinder(feature.params.diameter / 2, rebuilt.height + CUT_OVERRUN_MM * 2);
-      tool = kernel.translate(tool, feature.params.x, feature.params.z, -CUT_OVERRUN_MM);
+      tool = kernel.translate(tool, point.x, point.z, -CUT_OVERRUN_MM);
       const before = currentFaceHashes(kernel, shape);
       const evolution = kernel.cutWithHistory(shape, tool, before, HASH_UPPER_BOUND);
       shape = evolution.result;
@@ -219,11 +282,16 @@ function buildExactShape(kernel: OcctKernel, project: CadProject, rebuilt: Rebui
     }
 
     if (feature.kind === 'cut') {
+      const point = feature.params.placement.mode === 'face'
+        ? resolveFaceBoundPoint(kernel, shape, tracker, rebuilt, feature.name, feature.params.placement, warnings)
+        : { x: feature.params.x, z: feature.params.z };
+      if (!point) continue;
+
       let tool = kernel.makeBox(feature.params.width, feature.params.depth, rebuilt.height + CUT_OVERRUN_MM * 2);
       tool = kernel.translate(
         tool,
-        feature.params.x - feature.params.width / 2,
-        feature.params.z - feature.params.depth / 2,
+        point.x - feature.params.width / 2,
+        point.z - feature.params.depth / 2,
         -CUT_OVERRUN_MM,
       );
       const before = currentFaceHashes(kernel, shape);
@@ -469,6 +537,7 @@ export const exactKernelDescriptor = {
     stlExport: false,
     stepExport: true,
     exactFillet: true,
+    faceBoundThroughFeatures: true,
     exactChamfer: false,
     shell: false,
   },
