@@ -8,10 +8,12 @@ import {
 } from './cad/model';
 import { interpretCommand } from './cad/command';
 import { activeCadKernel } from './cad/kernel';
+import { exactKernelDescriptor } from './cad/exact-kernel';
 import { downloadProjectFile, loadProjectFile } from './cad/project-io';
 import { rebuildProject } from './cad/rebuild';
 import { validateForPrint } from './manufacturing/validate';
 import { downloadProjectStl, type StlExportReport } from './manufacturing/export';
+import { downloadProjectStep, type StepExportReport } from './manufacturing/step-export';
 import { Viewport } from './components/Viewport';
 import { defaultManagementPolicy, managementIdentity } from './management/policy';
 
@@ -38,6 +40,8 @@ export default function App() {
   const [command, setCommand] = useState('');
   const [status, setStatus] = useState('General CAD foundation ready.');
   const [lastExport, setLastExport] = useState<StlExportReport | null>(null);
+  const [lastStepExport, setLastStepExport] = useState<StepExportReport | null>(null);
+  const [exactBusy, setExactBusy] = useState(false);
   const projectInputRef = useRef<HTMLInputElement>(null);
   const policy = defaultManagementPolicy;
   const rebuilt = useMemo(() => rebuildProject(project), [project]);
@@ -129,6 +133,7 @@ export default function App() {
       setProject(loaded.project);
       setSelectedFeatureId(loaded.project.features[1]?.id ?? loaded.project.features[0]?.id ?? null);
       setLastExport(null);
+      setLastStepExport(null);
       setStatus(`Project opened · schema v${loaded.report.schemaVersion} · ${loaded.report.fileName}.`);
     } catch (error) {
       setStatus(error instanceof Error ? `Project open blocked: ${error.message}` : 'Project open failed.');
@@ -145,11 +150,27 @@ export default function App() {
     }
   };
 
+  const exportStep = async () => {
+    setExactBusy(true);
+    setStatus('Loading OpenCascade WASM and rebuilding exact B-Rep…');
+    try {
+      const report = await downloadProjectStep(project);
+      setLastStepExport(report);
+      const warningText = report.warnings.length > 0 ? ` · ${report.warnings.join(' ')}` : '';
+      setStatus(`STEP export PASS · ${report.fileName} · ${report.faceCount} faces · ${report.edgeCount} edges · ${(report.byteLength / 1024).toFixed(1)} KB${warningText}`);
+    } catch (error) {
+      setStatus(error instanceof Error ? `STEP export blocked: ${error.message}` : 'STEP export failed.');
+    } finally {
+      setExactBusy(false);
+    }
+  };
+
   const reset = () => {
     const next = createDefaultProject();
     setProject(next);
     setSelectedFeatureId(next.features[1]?.id ?? next.features[0]?.id ?? null);
     setLastExport(null);
+    setLastStepExport(null);
     setStatus('Workspace reset.');
   };
 
@@ -190,7 +211,7 @@ export default function App() {
 
     return <div className="inspector-grid">
       <label><span>Radius</span><div><input type="number" step="0.1" value={selectedFeature.params.radius} onChange={(e) => updateFeature(selectedFeature.id, (feature) => feature.kind === 'fillet' ? { ...feature, params: { ...feature.params, radius: numberValue(e.target.value, 0) } } : feature)} /><b>mm</b></div></label>
-      <div className="constraint-state"><strong>Kernel pending</strong><small>Fillet remains in the parametric history, but exact B-Rep geometry waits for the CAD kernel adapter.</small></div>
+      <div className="constraint-state" data-ready={exactKernelDescriptor.capabilities.exactFillet}><strong>{exactKernelDescriptor.capabilities.exactFillet ? 'Exact-kernel path ready' : 'Kernel pending'}</strong><small>Outer vertical-edge fillet is rebuilt by OpenCascade for exact STEP export; the default viewport remains on the lightweight mesh kernel.</small></div>
     </div>;
   };
 
@@ -209,6 +230,7 @@ export default function App() {
           <button type="button" onClick={saveProject}>Save Project</button>
           <button type="button" onClick={() => projectInputRef.current?.click()}>Open Project</button>
           <button type="button" onClick={exportStl} disabled={!rebuilt.hasSolid || !activeCadKernel.capabilities.stlExport}>Export STL</button>
+          <button type="button" onClick={() => void exportStep()} disabled={!rebuilt.hasSolid || exactBusy}>{exactBusy ? 'Building B-Rep…' : 'Export STEP'}</button>
           <button type="button" onClick={reset}>Reset</button>
           <input
             ref={projectInputRef}
@@ -288,12 +310,24 @@ export default function App() {
             <small>{lastExport.messages.join(' ')}</small>
             <small>Kernel: {lastExport.kernelId}</small>
           </div> : null}
+          {lastStepExport ? <div className="profile-card">
+            <strong>Last STEP · {lastStepExport.valid ? 'PASS' : 'WARN'}</strong>
+            <span>{lastStepExport.faceCount} faces · {lastStepExport.edgeCount} edges · {(lastStepExport.byteLength / 1024).toFixed(1)} KB</span>
+            <small>Volume {lastStepExport.volumeMm3.toFixed(1)} mm³ · Surface {lastStepExport.surfaceAreaMm2.toFixed(1)} mm²</small>
+            <small>Kernel: {lastStepExport.kernelId}{lastStepExport.filletApplied ? ' · exact fillet applied' : ''}</small>
+            {lastStepExport.warnings.length > 0 ? <small>{lastStepExport.warnings.join(' ')}</small> : null}
+          </div> : null}
 
           <h2>Kernel</h2>
           <div className="profile-card">
             <strong>{activeCadKernel.label}</strong>
-            <span>{activeCadKernel.capabilities.exactBrep ? 'Exact B-Rep' : 'Deterministic printable mesh'} · STL {activeCadKernel.capabilities.stlExport ? 'ready' : 'off'} · STEP {activeCadKernel.capabilities.stepExport ? 'ready' : 'pending'}</span>
-            <small>Exact topology, fillet/chamfer/shell and STEP remain gated until the B-Rep adapter is installed.</small>
+            <span>{activeCadKernel.capabilities.exactBrep ? 'Exact B-Rep' : 'Fast deterministic mesh'} · STL {activeCadKernel.capabilities.stlExport ? 'ready' : 'off'}</span>
+            <small>Interactive preview stays lightweight. Exact manufacturing interchange is lazy-loaded only when needed.</small>
+          </div>
+          <div className="profile-card">
+            <strong>{exactKernelDescriptor.label}</strong>
+            <span>Exact B-Rep · STEP ready · topology snapshot ready</span>
+            <small>Loaded on demand through WebAssembly; current exact path supports the MVP Sketch → Extrude → Hole/Cut chain and outer-edge Fillet.</small>
           </div>
 
           <h2>Management</h2>
