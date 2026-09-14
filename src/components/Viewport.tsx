@@ -1,13 +1,28 @@
 import { useEffect, useRef } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import type { Dimensions } from '../cad/model';
+import type { CadProject } from '../cad/model';
+import { rebuildProject } from '../cad/rebuild';
 
-type Props = { dimensions: Dimensions };
+type Props = { project: CadProject };
 
-export function Viewport({ dimensions }: Props) {
+function disposeGroup(group: THREE.Group) {
+  for (const child of [...group.children]) {
+    group.remove(child);
+    if (child instanceof THREE.Mesh || child instanceof THREE.LineSegments) {
+      child.geometry.dispose();
+      const material = child.material;
+      if (Array.isArray(material)) material.forEach((entry) => entry.dispose());
+      else material.dispose();
+    }
+  }
+}
+
+export function Viewport({ project }: Props) {
   const mountRef = useRef<HTMLDivElement>(null);
-  const meshRef = useRef<THREE.Mesh | null>(null);
+  const partGroupRef = useRef<THREE.Group | null>(null);
+  const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
+  const controlsRef = useRef<OrbitControls | null>(null);
 
   useEffect(() => {
     const mount = mountRef.current;
@@ -18,6 +33,7 @@ export function Viewport({ dimensions }: Props) {
 
     const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 5000);
     camera.position.set(110, 90, 110);
+    cameraRef.current = camera;
 
     const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -25,7 +41,8 @@ export function Viewport({ dimensions }: Props) {
 
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
-    controls.target.set(0, 0, 0);
+    controls.target.set(0, 8, 0);
+    controlsRef.current = controls;
 
     scene.add(new THREE.HemisphereLight(0xffffff, 0x64748b, 2.2));
     const key = new THREE.DirectionalLight(0xffffff, 2.8);
@@ -36,11 +53,12 @@ export function Viewport({ dimensions }: Props) {
     grid.position.y = -0.01;
     scene.add(grid);
 
-    const material = new THREE.MeshStandardMaterial({ color: 0x2563eb, roughness: 0.55, metalness: 0.05 });
-    const mesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), material);
-    mesh.position.y = 0.5;
-    meshRef.current = mesh;
-    scene.add(mesh);
+    const axes = new THREE.AxesHelper(28);
+    scene.add(axes);
+
+    const partGroup = new THREE.Group();
+    partGroupRef.current = partGroup;
+    scene.add(partGroup);
 
     const resize = () => {
       const width = Math.max(1, mount.clientWidth);
@@ -65,20 +83,80 @@ export function Viewport({ dimensions }: Props) {
       cancelAnimationFrame(frame);
       observer.disconnect();
       controls.dispose();
-      mesh.geometry.dispose();
-      material.dispose();
+      disposeGroup(partGroup);
       renderer.dispose();
       renderer.domElement.remove();
-      meshRef.current = null;
+      partGroupRef.current = null;
+      cameraRef.current = null;
+      controlsRef.current = null;
     };
   }, []);
 
   useEffect(() => {
-    const mesh = meshRef.current;
-    if (!mesh) return;
-    mesh.scale.set(dimensions.width, dimensions.height, dimensions.depth);
-    mesh.position.y = dimensions.height / 2;
-  }, [dimensions]);
+    const group = partGroupRef.current;
+    if (!group) return;
+    disposeGroup(group);
 
-  return <div ref={mountRef} className="viewport" aria-label="3D preview viewport" />;
+    const rebuilt = rebuildProject(project);
+    if (!rebuilt.hasSolid) return;
+
+    const shape = new THREE.Shape();
+    const halfWidth = rebuilt.width / 2;
+    const halfDepth = rebuilt.depth / 2;
+    shape.moveTo(-halfWidth, -halfDepth);
+    shape.lineTo(halfWidth, -halfDepth);
+    shape.lineTo(halfWidth, halfDepth);
+    shape.lineTo(-halfWidth, halfDepth);
+    shape.closePath();
+
+    for (const feature of rebuilt.holes) {
+      const hole = new THREE.Path();
+      hole.absarc(feature.params.x, feature.params.z, feature.params.diameter / 2, 0, Math.PI * 2, true);
+      shape.holes.push(hole);
+    }
+
+    for (const feature of rebuilt.cuts) {
+      const cut = new THREE.Path();
+      const halfCutWidth = feature.params.width / 2;
+      const halfCutDepth = feature.params.depth / 2;
+      cut.moveTo(feature.params.x - halfCutWidth, feature.params.z - halfCutDepth);
+      cut.lineTo(feature.params.x - halfCutWidth, feature.params.z + halfCutDepth);
+      cut.lineTo(feature.params.x + halfCutWidth, feature.params.z + halfCutDepth);
+      cut.lineTo(feature.params.x + halfCutWidth, feature.params.z - halfCutDepth);
+      cut.closePath();
+      shape.holes.push(cut);
+    }
+
+    const geometry = new THREE.ExtrudeGeometry(shape, {
+      depth: rebuilt.height,
+      bevelEnabled: false,
+      curveSegments: 48,
+      steps: 1,
+    });
+    geometry.rotateX(-Math.PI / 2);
+    geometry.computeVertexNormals();
+
+    const material = new THREE.MeshStandardMaterial({ color: 0x2563eb, roughness: 0.55, metalness: 0.05 });
+    const mesh = new THREE.Mesh(geometry, material);
+    group.add(mesh);
+
+    const edgeGeometry = new THREE.EdgesGeometry(geometry, 25);
+    const edgeMaterial = new THREE.LineBasicMaterial({ color: 0x0f172a, transparent: true, opacity: 0.52 });
+    const edges = new THREE.LineSegments(edgeGeometry, edgeMaterial);
+    group.add(edges);
+
+    const span = Math.max(rebuilt.width, rebuilt.depth, rebuilt.height, 25);
+    const camera = cameraRef.current;
+    const controls = controlsRef.current;
+    if (camera && controls) {
+      controls.target.set(0, rebuilt.height / 2, 0);
+      camera.position.set(span * 1.45, span * 1.15, span * 1.45);
+      camera.near = Math.max(0.05, span / 500);
+      camera.far = Math.max(5000, span * 30);
+      camera.updateProjectionMatrix();
+      controls.update();
+    }
+  }, [project]);
+
+  return <div ref={mountRef} className="viewport" aria-label="3D parametric preview viewport" />;
 }
