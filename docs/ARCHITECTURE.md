@@ -49,18 +49,18 @@ simple preview/STL       exact preview / STEP / STL
 6. Capability flags describe only integrations that actually work.
 7. Durable topology references may contain semantic ancestry and geometry signatures, never raw kernel handles/hashes.
 8. Preview and export must choose a kernel capable of representing every enabled feature.
-9. A sketch loop must pass application-level profile validation before either kernel may use it as manufacturing geometry.
+9. A sketch region must pass application-level validation before either kernel may use it as manufacturing geometry.
 10. Profile promotion is explicit and preview/STL/STEP must consume the same resolved manufacturing profile.
 
 ## Dual-kernel strategy
 
-`mesh-mvp-v1` handles simple direct profile extrusion and lightweight STL quickly. `occt-wasm-v5` is lazy-loaded for exact topology, exact edge treatments, oriented face features, STEP, adaptive STL and promoted-profile Boolean operations.
+`mesh-mvp-v1` handles direct profile extrusion and lightweight STL quickly. `occt-wasm-v5` is lazy-loaded for exact topology, exact edge treatments, oriented face features, STEP, adaptive STL and promoted-profile Boolean operations.
 
 `src/cad/project-analysis.ts` promotes models automatically when the fast kernel would be incomplete. Current exact triggers include Fillet, Chamfer, non-horizontal face-bound Hole/Cut, and Hole/Cut on a promoted sketch profile.
 
 ### Lightweight path
 
-- deterministic rectangle or promoted Line-loop/Circle extrusion;
+- deterministic rectangle, Line-loop, Circle or mixed Line+Arc extrusion;
 - legacy rectangle global vertical through Hole/Cut;
 - horizontal rectangle face-bound Hole/Cut through cached X/Z;
 - direct STL + mesh preflight.
@@ -68,7 +68,7 @@ simple preview/STL       exact preview / STEP / STL
 ### Exact path
 
 - ordered OpenCascade B-Rep reconstruction;
-- rectangle or promoted Line-loop/Circle base solid;
+- rectangle, Line-loop, Circle or mixed Line+Arc base solid;
 - global and oriented face-bound Hole/Cut;
 - promoted-profile Hole/Cut Boolean handling;
 - selected-edge and four-edge-preset Fillet;
@@ -99,11 +99,13 @@ semantic ManufacturingProfile
 mesh + exact-kernel parity
 ```
 
-`src/cad/profile.ts` currently recognizes one simple closed Line loop or one Circle. It checks endpoint closure, connected components, vertex degree, area, perimeter, winding, repeated vertices, open/branched geometry, multiple loops and non-adjacent self-intersections.
+`src/cad/profile.ts` recognizes one simple closed Line loop, one Circle, or one mixed Line+Arc loop. It orders Line/Arc edges into a deterministic traversal and records signed Arc sweep so an Arc can be consumed forward or reversed without rewriting persisted sketch intent.
+
+Profile validation checks endpoint closure, connected components, vertex degree, exact line/arc perimeter, signed area/winding, repeated vertices, open/branched geometry, multiple loops and sampled non-adjacent self-intersections for curved paths.
 
 Schema v5 already persists each sketch entity's `construction` flag, so profile promotion reuses that durable distinction instead of changing the file format solely for selection state. `construction: false` marks membership in the active manufacturing profile; zero non-construction entities means the named width/depth rectangle is active.
 
-If a promoted profile becomes invalid after editing, semantic rebuild blocks the solid rather than silently reverting to another profile. `scripts/profile-parity-smoke.mjs` gates representative Line-loop and Circle extrusion against both Three.js and OpenCascade dimensions/volume.
+If a promoted profile becomes invalid after editing, semantic rebuild blocks the solid rather than silently reverting to another profile. `scripts/profile-parity-smoke.mjs` gates representative Line-loop, Circle and mixed Line+Arc extrusion against both Three.js and OpenCascade dimensions/volume.
 
 See `docs/SKETCH_PROFILE.md`.
 
@@ -151,8 +153,8 @@ Project JSON, B-Rep and manufacturing files remain owned by CAD_CAM_3D and are n
 
 ## Planned modules
 
-- mixed Line/Arc manufacturing loops;
-- nested loops and holes;
+- multiple-loop region classification: one outer contour + holes;
+- nested islands after single-region holes are stable;
 - richer promoted-profile side-face lineage and placement;
 - arbitrary planar sketches;
 - Shell and richer exact surface metadata;
@@ -165,6 +167,6 @@ Project JSON, B-Rep and manufacturing files remain owned by CAD_CAM_3D and are n
 
 ## Current foundation
 
-The project now supports deterministic feature history, schema-v5 persistence with migration, constrained interactive Line/Circle/Arc sketch entities, closed-profile validation, explicit Line-loop/Circle manufacturing-profile promotion, mesh/OpenCascade parity gating, lightweight and exact preview/STL paths, STEP, topology evolution, durable face/edge references, oriented planar-face Hole/Cut, exact Fillet and exact Chamfer.
+The project now supports deterministic feature history, schema-v5 persistence with migration, constrained interactive Line/Circle/Arc sketch entities, closed-profile validation, explicit Line/Line+Arc/Circle manufacturing-profile promotion, mesh/OpenCascade parity gating, lightweight and exact preview/STL paths, STEP, topology evolution, durable face/edge references, oriented planar-face Hole/Cut, exact Fillet and exact Chamfer.
 
-The next sketch/manufacturing milestone is mixed Line+Arc closed profiles and nested-loop hole classification, while the exact-kernel track should strengthen side-face semantic lineage for arbitrary promoted profiles.
+The next sketch/manufacturing milestone is multiple-loop containment and hole classification, while the exact-kernel track should strengthen side-face semantic lineage for arbitrary promoted profiles.
