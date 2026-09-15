@@ -25,6 +25,7 @@ import type { TopologySelection } from './cad/topology-selection';
 import { validateForPrint } from './manufacturing/validate';
 import { downloadProjectStlAdaptive, type StlExportReport } from './manufacturing/export';
 import { downloadProjectStep, type StepExportReport } from './manufacturing/step-export';
+import { Sketcher } from './components/Sketcher';
 import { Viewport } from './components/Viewport';
 import { defaultManagementPolicy, managementIdentity } from './management/policy';
 
@@ -315,7 +316,10 @@ export default function App() {
     if (selectedFeature.kind === 'sketch') return <div className="inspector-grid">
       <label><span>Width</span><div><input type="number" step="0.1" value={project.dimensions.width} onChange={(e) => setDimension('width', e.target.value)} /><b>mm</b></div></label>
       <label><span>Depth</span><div><input type="number" step="0.1" value={project.dimensions.depth} onChange={(e) => setDimension('depth', e.target.value)} /><b>mm</b></div></label>
-      <div className="constraint-state" data-ready={rebuilt.fullyConstrainedSketch}><strong>{rebuilt.fullyConstrainedSketch ? 'Fully constrained' : 'Under constrained'}</strong><small>Centered rectangle · width/depth linked to named parameters</small></div>
+      <div className="constraint-state" data-ready={rebuilt.fullyConstrainedSketch}>
+        <strong>{rebuilt.fullyConstrainedSketch ? 'Fully constrained' : 'Under constrained'}</strong>
+        <small>Centered manufacturing rectangle · {selectedFeature.params.entities.length} persisted construction primitive(s) · select Sketch in history to edit in 2D.</small>
+      </div>
     </div>;
     if (selectedFeature.kind === 'extrude') return <div className="inspector-grid">
       <label><span>Distance</span><div><input type="number" step="0.1" value={project.dimensions.height} onChange={(e) => setDimension('height', e.target.value)} /><b>mm</b></div></label>
@@ -355,6 +359,8 @@ export default function App() {
     return renderEdgeTreatmentInspector(selectedFeature);
   };
 
+  const sketchSelected = selectedFeature?.kind === 'sketch';
+
   return (
     <main className="app-shell" data-density={policy.workspaceDensity}>
       <header className="topbar">
@@ -391,13 +397,22 @@ export default function App() {
         </aside>
 
         <section className="canvas-panel">
-          <Viewport project={project} onSelectionChange={handleTopologySelection} />
-          <div className="canvas-caption">Rebuilt solid · {rebuilt.width} × {rebuilt.depth} × {rebuilt.height} mm · {rebuilt.holes.length} hole(s) · {rebuilt.cuts.length} cut(s){topologySelection ? ` · ${topologySelection.kind} selected` : ''}</div>
+          {sketchSelected ? (
+            <Sketcher
+              project={project}
+              feature={selectedFeature}
+              onChange={(next) => updateFeature(next.id, () => next)}
+              onMessage={setStatus}
+            />
+          ) : <Viewport project={project} onSelectionChange={handleTopologySelection} />}
+          <div className="canvas-caption">{sketchSelected
+            ? `Sketch workspace · schema-v5 construction primitives · profile ${project.dimensions.width} × ${project.dimensions.depth} mm`
+            : `Rebuilt solid · ${rebuilt.width} × ${rebuilt.depth} × ${rebuilt.height} mm · ${rebuilt.holes.length} hole(s) · ${rebuilt.cuts.length} cut(s)${topologySelection ? ` · ${topologySelection.kind} selected` : ''}`}</div>
         </section>
 
         <aside className="panel history-panel">
           <h2>Feature history</h2>
-          <ol className="feature-tree">{project.features.map((feature) => <li key={feature.id} data-selected={feature.id === selectedFeatureId} data-disabled={!feature.enabled}><button type="button" onClick={() => setSelectedFeatureId(feature.id)}><span className="feature-dot" /><div><strong>{feature.name}</strong><small>{feature.kind}{(feature.kind === 'fillet' || feature.kind === 'chamfer') && feature.params.selection.mode === 'topology' ? ' · topology-bound' : ''}{(feature.kind === 'hole' || feature.kind === 'cut') && feature.params.placement.mode === 'face' ? ' · face-bound' : ''}{feature.enabled ? '' : ' · suppressed'}</small></div></button></li>)}</ol>
+          <ol className="feature-tree">{project.features.map((feature) => <li key={feature.id} data-selected={feature.id === selectedFeatureId} data-disabled={!feature.enabled}><button type="button" onClick={() => setSelectedFeatureId(feature.id)}><span className="feature-dot" /><div><strong>{feature.name}</strong><small>{feature.kind}{feature.kind === 'sketch' && feature.params.entities.length > 0 ? ` · ${feature.params.entities.length} primitive(s)` : ''}{(feature.kind === 'fillet' || feature.kind === 'chamfer') && feature.params.selection.mode === 'topology' ? ' · topology-bound' : ''}{(feature.kind === 'hole' || feature.kind === 'cut') && feature.params.placement.mode === 'face' ? ' · face-bound' : ''}{feature.enabled ? '' : ' · suppressed'}</small></div></button></li>)}</ol>
           <h2>Feature inspector</h2>
           <div className="feature-inspector">{renderInspector()}{selectedFeature ? <div className="inspector-actions"><button type="button" onClick={toggleSelectedFeature}>{selectedFeature.enabled ? 'Suppress' : 'Enable'}</button><button type="button" className="danger" onClick={removeSelectedFeature}>Remove</button></div> : null}</div>
           <h2>Rebuild diagnostics</h2>
