@@ -6,6 +6,7 @@ import {
   replaceLineOrientationConstraint,
   upsertEntityDimensionConstraint,
 } from '../cad/constraints';
+import { analyzeSketchProfiles } from '../cad/profile';
 import {
   analyzeSketchEntities,
   createArcEntity,
@@ -81,6 +82,11 @@ export function Sketcher({ project, feature, onChange, onMessage }: Props) {
 
   const entities = feature.params.entities;
   const analysis = useMemo(() => analyzeSketchEntities(entities), [entities]);
+  const profileAnalysis = useMemo(() => analyzeSketchProfiles(entities), [entities]);
+  const profileEntityIds = useMemo(
+    () => new Set(profileAnalysis.primaryCandidate?.entityIds ?? []),
+    [profileAnalysis],
+  );
   const selectedEntity = entities.find((entity) => entity.id === selectedEntityId) ?? null;
   const selectedDimension = selectedEntity ? dimensionConstraintFor(selectedEntity, feature.params.constraints) : undefined;
   const selectedOrientation = selectedEntity?.kind === 'line' ? lineOrientation(selectedEntity.id, feature.params.constraints) : null;
@@ -280,6 +286,11 @@ export function Sketcher({ project, feature, onChange, onMessage }: Props) {
       : selectedEntity.radiusMm
     : 0;
 
+  const candidate = profileAnalysis.primaryCandidate;
+  const profileSummary = profileAnalysis.promotable && candidate
+    ? `Closed ${candidate.kind} ready · area ${candidate.areaMm2.toFixed(2)} mm² · perimeter ${candidate.perimeterMm.toFixed(2)} mm${candidate.winding === 'not-applicable' ? '' : ` · ${candidate.winding}`}`
+    : profileAnalysis.issues[0] ?? 'Draw one simple closed line loop or one circle to create a profile candidate.';
+
   return (
     <div className="sketcher-shell">
       <div className="sketcher-toolbar" aria-label="Sketch construction tools">
@@ -341,7 +352,10 @@ export function Sketcher({ project, feature, onChange, onMessage }: Props) {
 
         <g className="sketch-construction">
           {entities.map((entity) => {
-            const className = entity.id === selectedEntityId ? 'sketch-entity is-selected' : 'sketch-entity';
+            const classes = ['sketch-entity'];
+            if (entity.id === selectedEntityId) classes.push('is-selected');
+            if (profileAnalysis.promotable && profileEntityIds.has(entity.id)) classes.push('is-profile-candidate');
+            const className = classes.join(' ');
             if (entity.kind === 'line') return <line className={className} key={entity.id} x1={entity.start.x} y1={entity.start.z} x2={entity.end.x} y2={entity.end.z} onPointerDown={(event) => handleEntityPointerDown(event, entity.id)} />;
             if (entity.kind === 'circle') return <circle className={className} key={entity.id} cx={entity.center.x} cy={entity.center.z} r={entity.radiusMm} onPointerDown={(event) => handleEntityPointerDown(event, entity.id)} />;
             return <path className={className} key={entity.id} d={arcPath(entity.center, entity.radiusMm, entity.startAngleDeg, entity.endAngleDeg)} onPointerDown={(event) => handleEntityPointerDown(event, entity.id)} />;
@@ -365,11 +379,15 @@ export function Sketcher({ project, feature, onChange, onMessage }: Props) {
 
       <div className="sketcher-status">
         <strong>Sketch · XZ</strong>
-        <span>Profile: centered rectangle {project.dimensions.width} × {project.dimensions.depth} mm</span>
+        <span>Manufacturing profile: centered rectangle {project.dimensions.width} × {project.dimensions.depth} mm</span>
         <span>Construction: {analysis.lineCount} line · {analysis.circleCount} circle · {analysis.arcCount} arc · ~{analysis.estimatedDegreesOfFreedom} raw DOF</span>
+        <span className="sketch-profile-readiness" data-ready={profileAnalysis.promotable}>
+          Candidate profile: {profileAnalysis.promotable ? 'VALID' : 'NOT READY'} · {profileSummary}
+        </span>
         <small>{tool === 'select'
           ? selectedEntity ? 'Selected entity · drag to move · edit dimensions/constraints in the entity panel.' : 'Select an entity to drag, dimension, constrain or delete it.'
           : `${tool} tool · grid/anchor snapping active · ${pending.length} point(s) captured`}</small>
+        {profileAnalysis.promotable ? <small>Validation only: this closed loop does not replace the manufacturing rectangle until both geometry kernels support profile promotion.</small> : null}
       </div>
     </div>
   );
