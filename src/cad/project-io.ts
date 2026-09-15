@@ -9,14 +9,16 @@ import type {
   FilletSelection,
   PrintProfile,
   SketchConstraint,
+  SketchPointRef,
   Vec3Tuple,
 } from './model';
+import type { SketchEntity, SketchPoint2D } from './sketch';
 
 const PROJECT_FORMAT = 'cad-cam-3d-project';
-const PROJECT_SCHEMA_VERSION = 4;
+const PROJECT_SCHEMA_VERSION = 5;
 const materials = new Set<PrintProfile['material']>(['PLA', 'PETG', 'ABS', 'ASA', 'PA-CF', 'Other']);
 
-export type ProjectDocumentV4 = {
+export type ProjectDocumentV5 = {
   format: typeof PROJECT_FORMAT;
   schemaVersion: typeof PROJECT_SCHEMA_VERSION;
   savedAt: string;
@@ -81,23 +83,92 @@ function readCapturedFeatureId(value: unknown, label: string) {
   return value as string | null;
 }
 
+function readSketchPoint(value: unknown, label: string): SketchPoint2D {
+  if (!isRecord(value)) throw new Error(`${label} must be an object.`);
+  return { x: readNumber(value, 'x', `${label}.x`), z: readNumber(value, 'z', `${label}.z`) };
+}
+
+function readSketchPointRef(value: unknown, label: string): SketchPointRef {
+  if (!isRecord(value)) throw new Error(`${label} must be an object.`);
+  const point = readString(value, 'point', `${label}.point`);
+  if (point !== 'start' && point !== 'end' && point !== 'center') throw new Error(`${label}.point must be start, end or center.`);
+  return { entityId: readString(value, 'entityId', `${label}.entityId`), point };
+}
+
+function readSketchEntities(value: unknown, label: string, sourceSchemaVersion: number): SketchEntity[] {
+  if (sourceSchemaVersion <= 4) return [];
+  if (!Array.isArray(value)) throw new Error(`${label} must be an array.`);
+  return value.map((entry, index) => {
+    const entityLabel = `${label}[${index}]`;
+    if (!isRecord(entry)) throw new Error(`${entityLabel} must be an object.`);
+    const id = readString(entry, 'id', `${entityLabel}.id`);
+    const kind = readString(entry, 'kind', `${entityLabel}.kind`);
+    const construction = readBoolean(entry, 'construction', `${entityLabel}.construction`);
+    if (kind === 'line') {
+      return { id, kind, construction, start: readSketchPoint(entry.start, `${entityLabel}.start`), end: readSketchPoint(entry.end, `${entityLabel}.end`) };
+    }
+    if (kind === 'circle') {
+      return { id, kind, construction, center: readSketchPoint(entry.center, `${entityLabel}.center`), radiusMm: readNumber(entry, 'radiusMm', `${entityLabel}.radiusMm`, 0.1) };
+    }
+    if (kind === 'arc') {
+      return {
+        id, kind, construction,
+        center: readSketchPoint(entry.center, `${entityLabel}.center`),
+        radiusMm: readNumber(entry, 'radiusMm', `${entityLabel}.radiusMm`, 0.1),
+        startAngleDeg: readNumber(entry, 'startAngleDeg', `${entityLabel}.startAngleDeg`),
+        endAngleDeg: readNumber(entry, 'endAngleDeg', `${entityLabel}.endAngleDeg`),
+      };
+    }
+    throw new Error(`${entityLabel}.kind must be line, circle or arc.`);
+  });
+}
+
 function readConstraints(value: unknown, label: string): SketchConstraint[] {
   if (!Array.isArray(value)) throw new Error(`${label} must be an array.`);
   return value.map((entry, index) => {
-    if (!isRecord(entry)) throw new Error(`${label}[${index}] must be an object.`);
-    const id = readString(entry, 'id', `${label}[${index}].id`);
-    const kind = readString(entry, 'kind', `${label}[${index}].kind`);
+    const constraintLabel = `${label}[${index}]`;
+    if (!isRecord(entry)) throw new Error(`${constraintLabel} must be an object.`);
+    const id = readString(entry, 'id', `${constraintLabel}.id`);
+    const kind = readString(entry, 'kind', `${constraintLabel}.kind`);
     if (kind === 'centered') return { id, kind };
     if (kind === 'width') {
-      if (entry.parameter !== 'width') throw new Error(`${label}[${index}].parameter must be width.`);
+      if (entry.parameter !== 'width') throw new Error(`${constraintLabel}.parameter must be width.`);
       return { id, kind, parameter: 'width' };
     }
     if (kind === 'depth') {
-      if (entry.parameter !== 'depth') throw new Error(`${label}[${index}].parameter must be depth.`);
+      if (entry.parameter !== 'depth') throw new Error(`${constraintLabel}.parameter must be depth.`);
       return { id, kind, parameter: 'depth' };
     }
-    throw new Error(`${label}[${index}] has unsupported constraint kind ${kind}.`);
+    if (kind === 'horizontal' || kind === 'vertical') {
+      return { id, kind, entityId: readString(entry, 'entityId', `${constraintLabel}.entityId`) };
+    }
+    if (kind === 'coincident') {
+      return { id, kind, first: readSketchPointRef(entry.first, `${constraintLabel}.first`), second: readSketchPointRef(entry.second, `${constraintLabel}.second`) };
+    }
+    if (kind === 'distance' || kind === 'radius') {
+      return {
+        id,
+        kind,
+        entityId: readString(entry, 'entityId', `${constraintLabel}.entityId`),
+        valueMm: readNumber(entry, 'valueMm', `${constraintLabel}.valueMm`, 0),
+      };
+    }
+    throw new Error(`${constraintLabel} has unsupported constraint kind ${kind}.`);
   });
+}
+
+function validateSketchConstraintReferences(entities: SketchEntity[], constraints: SketchConstraint[], label: string) {
+  const entityIds = new Set(entities.map((entity) => entity.id));
+  for (const constraint of constraints) {
+    if (constraint.kind === 'centered' || constraint.kind === 'width' || constraint.kind === 'depth') continue;
+    if (constraint.kind === 'coincident') {
+      if (!entityIds.has(constraint.first.entityId) || !entityIds.has(constraint.second.entityId)) {
+        throw new Error(`${label} contains a coincident constraint that references a missing sketch entity.`);
+      }
+      continue;
+    }
+    if (!entityIds.has(constraint.entityId)) throw new Error(`${label} contains a ${constraint.kind} constraint that references a missing sketch entity.`);
+  }
 }
 
 function readEdgeTopologyRef(value: unknown, label: string): EdgeTopologyRef {
@@ -175,7 +246,10 @@ function readFeature(value: unknown, index: number, sourceSchemaVersion: number)
 
   if (kind === 'sketch') {
     if (params.plane !== 'XZ' || params.profile !== 'rectangle') throw new Error(`${label} contains an unsupported sketch definition.`);
-    return { id, kind, name, enabled, params: { plane: 'XZ', profile: 'rectangle', constraints: readConstraints(params.constraints, `${label}.params.constraints`) } };
+    const entities = readSketchEntities(params.entities, `${label}.params.entities`, sourceSchemaVersion);
+    const constraints = readConstraints(params.constraints, `${label}.params.constraints`);
+    validateSketchConstraintReferences(entities, constraints, `${label}.params.constraints`);
+    return { id, kind, name, enabled, params: { plane: 'XZ', profile: 'rectangle', entities, constraints } };
   }
   if (kind === 'extrude') {
     if (params.distanceParameter !== 'height' || params.direction !== 'positive') throw new Error(`${label} contains an unsupported extrude definition.`);
@@ -242,7 +316,7 @@ function safeFileName(name: string) {
 }
 
 export function serializeProject(project: CadProject): string {
-  const document: ProjectDocumentV4 = { format: PROJECT_FORMAT, schemaVersion: PROJECT_SCHEMA_VERSION, savedAt: new Date().toISOString(), project };
+  const document: ProjectDocumentV5 = { format: PROJECT_FORMAT, schemaVersion: PROJECT_SCHEMA_VERSION, savedAt: new Date().toISOString(), project };
   return JSON.stringify(document, null, 2);
 }
 
@@ -252,8 +326,8 @@ export function parseProjectDocument(text: string): { project: CadProject; schem
   if (!isRecord(raw)) throw new Error('Project document must be an object.');
   if (raw.format !== PROJECT_FORMAT) throw new Error('This file is not a CAD_CAM_3D project document.');
   const sourceSchemaVersion = raw.schemaVersion;
-  if (![1, 2, 3, PROJECT_SCHEMA_VERSION].includes(sourceSchemaVersion as number)) {
-    throw new Error(`Unsupported project schema version ${String(sourceSchemaVersion)}. Supported versions are 1, 2, 3 and ${PROJECT_SCHEMA_VERSION}.`);
+  if (![1, 2, 3, 4, PROJECT_SCHEMA_VERSION].includes(sourceSchemaVersion as number)) {
+    throw new Error(`Unsupported project schema version ${String(sourceSchemaVersion)}. Supported versions are 1, 2, 3, 4 and ${PROJECT_SCHEMA_VERSION}.`);
   }
   return {
     project: readProject(raw.project, sourceSchemaVersion as number), schemaVersion: PROJECT_SCHEMA_VERSION,
