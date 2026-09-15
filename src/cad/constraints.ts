@@ -1,6 +1,12 @@
 import type { CadProject, SketchConstraint, SketchFeature, SketchPointRef } from './model';
-import { analyzeSketchProfiles } from './profile';
-import { analyzeSketchEntities, distance2d, type SketchEntity, type SketchPoint2D } from './sketch';
+import { analyzeSketchProfiles, resolveManufacturingProfile } from './profile';
+import {
+  analyzeSketchEntities,
+  arcEndpoint,
+  distance2d,
+  type SketchEntity,
+  type SketchPoint2D,
+} from './sketch';
 
 export type SolvedSketch = {
   width: number;
@@ -22,8 +28,9 @@ function cloneEntity(entity: SketchEntity): SketchEntity {
 function readPoint(entity: SketchEntity | undefined, ref: SketchPointRef): SketchPoint2D | null {
   if (!entity || entity.id !== ref.entityId) return null;
   if (ref.point === 'center') return entity.kind === 'line' ? null : { ...entity.center };
-  if (entity.kind !== 'line') return null;
-  return ref.point === 'start' ? { ...entity.start } : { ...entity.end };
+  if (entity.kind === 'line') return ref.point === 'start' ? { ...entity.start } : { ...entity.end };
+  if (entity.kind === 'arc') return arcEndpoint(entity, ref.point);
+  return null;
 }
 
 function writePoint(entity: SketchEntity | undefined, ref: SketchPointRef, point: SketchPoint2D) {
@@ -32,9 +39,19 @@ function writePoint(entity: SketchEntity | undefined, ref: SketchPointRef, point
     if (entity.kind !== 'line') entity.center = { ...point };
     return;
   }
-  if (entity.kind !== 'line') return;
-  if (ref.point === 'start') entity.start = { ...point };
-  else entity.end = { ...point };
+  if (entity.kind === 'line') {
+    if (ref.point === 'start') entity.start = { ...point };
+    else entity.end = { ...point };
+    return;
+  }
+  if (entity.kind !== 'arc') return;
+
+  const radiusMm = distance2d(entity.center, point);
+  if (radiusMm <= 1e-9) return;
+  const angleDeg = Math.atan2(point.z - entity.center.z, point.x - entity.center.x) * 180 / Math.PI;
+  entity.radiusMm = Math.max(0.1, radiusMm);
+  if (ref.point === 'start') entity.startAngleDeg = angleDeg;
+  else entity.endAngleDeg = angleDeg;
 }
 
 /**
@@ -156,16 +173,7 @@ function constrainedEntityDof(feature: SketchFeature) {
   };
 }
 
-/**
- * Deterministic sketch-state analyzer.
- *
- * The manufacturing profile is still the original centered rectangle linked to
- * the project's named width/depth parameters. Schema-v5 sketch primitives are
- * persisted construction geometry for the interactive sketcher and already
- * participate in constraint/DOF diagnostics. Closed-loop candidates are now
- * validated as a separate readiness step, but they still do not alter the solid
- * until profile promotion is implemented with parity in both geometry kernels.
- */
+/** Deterministic sketch-state analyzer shared by editing and semantic rebuild. */
 export function solveSketch(project: CadProject, feature: SketchFeature): SolvedSketch {
   const constraints = feature.params.constraints;
   const hasCentered = constraints.some((constraint) => constraint.kind === 'centered');
@@ -173,31 +181,37 @@ export function solveSketch(project: CadProject, feature: SketchFeature): Solved
   const hasDepth = constraints.some((constraint) => constraint.kind === 'depth');
   const entityAnalysis = constrainedEntityDof(feature);
   const constrained = applySketchConstraints(feature.params.entities, constraints);
-  const profileAnalysis = analyzeSketchProfiles(constrained);
+  const constructionEntities = constrained.filter((entity) => entity.construction);
+  const profileAnalysis = analyzeSketchProfiles(constructionEntities.length > 0 ? constructionEntities : constrained);
+  const manufacturing = resolveManufacturingProfile(constrained, project.dimensions.width, project.dimensions.depth);
   const messages = [...entityAnalysis.issues];
 
   if (!hasCentered) messages.push('Sketch is missing the centered profile constraint.');
   if (!hasWidth) messages.push('Sketch width is not tied to the named width parameter.');
   if (!hasDepth) messages.push('Sketch depth is not tied to the named depth parameter.');
   if (entityAnalysis.entityCount > 0 && entityAnalysis.estimatedDegreesOfFreedom > 0) {
-    messages.push(`${entityAnalysis.estimatedDegreesOfFreedom} estimated construction-geometry degree(s) of freedom remain.`);
+    messages.push(`${entityAnalysis.estimatedDegreesOfFreedom} estimated sketch degree(s) of freedom remain.`);
   }
 
   for (let index = 0; index < constrained.length; index += 1) {
     const before = feature.params.entities[index];
     const after = constrained[index];
     if (before.kind === 'line' && after.kind === 'line' && distance2d(before.start, after.start) + distance2d(before.end, after.end) > 1e-5) {
-      messages.push(`Line ${before.id} is geometry-constrained and will be solved deterministically in the sketch workspace.`);
+      messages.push(`Line ${before.id} is geometry-constrained and is solved deterministically in the sketch workspace.`);
     }
   }
 
-  if (entityAnalysis.entityCount > 0) {
-    if (profileAnalysis.promotable && profileAnalysis.primaryCandidate) {
-      const candidate = profileAnalysis.primaryCandidate;
-      messages.push(`Closed profile candidate ready · ${candidate.kind} · area ${candidate.areaMm2.toFixed(2)} mm² · perimeter ${candidate.perimeterMm.toFixed(2)} mm. Manufacturing promotion is intentionally not enabled yet.`);
+  if (manufacturing.promoted) {
+    if (manufacturing.profile) {
+      messages.push(`Promoted ${manufacturing.profile.kind} manufacturing profile is active · area ${manufacturing.profile.areaMm2.toFixed(2)} mm².`);
     } else {
-      messages.push(...profileAnalysis.issues.map((message) => `Profile validation: ${message}`));
+      messages.push(...manufacturing.issues.map((message) => `Manufacturing profile: ${message}`));
     }
+  } else if (profileAnalysis.promotable && profileAnalysis.primaryCandidate) {
+    const candidate = profileAnalysis.primaryCandidate;
+    messages.push(`Closed profile candidate ready · ${candidate.kind} · area ${candidate.areaMm2.toFixed(2)} mm² · perimeter ${candidate.perimeterMm.toFixed(2)} mm.`);
+  } else if (constructionEntities.length > 0) {
+    messages.push(...profileAnalysis.issues.map((message) => `Profile validation: ${message}`));
   }
 
   return {
