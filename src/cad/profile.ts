@@ -39,6 +39,53 @@ export type SketchProfileAnalysis = {
   issues: string[];
 };
 
+export type ProfileBounds = {
+  minX: number;
+  maxX: number;
+  minZ: number;
+  maxZ: number;
+  width: number;
+  depth: number;
+};
+
+export type ManufacturingProfile =
+  | {
+      kind: 'rectangle';
+      source: 'named-rectangle';
+      entityIds: [];
+      width: number;
+      depth: number;
+      areaMm2: number;
+      perimeterMm: number;
+      bounds: ProfileBounds;
+    }
+  | {
+      kind: 'polyline';
+      source: 'sketch';
+      entityIds: string[];
+      points: SketchPoint2D[];
+      areaMm2: number;
+      perimeterMm: number;
+      winding: Exclude<ProfileWinding, 'not-applicable'>;
+      bounds: ProfileBounds;
+    }
+  | {
+      kind: 'circle';
+      source: 'sketch';
+      entityIds: [string];
+      center: SketchPoint2D;
+      radiusMm: number;
+      areaMm2: number;
+      perimeterMm: number;
+      bounds: ProfileBounds;
+    };
+
+export type ManufacturingProfileResolution = {
+  profile: ManufacturingProfile | null;
+  promoted: boolean;
+  issues: string[];
+};
+
 type Node = { point: SketchPoint2D; edgeIndexes: number[] };
 type GraphEdge = { entity: SketchLineEntity; a: number; b: number };
 
@@ -243,12 +290,6 @@ function circleCandidate(entity: SketchCircleEntity, toleranceMm: number): Sketc
   };
 }
 
-/**
- * Analyzes persisted sketch entities as possible future manufacturing profiles.
- * This function is intentionally read-only: a valid candidate does not change
- * the current rectangle-based solid until profile promotion is explicitly
- * implemented in both the fast mesh and exact B-Rep kernels.
- */
 export function analyzeSketchProfiles(
   entities: SketchEntity[],
   options: { endpointToleranceMm?: number } = {},
@@ -295,5 +336,91 @@ export function analyzeSketchProfiles(
     promotable,
     primaryCandidate,
     issues,
+  };
+}
+
+function pointsBounds(points: SketchPoint2D[]): ProfileBounds {
+  const xs = points.map((point) => point.x);
+  const zs = points.map((point) => point.z);
+  const minX = Math.min(...xs);
+  const maxX = Math.max(...xs);
+  const minZ = Math.min(...zs);
+  const maxZ = Math.max(...zs);
+  return { minX, maxX, minZ, maxZ, width: maxX - minX, depth: maxZ - minZ };
+}
+
+/**
+ * Resolve the solid-producing profile from persisted sketch data.
+ *
+ * Existing schema-v5 `construction` flags are intentionally reused as the
+ * promotion boundary: zero non-construction entities means the named rectangle
+ * remains active; one validated non-construction loop means that sketch loop is
+ * the manufacturing profile. This keeps old project files compatible without a
+ * gratuitous schema bump while making promotion explicit and durable.
+ */
+export function resolveManufacturingProfile(
+  entities: SketchEntity[],
+  fallbackWidth: number,
+  fallbackDepth: number,
+): ManufacturingProfileResolution {
+  const manufacturingEntities = entities.filter((entity) => !entity.construction);
+  if (manufacturingEntities.length === 0) {
+    const width = Math.max(0.1, fallbackWidth);
+    const depth = Math.max(0.1, fallbackDepth);
+    return {
+      promoted: false,
+      issues: [],
+      profile: {
+        kind: 'rectangle',
+        source: 'named-rectangle',
+        entityIds: [],
+        width,
+        depth,
+        areaMm2: width * depth,
+        perimeterMm: 2 * (width + depth),
+        bounds: { minX: -width / 2, maxX: width / 2, minZ: -depth / 2, maxZ: depth / 2, width, depth },
+      },
+    };
+  }
+
+  const analysis = analyzeSketchProfiles(manufacturingEntities);
+  if (!analysis.promotable || !analysis.primaryCandidate) {
+    return {
+      promoted: true,
+      profile: null,
+      issues: analysis.issues.length > 0
+        ? analysis.issues
+        : ['The promoted sketch entities do not form one validated manufacturing loop.'],
+    };
+  }
+
+  const candidate = analysis.primaryCandidate;
+  if (candidate.kind === 'circle') {
+    const bounds = {
+      minX: candidate.center.x - candidate.radiusMm,
+      maxX: candidate.center.x + candidate.radiusMm,
+      minZ: candidate.center.z - candidate.radiusMm,
+      maxZ: candidate.center.z + candidate.radiusMm,
+      width: candidate.radiusMm * 2,
+      depth: candidate.radiusMm * 2,
+    };
+    return {
+      promoted: true,
+      issues: [],
+      profile: {
+        kind: 'circle', source: 'sketch', entityIds: candidate.entityIds, center: { ...candidate.center },
+        radiusMm: candidate.radiusMm, areaMm2: candidate.areaMm2, perimeterMm: candidate.perimeterMm, bounds,
+      },
+    };
+  }
+
+  return {
+    promoted: true,
+    issues: [],
+    profile: {
+      kind: 'polyline', source: 'sketch', entityIds: [...candidate.entityIds], points: candidate.points.map((point) => ({ ...point })),
+      areaMm2: candidate.areaMm2, perimeterMm: candidate.perimeterMm, winding: candidate.winding,
+      bounds: pointsBounds(candidate.points),
+    },
   };
 }
