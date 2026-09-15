@@ -1,3 +1,5 @@
+import type { SketchEntity } from './sketch';
+
 export type FeatureKind = 'sketch' | 'extrude' | 'cut' | 'hole' | 'fillet' | 'chamfer';
 
 export type Dimensions = {
@@ -45,10 +47,20 @@ export type FeaturePlacement =
   | { mode: 'global-xz' }
   | { mode: 'face'; ref: FaceTopologyRef; uMm: number; vMm: number };
 
+export type SketchPointRef = {
+  entityId: string;
+  point: 'start' | 'end' | 'center';
+};
+
 export type SketchConstraint =
   | { id: string; kind: 'centered' }
   | { id: string; kind: 'width'; parameter: 'width' }
-  | { id: string; kind: 'depth'; parameter: 'depth' };
+  | { id: string; kind: 'depth'; parameter: 'depth' }
+  | { id: string; kind: 'horizontal'; entityId: string }
+  | { id: string; kind: 'vertical'; entityId: string }
+  | { id: string; kind: 'coincident'; first: SketchPointRef; second: SketchPointRef }
+  | { id: string; kind: 'distance'; entityId: string; valueMm: number }
+  | { id: string; kind: 'radius'; entityId: string; valueMm: number };
 
 type FeatureBase<K extends FeatureKind, P> = {
   id: string;
@@ -61,6 +73,13 @@ type FeatureBase<K extends FeatureKind, P> = {
 export type SketchFeature = FeatureBase<'sketch', {
   plane: 'XZ';
   profile: 'rectangle';
+  /**
+   * General sketch entities currently act as persisted construction geometry
+   * around the legacy parametric rectangle profile. They are intentionally in
+   * CadProject now so the interactive sketcher can evolve without creating a
+   * second, disposable geometry model.
+   */
+  entities: SketchEntity[];
   constraints: SketchConstraint[];
 }>;
 
@@ -142,6 +161,7 @@ export function createFeature(kind: FeatureKind, project: CadProject): CadFeatur
       params: {
         plane: 'XZ',
         profile: 'rectangle',
+        entities: [],
         constraints: [
           { id: crypto.randomUUID(), kind: 'centered' },
           { id: crypto.randomUUID(), kind: 'width', parameter: 'width' },
