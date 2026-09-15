@@ -32,10 +32,21 @@ export function validateForPrint(project: CadProject): PrintCheck[] {
     checks.push({ level: 'ok', message: 'Through-hole diameters are reasonable for the selected nozzle.' });
   }
 
+  const promoted = part.manufacturingProfile?.source === 'sketch';
   if (!part.fullyConstrainedSketch) {
-    checks.push({ level: 'warning', message: 'Base sketch is not fully constrained; design intent can drift during edits.' });
+    checks.push({
+      level: 'warning',
+      message: promoted
+        ? 'Promoted sketch profile is not fully constrained; its manufacturing shape can drift during edits.'
+        : 'Base sketch is not fully constrained; design intent can drift during edits.',
+    });
   } else {
-    checks.push({ level: 'ok', message: 'Base sketch is fully constrained by named parameters.' });
+    checks.push({
+      level: 'ok',
+      message: promoted
+        ? 'Promoted manufacturing sketch is fully constrained by the current application-level constraint model.'
+        : 'Base sketch is fully constrained by named parameters.',
+    });
   }
 
   return checks;
