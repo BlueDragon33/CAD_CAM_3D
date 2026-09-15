@@ -1,4 +1,5 @@
 import type { CadProject, SketchConstraint, SketchFeature, SketchPointRef } from './model';
+import { analyzeSketchProfiles } from './profile';
 import { analyzeSketchEntities, distance2d, type SketchEntity, type SketchPoint2D } from './sketch';
 
 export type SolvedSketch = {
@@ -8,6 +9,8 @@ export type SolvedSketch = {
   fullyConstrained: boolean;
   entityCount: number;
   estimatedDegreesOfFreedom: number;
+  profileCandidateCount: number;
+  profilePromotable: boolean;
   messages: string[];
 };
 
@@ -159,9 +162,9 @@ function constrainedEntityDof(feature: SketchFeature) {
  * The manufacturing profile is still the original centered rectangle linked to
  * the project's named width/depth parameters. Schema-v5 sketch primitives are
  * persisted construction geometry for the interactive sketcher and already
- * participate in constraint/DOF diagnostics. They intentionally do not alter
- * the solid profile until arbitrary closed-loop profile generation is wired to
- * both geometry kernels.
+ * participate in constraint/DOF diagnostics. Closed-loop candidates are now
+ * validated as a separate readiness step, but they still do not alter the solid
+ * until profile promotion is implemented with parity in both geometry kernels.
  */
 export function solveSketch(project: CadProject, feature: SketchFeature): SolvedSketch {
   const constraints = feature.params.constraints;
@@ -169,6 +172,8 @@ export function solveSketch(project: CadProject, feature: SketchFeature): Solved
   const hasWidth = constraints.some((constraint) => constraint.kind === 'width');
   const hasDepth = constraints.some((constraint) => constraint.kind === 'depth');
   const entityAnalysis = constrainedEntityDof(feature);
+  const constrained = applySketchConstraints(feature.params.entities, constraints);
+  const profileAnalysis = analyzeSketchProfiles(constrained);
   const messages = [...entityAnalysis.issues];
 
   if (!hasCentered) messages.push('Sketch is missing the centered profile constraint.');
@@ -178,12 +183,20 @@ export function solveSketch(project: CadProject, feature: SketchFeature): Solved
     messages.push(`${entityAnalysis.estimatedDegreesOfFreedom} estimated construction-geometry degree(s) of freedom remain.`);
   }
 
-  const constrained = applySketchConstraints(feature.params.entities, constraints);
   for (let index = 0; index < constrained.length; index += 1) {
     const before = feature.params.entities[index];
     const after = constrained[index];
     if (before.kind === 'line' && after.kind === 'line' && distance2d(before.start, after.start) + distance2d(before.end, after.end) > 1e-5) {
       messages.push(`Line ${before.id} is geometry-constrained and will be solved deterministically in the sketch workspace.`);
+    }
+  }
+
+  if (entityAnalysis.entityCount > 0) {
+    if (profileAnalysis.promotable && profileAnalysis.primaryCandidate) {
+      const candidate = profileAnalysis.primaryCandidate;
+      messages.push(`Closed profile candidate ready · ${candidate.kind} · area ${candidate.areaMm2.toFixed(2)} mm² · perimeter ${candidate.perimeterMm.toFixed(2)} mm. Manufacturing promotion is intentionally not enabled yet.`);
+    } else {
+      messages.push(...profileAnalysis.issues.map((message) => `Profile validation: ${message}`));
     }
   }
 
@@ -194,6 +207,8 @@ export function solveSketch(project: CadProject, feature: SketchFeature): Solved
     fullyConstrained: hasCentered && hasWidth && hasDepth && entityAnalysis.estimatedDegreesOfFreedom === 0,
     entityCount: entityAnalysis.entityCount,
     estimatedDegreesOfFreedom: entityAnalysis.estimatedDegreesOfFreedom,
+    profileCandidateCount: profileAnalysis.closedLoopCount,
+    profilePromotable: profileAnalysis.promotable,
     messages,
   };
 }
