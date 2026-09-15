@@ -1,14 +1,27 @@
 import type { OcctKernel, ShapeHandle } from 'occt-wasm';
+import type { ProfilePathSegment } from './profile';
 import type { RebuiltPart } from './rebuild';
 
-function polylineFace(kernel: OcctKernel, points: { x: number; z: number }[]) {
+function pathFace(kernel: OcctKernel, segments: ProfilePathSegment[]) {
   const edges: ShapeHandle[] = [];
-  for (let index = 0; index < points.length; index += 1) {
-    const start = points[index];
-    const end = points[(index + 1) % points.length];
-    edges.push(kernel.makeLineEdge(
-      { x: start.x, y: start.z, z: 0 },
-      { x: end.x, y: end.z, z: 0 },
+  for (const segment of segments) {
+    if (segment.kind === 'line') {
+      edges.push(kernel.makeLineEdge(
+        { x: segment.start.x, y: segment.start.z, z: 0 },
+        { x: segment.end.x, y: segment.end.z, z: 0 },
+      ));
+      continue;
+    }
+
+    const midAngle = (segment.startAngleDeg + segment.sweepDeg / 2) * Math.PI / 180;
+    const mid = {
+      x: segment.center.x + Math.cos(midAngle) * segment.radiusMm,
+      z: segment.center.z + Math.sin(midAngle) * segment.radiusMm,
+    };
+    edges.push(kernel.makeArcEdge(
+      { x: segment.start.x, y: segment.start.z, z: 0 },
+      { x: mid.x, y: mid.z, z: 0 },
+      { x: segment.end.x, y: segment.end.z, z: 0 },
     ));
   }
   const wire = kernel.makeWire(edges);
@@ -42,6 +55,6 @@ export function makeExactBaseSolid(kernel: OcctKernel, rebuilt: RebuiltPart) {
 
   const face = profile.kind === 'circle'
     ? circleFace(kernel, profile.center, profile.radiusMm)
-    : polylineFace(kernel, profile.points);
+    : pathFace(kernel, profile.segments);
   return kernel.extrude(face, 0, 0, rebuilt.height);
 }
