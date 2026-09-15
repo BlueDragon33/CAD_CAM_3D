@@ -56,11 +56,9 @@ export type SketchConstraint =
   | { id: string; kind: 'centered' }
   | { id: string; kind: 'width'; parameter: 'width' }
   | { id: string; kind: 'depth'; parameter: 'depth' }
-  | { id: string; kind: 'horizontal'; entityId: string }
-  | { id: string; kind: 'vertical'; entityId: string }
+  | { id: string; kind: 'horizontal' | 'vertical'; entityId: string }
   | { id: string; kind: 'coincident'; first: SketchPointRef; second: SketchPointRef }
-  | { id: string; kind: 'distance'; entityId: string; valueMm: number }
-  | { id: string; kind: 'radius'; entityId: string; valueMm: number };
+  | { id: string; kind: 'distance' | 'radius'; entityId: string; valueMm: number };
 
 type FeatureBase<K extends FeatureKind, P> = {
   id: string;
