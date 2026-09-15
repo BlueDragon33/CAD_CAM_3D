@@ -82,10 +82,17 @@ export function Sketcher({ project, feature, onChange, onMessage }: Props) {
 
   const entities = feature.params.entities;
   const analysis = useMemo(() => analyzeSketchEntities(entities), [entities]);
-  const profileAnalysis = useMemo(() => analyzeSketchProfiles(entities), [entities]);
-  const profileEntityIds = useMemo(
-    () => new Set(profileAnalysis.primaryCandidate?.entityIds ?? []),
-    [profileAnalysis],
+  const activeProfileEntities = useMemo(() => entities.filter((entity) => !entity.construction), [entities]);
+  const constructionEntities = useMemo(() => entities.filter((entity) => entity.construction), [entities]);
+  const activeProfileAnalysis = useMemo(() => analyzeSketchProfiles(activeProfileEntities), [activeProfileEntities]);
+  const candidateProfileAnalysis = useMemo(
+    () => analyzeSketchProfiles(activeProfileEntities.length > 0 ? constructionEntities : entities),
+    [activeProfileEntities.length, constructionEntities, entities],
+  );
+  const activeProfileEntityIds = useMemo(() => new Set(activeProfileEntities.map((entity) => entity.id)), [activeProfileEntities]);
+  const candidateEntityIds = useMemo(
+    () => new Set(candidateProfileAnalysis.primaryCandidate?.entityIds ?? []),
+    [candidateProfileAnalysis],
   );
   const selectedEntity = entities.find((entity) => entity.id === selectedEntityId) ?? null;
   const selectedDimension = selectedEntity ? dimensionConstraintFor(selectedEntity, feature.params.constraints) : undefined;
@@ -238,10 +245,35 @@ export function Sketcher({ project, feature, onChange, onMessage }: Props) {
   };
 
   const clearConstruction = () => {
-    const baseConstraints = feature.params.constraints.filter((constraint) => constraint.kind === 'centered' || constraint.kind === 'width' || constraint.kind === 'depth');
-    applyFeatureUpdate([], baseConstraints, 'Construction sketch geometry cleared. The parametric rectangle profile is unchanged.');
+    const removedIds = constructionEntities.map((entity) => entity.id);
+    let constraints = feature.params.constraints;
+    for (const id of removedIds) constraints = removeEntityConstraints(constraints, id);
+    applyFeatureUpdate(activeProfileEntities, constraints, activeProfileEntities.length > 0
+      ? 'Construction geometry cleared. The promoted manufacturing profile remains active.'
+      : 'Construction sketch geometry cleared. The named rectangle profile remains active.');
     setPending([]);
-    setSelectedEntityId(null);
+    if (selectedEntity?.construction) setSelectedEntityId(null);
+  };
+
+  const promoteCandidate = () => {
+    const candidate = candidateProfileAnalysis.primaryCandidate;
+    if (!candidateProfileAnalysis.promotable || !candidate) {
+      onMessage?.('Profile promotion blocked: draw exactly one validated Line loop or Circle first.');
+      return;
+    }
+    const promotedIds = new Set(candidate.entityIds);
+    const nextEntities = entities.map((entity) => ({ ...entity, construction: !promotedIds.has(entity.id) })) as SketchEntity[];
+    applyFeatureUpdate(
+      nextEntities,
+      feature.params.constraints,
+      `Manufacturing profile promoted from ${candidate.kind} · ${candidate.areaMm2.toFixed(2)} mm². Preview/STL/STEP now rebuild from this loop.`,
+    );
+  };
+
+  const useNamedRectangle = () => {
+    if (activeProfileEntities.length === 0) return;
+    const nextEntities = entities.map((entity) => ({ ...entity, construction: true })) as SketchEntity[];
+    applyFeatureUpdate(nextEntities, feature.params.constraints, 'Manufacturing profile reverted to the named width/depth rectangle.');
   };
 
   const setSelectedDimension = (value: number) => {
@@ -268,9 +300,16 @@ export function Sketcher({ project, feature, onChange, onMessage }: Props) {
 
   const deleteSelected = () => {
     if (!selectedEntity) return;
+    const wasManufacturing = !selectedEntity.construction;
     const nextEntities = entities.filter((entity) => entity.id !== selectedEntity.id);
     const nextConstraints = removeEntityConstraints(feature.params.constraints, selectedEntity.id);
-    applyFeatureUpdate(nextEntities, nextConstraints, `${selectedEntity.kind} deleted with dependent constraints.`);
+    applyFeatureUpdate(
+      nextEntities,
+      nextConstraints,
+      wasManufacturing
+        ? `${selectedEntity.kind} deleted from the manufacturing profile. Solid rebuild is blocked until the promoted loop is repaired or the rectangle profile is restored.`
+        : `${selectedEntity.kind} deleted with dependent constraints.`,
+    );
     setSelectedEntityId(null);
   };
 
@@ -286,10 +325,18 @@ export function Sketcher({ project, feature, onChange, onMessage }: Props) {
       : selectedEntity.radiusMm
     : 0;
 
-  const candidate = profileAnalysis.primaryCandidate;
-  const profileSummary = profileAnalysis.promotable && candidate
+  const activeCandidate = activeProfileAnalysis.primaryCandidate;
+  const activeProfileValid = activeProfileEntities.length > 0 && activeProfileAnalysis.promotable && Boolean(activeCandidate);
+  const candidate = candidateProfileAnalysis.primaryCandidate;
+  const candidateSummary = candidateProfileAnalysis.promotable && candidate
     ? `Closed ${candidate.kind} ready · area ${candidate.areaMm2.toFixed(2)} mm² · perimeter ${candidate.perimeterMm.toFixed(2)} mm${candidate.winding === 'not-applicable' ? '' : ` · ${candidate.winding}`}`
-    : profileAnalysis.issues[0] ?? 'Draw one simple closed line loop or one circle to create a profile candidate.';
+    : candidateProfileAnalysis.issues[0] ?? 'Draw one simple closed Line loop or one Circle to create a profile candidate.';
+
+  const manufacturingSummary = activeProfileEntities.length === 0
+    ? `Named rectangle ${project.dimensions.width} × ${project.dimensions.depth} mm`
+    : activeProfileValid && activeCandidate
+      ? `Promoted ${activeCandidate.kind} · area ${activeCandidate.areaMm2.toFixed(2)} mm² · perimeter ${activeCandidate.perimeterMm.toFixed(2)} mm`
+      : `INVALID promoted profile · ${activeProfileAnalysis.issues[0] ?? 'repair the loop or restore the named rectangle'}`;
 
   return (
     <div className="sketcher-shell">
@@ -297,13 +344,15 @@ export function Sketcher({ project, feature, onChange, onMessage }: Props) {
         {(['select', 'line', 'circle', 'arc'] as SketchTool[]).map((entry) => (
           <button key={entry} type="button" data-active={tool === entry} onClick={() => chooseTool(entry)}>{entry}</button>
         ))}
-        <button type="button" onClick={clearConstruction} disabled={entities.length === 0}>Clear construction</button>
+        <button type="button" onClick={promoteCandidate} disabled={!candidateProfileAnalysis.promotable}>Use candidate as profile</button>
+        <button type="button" onClick={useNamedRectangle} disabled={activeProfileEntities.length === 0}>Use rectangle</button>
+        <button type="button" onClick={clearConstruction} disabled={constructionEntities.length === 0}>Clear construction</button>
       </div>
 
       {selectedEntity ? <div className="sketch-entity-inspector">
         <div>
           <strong>{selectedEntity.kind}</strong>
-          <small>{selectedEntity.id.slice(0, 8)} · construction geometry</small>
+          <small>{selectedEntity.id.slice(0, 8)} · {selectedEntity.construction ? 'construction geometry' : 'manufacturing profile'}</small>
         </div>
         <label>
           <span>{selectedEntity.kind === 'line' ? 'Length' : 'Radius'}</span>
@@ -344,6 +393,7 @@ export function Sketcher({ project, feature, onChange, onMessage }: Props) {
 
         <rect
           className="sketch-profile"
+          data-active={activeProfileEntities.length === 0}
           x={-project.dimensions.width / 2}
           y={-project.dimensions.depth / 2}
           width={project.dimensions.width}
@@ -354,7 +404,8 @@ export function Sketcher({ project, feature, onChange, onMessage }: Props) {
           {entities.map((entity) => {
             const classes = ['sketch-entity'];
             if (entity.id === selectedEntityId) classes.push('is-selected');
-            if (profileAnalysis.promotable && profileEntityIds.has(entity.id)) classes.push('is-profile-candidate');
+            if (activeProfileEntityIds.has(entity.id)) classes.push('is-manufacturing-profile');
+            else if (candidateProfileAnalysis.promotable && candidateEntityIds.has(entity.id)) classes.push('is-profile-candidate');
             const className = classes.join(' ');
             if (entity.kind === 'line') return <line className={className} key={entity.id} x1={entity.start.x} y1={entity.start.z} x2={entity.end.x} y2={entity.end.z} onPointerDown={(event) => handleEntityPointerDown(event, entity.id)} />;
             if (entity.kind === 'circle') return <circle className={className} key={entity.id} cx={entity.center.x} cy={entity.center.z} r={entity.radiusMm} onPointerDown={(event) => handleEntityPointerDown(event, entity.id)} />;
@@ -379,15 +430,17 @@ export function Sketcher({ project, feature, onChange, onMessage }: Props) {
 
       <div className="sketcher-status">
         <strong>Sketch · XZ</strong>
-        <span>Manufacturing profile: centered rectangle {project.dimensions.width} × {project.dimensions.depth} mm</span>
-        <span>Construction: {analysis.lineCount} line · {analysis.circleCount} circle · {analysis.arcCount} arc · ~{analysis.estimatedDegreesOfFreedom} raw DOF</span>
-        <span className="sketch-profile-readiness" data-ready={profileAnalysis.promotable}>
-          Candidate profile: {profileAnalysis.promotable ? 'VALID' : 'NOT READY'} · {profileSummary}
+        <span className="sketch-manufacturing-status" data-ready={activeProfileEntities.length === 0 || activeProfileValid}>
+          Manufacturing profile: {manufacturingSummary}
+        </span>
+        <span>Geometry: {analysis.lineCount} line · {analysis.circleCount} circle · {analysis.arcCount} arc · ~{analysis.estimatedDegreesOfFreedom} raw DOF</span>
+        <span className="sketch-profile-readiness" data-ready={candidateProfileAnalysis.promotable}>
+          Candidate: {candidateProfileAnalysis.promotable ? 'VALID' : 'NOT READY'} · {candidateSummary}
         </span>
         <small>{tool === 'select'
           ? selectedEntity ? 'Selected entity · drag to move · edit dimensions/constraints in the entity panel.' : 'Select an entity to drag, dimension, constrain or delete it.'
           : `${tool} tool · grid/anchor snapping active · ${pending.length} point(s) captured`}</small>
-        {profileAnalysis.promotable ? <small>Validation only: this closed loop does not replace the manufacturing rectangle until both geometry kernels support profile promotion.</small> : null}
+        {activeProfileEntities.length > 0 ? <small>Promoted entity IDs persist through the existing construction flag; Save/Open keeps this manufacturing profile without a project-format migration.</small> : null}
       </div>
     </div>
   );
