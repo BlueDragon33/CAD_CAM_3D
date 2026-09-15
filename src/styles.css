@@ -54,6 +54,24 @@ button:disabled { cursor: default; }
 .topology-status[data-status="error"] { border-color: #fecaca; background: rgba(254,242,242,.95); color: #b91c1c; }
 .canvas-caption { position: absolute; left: 12px; bottom: 12px; max-width: calc(100% - 24px); padding: 7px 9px; border: 1px solid #cbd5e1; border-radius: 8px; background: rgba(255,255,255,.92); color: #475569; font-size: 12px; pointer-events: none; }
 
+.sketcher-shell { position: absolute; inset: 0; overflow: hidden; background: #f8fafc; }
+.sketcher-canvas { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; cursor: crosshair; }
+.sketch-grid line { stroke: #e2e8f0; stroke-width: .18; vector-effect: non-scaling-stroke; }
+.sketch-grid .sketch-axis { stroke: #94a3b8; stroke-width: .55; }
+.sketch-profile { fill: rgba(37, 99, 235, .07); stroke: #2563eb; stroke-width: 1.4; vector-effect: non-scaling-stroke; }
+.sketch-construction line, .sketch-construction circle, .sketch-construction path { fill: none; stroke: #d97706; stroke-width: 1.15; stroke-dasharray: 5 4; vector-effect: non-scaling-stroke; }
+.sketch-preview line, .sketch-preview circle, .sketch-preview path { fill: none; stroke: #0284c7; stroke-width: 1.15; stroke-dasharray: 3 3; vector-effect: non-scaling-stroke; }
+.sketch-snap-marker { fill: #fff; stroke: #0284c7; stroke-width: 1.5; vector-effect: non-scaling-stroke; pointer-events: none; }
+.sketch-snap-marker[data-snap="anchor"] { fill: #dbeafe; stroke: #1d4ed8; }
+.sketcher-toolbar { position: absolute; z-index: 4; top: 12px; left: 12px; display: flex; flex-wrap: wrap; gap: 6px; max-width: calc(100% - 24px); padding: 5px; border: 1px solid #cbd5e1; border-radius: 10px; background: rgba(255,255,255,.95); box-shadow: 0 8px 24px rgba(15,23,42,.08); }
+.sketcher-toolbar button { border: 1px solid transparent; border-radius: 7px; padding: 7px 10px; background: transparent; color: #475569; font-size: 12px; font-weight: 650; text-transform: capitalize; }
+.sketcher-toolbar button:hover:not(:disabled) { background: #f1f5f9; }
+.sketcher-toolbar button[data-active="true"] { border-color: #93c5fd; background: #eff6ff; color: #1d4ed8; }
+.sketcher-toolbar button:disabled { opacity: .42; }
+.sketcher-status { position: absolute; z-index: 4; top: 60px; left: 12px; display: grid; gap: 2px; max-width: min(440px, calc(100% - 24px)); padding: 9px 10px; border: 1px solid #cbd5e1; border-radius: 9px; background: rgba(255,255,255,.93); color: #475569; pointer-events: none; }
+.sketcher-status strong { color: #0f172a; font-size: 12px; }
+.sketcher-status span, .sketcher-status small { font-size: 11px; line-height: 1.35; }
+
 .feature-tree { list-style: none; padding: 0; margin: 0; display: grid; gap: 6px; }
 .feature-tree li { border: 1px solid #e2e8f0; background: #fff; border-radius: 8px; overflow: hidden; }
 .feature-tree li[data-selected="true"] { border-color: #2563eb; box-shadow: 0 0 0 2px rgba(37,99,235,.08); }
@@ -114,6 +132,6 @@ button:disabled { cursor: default; }
   .canvas-panel { min-height: 420px; order: -1; }
   .history-panel { max-height: none; }
   .commandbar { grid-template-columns: 1fr; }
-  .topology-toolbar { top: 8px; left: 8px; }
-  .topology-status { top: 54px; left: 8px; max-width: calc(100% - 16px); }
+  .topology-toolbar, .sketcher-toolbar { top: 8px; left: 8px; }
+  .topology-status, .sketcher-status { top: 54px; left: 8px; max-width: calc(100% - 16px); }
 }
