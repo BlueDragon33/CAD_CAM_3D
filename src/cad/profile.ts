@@ -1,37 +1,73 @@
-import type { SketchCircleEntity, SketchEntity, SketchLineEntity, SketchPoint2D } from './sketch';
-import { distance2d } from './sketch';
+import type {
+  SketchArcEntity,
+  SketchCircleEntity,
+  SketchEntity,
+  SketchLineEntity,
+  SketchPoint2D,
+} from './sketch';
+import {
+  arcEndpoint,
+  distance2d,
+  positiveArcSweepDeg,
+} from './sketch';
 
 export type ProfileWinding = 'clockwise' | 'counter-clockwise' | 'not-applicable';
 
-export type SketchProfileCandidate =
-  | {
-      kind: 'polyline';
-      entityIds: string[];
-      points: SketchPoint2D[];
-      areaMm2: number;
-      perimeterMm: number;
-      winding: Exclude<ProfileWinding, 'not-applicable'>;
-      selfIntersectionCount: number;
-      valid: boolean;
-      issues: string[];
-    }
-  | {
-      kind: 'circle';
-      entityIds: [string];
-      center: SketchPoint2D;
-      radiusMm: number;
-      areaMm2: number;
-      perimeterMm: number;
-      winding: 'not-applicable';
-      selfIntersectionCount: 0;
-      valid: boolean;
-      issues: string[];
-    };
+export type ProfileLineSegment = {
+  kind: 'line';
+  entityId: string;
+  start: SketchPoint2D;
+  end: SketchPoint2D;
+};
+
+export type ProfileArcSegment = {
+  kind: 'arc';
+  entityId: string;
+  center: SketchPoint2D;
+  radiusMm: number;
+  startAngleDeg: number;
+  /** Signed traversal sweep. Positive follows the persisted Arc direction; negative is the reversed traversal. */
+  sweepDeg: number;
+  start: SketchPoint2D;
+  end: SketchPoint2D;
+};
+
+export type ProfilePathSegment = ProfileLineSegment | ProfileArcSegment;
+
+export type SketchPathProfileCandidate = {
+  kind: 'polyline' | 'mixed';
+  entityIds: string[];
+  segments: ProfilePathSegment[];
+  /** Sampled loop used only for conservative intersection diagnostics. */
+  points: SketchPoint2D[];
+  areaMm2: number;
+  perimeterMm: number;
+  winding: Exclude<ProfileWinding, 'not-applicable'>;
+  selfIntersectionCount: number;
+  valid: boolean;
+  issues: string[];
+};
+
+export type SketchCircleProfileCandidate = {
+  kind: 'circle';
+  entityIds: [string];
+  center: SketchPoint2D;
+  radiusMm: number;
+  areaMm2: number;
+  perimeterMm: number;
+  winding: 'not-applicable';
+  selfIntersectionCount: 0;
+  valid: boolean;
+  issues: string[];
+};
+
+export type SketchProfileCandidate = SketchPathProfileCandidate | SketchCircleProfileCandidate;
 
 export type SketchProfileAnalysis = {
   candidates: SketchProfileCandidate[];
   closedLoopCount: number;
   openComponentCount: number;
+  /** Retained for callers; Arc loops are now supported, so this is normally zero. */
   unsupportedArcCount: number;
   selfIntersectionCount: number;
   promotable: boolean;
@@ -64,6 +100,17 @@ export type ManufacturingProfile =
       source: 'sketch';
       entityIds: string[];
       points: SketchPoint2D[];
+      segments: ProfileLineSegment[];
+      areaMm2: number;
+      perimeterMm: number;
+      winding: Exclude<ProfileWinding, 'not-applicable'>;
+      bounds: ProfileBounds;
+    }
+  | {
+      kind: 'mixed';
+      source: 'sketch';
+      entityIds: string[];
+      segments: ProfilePathSegment[];
       areaMm2: number;
       perimeterMm: number;
       winding: Exclude<ProfileWinding, 'not-applicable'>;
@@ -86,29 +133,13 @@ export type ManufacturingProfileResolution = {
   issues: string[];
 };
 
+type PathEntity = SketchLineEntity | SketchArcEntity;
 type Node = { point: SketchPoint2D; edgeIndexes: number[] };
-type GraphEdge = { entity: SketchLineEntity; a: number; b: number };
+type GraphEdge = { entity: PathEntity; a: number; b: number };
+type OrderedGraphEdge = { edge: GraphEdge; forward: boolean; startNode: Node; endNode: Node };
 
 function pointKey(point: SketchPoint2D) {
   return `${point.x.toFixed(6)},${point.z.toFixed(6)}`;
-}
-
-function signedArea(points: SketchPoint2D[]) {
-  let twiceArea = 0;
-  for (let i = 0; i < points.length; i += 1) {
-    const current = points[i];
-    const next = points[(i + 1) % points.length];
-    twiceArea += current.x * next.z - next.x * current.z;
-  }
-  return twiceArea / 2;
-}
-
-function perimeter(points: SketchPoint2D[]) {
-  let length = 0;
-  for (let i = 0; i < points.length; i += 1) {
-    length += distance2d(points[i], points[(i + 1) % points.length]);
-  }
-  return length;
 }
 
 function cross(a: SketchPoint2D, b: SketchPoint2D, c: SketchPoint2D) {
@@ -156,7 +187,12 @@ function selfIntersectionCount(points: SketchPoint2D[], epsilon: number) {
   return count;
 }
 
-function buildLineGraph(lines: SketchLineEntity[], toleranceMm: number) {
+function pathEntityEndpoints(entity: PathEntity) {
+  if (entity.kind === 'line') return { start: entity.start, end: entity.end };
+  return { start: arcEndpoint(entity, 'start'), end: arcEndpoint(entity, 'end') };
+}
+
+function buildPathGraph(entities: PathEntity[], toleranceMm: number) {
   const nodes: Node[] = [];
   const edges: GraphEdge[] = [];
 
@@ -167,9 +203,10 @@ function buildLineGraph(lines: SketchLineEntity[], toleranceMm: number) {
     return nodes.length - 1;
   };
 
-  for (const entity of lines) {
-    const a = nodeFor(entity.start);
-    const b = nodeFor(entity.end);
+  for (const entity of entities) {
+    const endpoints = pathEntityEndpoints(entity);
+    const a = nodeFor(endpoints.start);
+    const b = nodeFor(endpoints.end);
     const edgeIndex = edges.length;
     edges.push({ entity, a, b });
     nodes[a].edgeIndexes.push(edgeIndex);
@@ -211,14 +248,12 @@ function orderCycle(nodes: Node[], edges: GraphEdge[], component: number[]) {
   const componentSet = new Set(component);
   const startEdgeIndex = component[0];
   const startVertex = edges[startEdgeIndex].a;
-  const points: SketchPoint2D[] = [];
-  const entityIds: string[] = [];
+  const ordered: OrderedGraphEdge[] = [];
   const used = new Set<number>();
   let currentVertex = startVertex;
   let previousEdge = -1;
 
   for (let step = 0; step < component.length; step += 1) {
-    points.push({ ...nodes[currentVertex].point });
     const nextEdgeIndex = nodes[currentVertex].edgeIndexes.find((index) => (
       componentSet.has(index) && index !== previousEdge && !used.has(index)
     ));
@@ -226,54 +261,164 @@ function orderCycle(nodes: Node[], edges: GraphEdge[], component: number[]) {
 
     used.add(nextEdgeIndex);
     const edge = edges[nextEdgeIndex];
-    entityIds.push(edge.entity.id);
-    const nextVertex = edge.a === currentVertex ? edge.b : edge.a;
+    const forward = edge.a === currentVertex;
+    const nextVertex = forward ? edge.b : edge.a;
+    ordered.push({ edge, forward, startNode: nodes[currentVertex], endNode: nodes[nextVertex] });
     previousEdge = nextEdgeIndex;
     currentVertex = nextVertex;
   }
 
   if (currentVertex !== startVertex || used.size !== component.length) return null;
-  return { points, entityIds };
+  return ordered;
 }
 
-function analyzePolylineComponent(
+function segmentFromOrdered(entry: OrderedGraphEdge): ProfilePathSegment {
+  const entity = entry.edge.entity;
+  if (entity.kind === 'line') {
+    const start = entry.forward ? entity.start : entity.end;
+    const end = entry.forward ? entity.end : entity.start;
+    return { kind: 'line', entityId: entity.id, start: { ...start }, end: { ...end } };
+  }
+
+  const positiveSweep = positiveArcSweepDeg(entity.startAngleDeg, entity.endAngleDeg);
+  const startAngleDeg = entry.forward ? entity.startAngleDeg : entity.endAngleDeg;
+  const sweepDeg = entry.forward ? positiveSweep : -positiveSweep;
+  const start = entry.forward ? arcEndpoint(entity, 'start') : arcEndpoint(entity, 'end');
+  const end = entry.forward ? arcEndpoint(entity, 'end') : arcEndpoint(entity, 'start');
+  return {
+    kind: 'arc',
+    entityId: entity.id,
+    center: { ...entity.center },
+    radiusMm: entity.radiusMm,
+    startAngleDeg,
+    sweepDeg,
+    start,
+    end,
+  };
+}
+
+function signedAreaContribution(segment: ProfilePathSegment) {
+  if (segment.kind === 'line') {
+    return (segment.start.x * segment.end.z - segment.end.x * segment.start.z) / 2;
+  }
+  const theta1 = segment.startAngleDeg * Math.PI / 180;
+  const delta = segment.sweepDeg * Math.PI / 180;
+  const theta2 = theta1 + delta;
+  const { x: cx, z: cz } = segment.center;
+  const r = segment.radiusMm;
+  return 0.5 * (
+    r * cx * (Math.sin(theta2) - Math.sin(theta1))
+    - r * cz * (Math.cos(theta2) - Math.cos(theta1))
+    + r * r * delta
+  );
+}
+
+function pathPerimeter(segments: ProfilePathSegment[]) {
+  return segments.reduce((sum, segment) => {
+    if (segment.kind === 'line') return sum + distance2d(segment.start, segment.end);
+    return sum + Math.abs(segment.sweepDeg) * Math.PI / 180 * segment.radiusMm;
+  }, 0);
+}
+
+function samplePathSegments(segments: ProfilePathSegment[]) {
+  const points: SketchPoint2D[] = [];
+  for (const segment of segments) {
+    if (points.length === 0) points.push({ ...segment.start });
+    if (segment.kind === 'line') {
+      points.push({ ...segment.end });
+      continue;
+    }
+    const arcLength = Math.abs(segment.sweepDeg) * Math.PI / 180 * segment.radiusMm;
+    const steps = Math.max(4, Math.ceil(Math.abs(segment.sweepDeg) / 5), Math.ceil(arcLength / 1.5));
+    for (let index = 1; index <= steps; index += 1) {
+      const angle = (segment.startAngleDeg + segment.sweepDeg * index / steps) * Math.PI / 180;
+      points.push({
+        x: segment.center.x + Math.cos(angle) * segment.radiusMm,
+        z: segment.center.z + Math.sin(angle) * segment.radiusMm,
+      });
+    }
+  }
+  if (points.length > 1 && distance2d(points[0], points[points.length - 1]) <= 1e-6) points.pop();
+  return points;
+}
+
+function angleOnSweep(angleDeg: number, startAngleDeg: number, sweepDeg: number) {
+  const normalize = (value: number) => {
+    let result = value % 360;
+    if (result < 0) result += 360;
+    return result;
+  };
+  if (sweepDeg >= 0) return normalize(angleDeg - startAngleDeg) <= sweepDeg + 1e-9;
+  return normalize(startAngleDeg - angleDeg) <= -sweepDeg + 1e-9;
+}
+
+function pathBounds(segments: ProfilePathSegment[]): ProfileBounds {
+  const points: SketchPoint2D[] = [];
+  for (const segment of segments) {
+    points.push({ ...segment.start }, { ...segment.end });
+    if (segment.kind !== 'arc') continue;
+    for (const angleDeg of [0, 90, 180, 270]) {
+      if (!angleOnSweep(angleDeg, segment.startAngleDeg, segment.sweepDeg)) continue;
+      const angle = angleDeg * Math.PI / 180;
+      points.push({
+        x: segment.center.x + Math.cos(angle) * segment.radiusMm,
+        z: segment.center.z + Math.sin(angle) * segment.radiusMm,
+      });
+    }
+  }
+  return pointsBounds(points);
+}
+
+function analyzePathComponent(
   nodes: Node[],
   edges: GraphEdge[],
   component: number[],
   toleranceMm: number,
-): SketchProfileCandidate | null {
+): SketchPathProfileCandidate | null {
   const vertexIndexes = new Set<number>();
   for (const edgeIndex of component) {
     vertexIndexes.add(edges[edgeIndex].a);
     vertexIndexes.add(edges[edgeIndex].b);
   }
-  if (component.length < 3) return null;
+  if (component.length < 2) return null;
   if ([...vertexIndexes].some((index) => nodes[index].edgeIndexes.filter((edgeIndex) => component.includes(edgeIndex)).length !== 2)) return null;
 
   const ordered = orderCycle(nodes, edges, component);
-  if (!ordered || ordered.points.length < 3) return null;
+  if (!ordered) return null;
+  const segments = ordered.map(segmentFromOrdered);
+  const containsArc = segments.some((segment) => segment.kind === 'arc');
+  if (!containsArc && segments.length < 3) return null;
+  const sampledPoints = samplePathSegments(segments);
+  if (sampledPoints.length < 3) return null;
 
-  const area = signedArea(ordered.points);
-  const intersections = selfIntersectionCount(ordered.points, Math.max(1e-9, toleranceMm * 1e-3));
+  const signedArea = segments.reduce((sum, segment) => sum + signedAreaContribution(segment), 0);
+  const intersections = selfIntersectionCount(sampledPoints, Math.max(1e-9, toleranceMm * 1e-3));
   const issues: string[] = [];
-  if (Math.abs(area) <= toleranceMm * toleranceMm) issues.push('Closed polyline has near-zero enclosed area.');
-  if (intersections > 0) issues.push(`Closed polyline self-intersects ${intersections} time(s).`);
-  if (new Set(ordered.points.map(pointKey)).size !== ordered.points.length) issues.push('Closed polyline revisits a vertex and is not a simple loop.');
+  if (Math.abs(signedArea) <= toleranceMm * toleranceMm) issues.push('Closed path has near-zero enclosed area.');
+  if (intersections > 0) issues.push(`Closed path self-intersects ${intersections} time(s).`);
+  const vertices = segments.map((segment) => segment.start);
+  if (new Set(vertices.map(pointKey)).size !== vertices.length) issues.push('Closed path revisits a vertex and is not a simple loop.');
+  for (let index = 0; index < segments.length; index += 1) {
+    const current = segments[index];
+    const next = segments[(index + 1) % segments.length];
+    if (distance2d(current.end, next.start) > toleranceMm) issues.push(`Profile gap exceeds ${toleranceMm.toFixed(3)} mm near ${current.entityId}.`);
+  }
 
   return {
-    kind: 'polyline',
-    entityIds: ordered.entityIds,
-    points: ordered.points,
-    areaMm2: Math.abs(area),
-    perimeterMm: perimeter(ordered.points),
-    winding: area >= 0 ? 'counter-clockwise' : 'clockwise',
+    kind: containsArc ? 'mixed' : 'polyline',
+    entityIds: segments.map((segment) => segment.entityId),
+    segments,
+    points: sampledPoints,
+    areaMm2: Math.abs(signedArea),
+    perimeterMm: pathPerimeter(segments),
+    winding: signedArea >= 0 ? 'counter-clockwise' : 'clockwise',
     selfIntersectionCount: intersections,
     valid: issues.length === 0,
     issues,
   };
 }
 
-function circleCandidate(entity: SketchCircleEntity, toleranceMm: number): SketchProfileCandidate {
+function circleCandidate(entity: SketchCircleEntity, toleranceMm: number): SketchCircleProfileCandidate {
   const issues: string[] = [];
   if (!Number.isFinite(entity.radiusMm) || entity.radiusMm <= toleranceMm) issues.push('Circle radius is too small for a manufacturing profile.');
   return {
@@ -295,16 +440,15 @@ export function analyzeSketchProfiles(
   options: { endpointToleranceMm?: number } = {},
 ): SketchProfileAnalysis {
   const toleranceMm = Math.max(1e-5, options.endpointToleranceMm ?? 0.05);
-  const lines = entities.filter((entity): entity is SketchLineEntity => entity.kind === 'line');
+  const pathEntities = entities.filter((entity): entity is PathEntity => entity.kind === 'line' || entity.kind === 'arc');
   const circles = entities.filter((entity): entity is SketchCircleEntity => entity.kind === 'circle');
-  const arcs = entities.filter((entity) => entity.kind === 'arc');
   const candidates: SketchProfileCandidate[] = circles.map((circle) => circleCandidate(circle, toleranceMm));
   let openComponentCount = 0;
 
-  if (lines.length > 0) {
-    const { nodes, edges } = buildLineGraph(lines, toleranceMm);
+  if (pathEntities.length > 0) {
+    const { nodes, edges } = buildPathGraph(pathEntities, toleranceMm);
     for (const component of connectedEdgeComponents(nodes, edges)) {
-      const candidate = analyzePolylineComponent(nodes, edges, component, toleranceMm);
+      const candidate = analyzePathComponent(nodes, edges, component, toleranceMm);
       if (candidate) candidates.push(candidate);
       else openComponentCount += 1;
     }
@@ -312,10 +456,9 @@ export function analyzeSketchProfiles(
 
   const selfIntersections = candidates.reduce((sum, candidate) => sum + candidate.selfIntersectionCount, 0);
   const issues: string[] = [];
-  if (openComponentCount > 0) issues.push(`${openComponentCount} line component(s) are open, branched or too small to form a profile.`);
-  if (arcs.length > 0) issues.push(`${arcs.length} arc entity/entities are persisted but mixed arc-loop promotion is not validated yet.`);
+  if (openComponentCount > 0) issues.push(`${openComponentCount} path component(s) are open, branched or too small to form a profile.`);
   for (const candidate of candidates) issues.push(...candidate.issues);
-  if (candidates.length > 1) issues.push(`${candidates.length} separate closed loops exist; multi-loop outer/hole classification is not promoted yet.`);
+  if (candidates.length > 1) issues.push(`${candidates.length} separate closed loops exist; outer/hole classification is not promoted yet.`);
   if (candidates.length === 0 && entities.length > 0) issues.push('No closed manufacturing-profile candidate is currently available.');
 
   const primaryCandidate = candidates.length === 1 ? candidates[0] : null;
@@ -323,7 +466,6 @@ export function analyzeSketchProfiles(
     primaryCandidate
     && primaryCandidate.valid
     && openComponentCount === 0
-    && arcs.length === 0
     && candidates.length === 1,
   );
 
@@ -331,7 +473,7 @@ export function analyzeSketchProfiles(
     candidates,
     closedLoopCount: candidates.length,
     openComponentCount,
-    unsupportedArcCount: arcs.length,
+    unsupportedArcCount: 0,
     selfIntersectionCount: selfIntersections,
     promotable,
     primaryCandidate,
@@ -351,12 +493,7 @@ function pointsBounds(points: SketchPoint2D[]): ProfileBounds {
 
 /**
  * Resolve the solid-producing profile from persisted sketch data.
- *
- * Existing schema-v5 `construction` flags are intentionally reused as the
- * promotion boundary: zero non-construction entities means the named rectangle
- * remains active; one validated non-construction loop means that sketch loop is
- * the manufacturing profile. This keeps old project files compatible without a
- * gratuitous schema bump while making promotion explicit and durable.
+ * Existing schema-v5 `construction` flags remain the explicit promotion boundary.
  */
 export function resolveManufacturingProfile(
   entities: SketchEntity[],
@@ -414,13 +551,30 @@ export function resolveManufacturingProfile(
     };
   }
 
+  if (candidate.kind === 'mixed') {
+    return {
+      promoted: true,
+      issues: [],
+      profile: {
+        kind: 'mixed', source: 'sketch', entityIds: [...candidate.entityIds],
+        segments: candidate.segments.map((segment) => segment.kind === 'line'
+          ? { ...segment, start: { ...segment.start }, end: { ...segment.end } }
+          : { ...segment, center: { ...segment.center }, start: { ...segment.start }, end: { ...segment.end } }),
+        areaMm2: candidate.areaMm2, perimeterMm: candidate.perimeterMm, winding: candidate.winding,
+        bounds: pathBounds(candidate.segments),
+      },
+    };
+  }
+
   return {
     promoted: true,
     issues: [],
     profile: {
-      kind: 'polyline', source: 'sketch', entityIds: [...candidate.entityIds], points: candidate.points.map((point) => ({ ...point })),
+      kind: 'polyline', source: 'sketch', entityIds: [...candidate.entityIds],
+      points: candidate.segments.map((segment) => ({ ...segment.start })),
+      segments: candidate.segments.map((segment) => ({ ...segment, start: { ...segment.start }, end: { ...segment.end } })) as ProfileLineSegment[],
       areaMm2: candidate.areaMm2, perimeterMm: candidate.perimeterMm, winding: candidate.winding,
-      bounds: pointsBounds(candidate.points),
+      bounds: pathBounds(candidate.segments),
     },
   };
 }
