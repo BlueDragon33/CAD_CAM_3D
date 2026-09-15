@@ -49,6 +49,8 @@ simple preview/STL       exact preview / STEP / STL
 6. Capability flags describe only integrations that actually work.
 7. Durable topology references may contain semantic ancestry and geometry signatures, never raw kernel handles/hashes.
 8. Preview and export must choose a kernel capable of representing every enabled feature.
+9. A sketch loop must pass application-level profile validation before either kernel may use it as manufacturing geometry.
+10. Profile promotion must preserve preview/STL/STEP parity.
 
 ## Dual-kernel strategy
 
@@ -74,6 +76,26 @@ simple preview/STL       exact preview / STEP / STL
 - exact preview tessellation;
 - adaptive STL + preflight;
 - STEP.
+
+## Sketch pipeline
+
+The sketcher now separates editable geometry from manufacturing-profile selection:
+
+```text
+Line / Circle / Arc
+      ↓
+deterministic constraints
+      ↓
+closed-loop/profile validation
+      ↓
+explicit profile promotion
+      ↓
+mesh + exact-kernel parity
+```
+
+`src/cad/profile.ts` validates future profile candidates without changing the current solid. It currently recognizes one simple closed Line loop or one Circle and checks endpoint closure, connected components, vertex degree, area, perimeter, winding, repeated vertices, open/branched geometry, multiple loops and non-adjacent self-intersections.
+
+A candidate marked `promotable` is only ready for the next stage. The current manufacturing solid remains the centered named-parameter rectangle until a later schema explicitly selects the candidate and both kernels can extrude it identically. See `docs/SKETCH_PROFILE.md`.
 
 ## Topology references
 
@@ -104,28 +126,26 @@ Current manufacturing binding accepts descendants of the six planar base-extrusi
 
 ## Project persistence
 
-```text
-format: cad-cam-3d-project
-schemaVersion: 4
-savedAt: ISO timestamp
-project: CadProject
-```
+Current editable project schema is v5.
 
 Migration chain:
 - v1: legacy Fillet selection + global Hole/Cut;
 - v2: durable edge references for Fillet;
 - v3: durable face references + local U/V Hole/Cut;
-- v4: Chamfer using durable edge references.
+- v4: Chamfer using durable edge references;
+- v5: persisted Line/Circle/Arc construction entities and entity constraints.
 
-The loader accepts v1-v4 and validates supported fields before a project enters the workspace.
+The loader accepts v1-v5 and validates supported fields before a project enters the workspace.
 
 Project JSON, B-Rep and manufacturing files remain owned by CAD_CAM_3D and are not mirrored into Quản trị Ứng dụng.
 
 ## Planned modules
 
-- stronger Sketcher: line/circle/arc, snapping, dimensions, constraints and arbitrary planar sketches;
+- explicit promotion of a validated Line-loop/Circle into the manufacturing profile with mesh/exact parity;
+- mixed Line/Arc loops, nested loops and holes;
+- arbitrary planar sketches;
 - Shell and richer exact surface metadata;
-- pattern/revolve/loft/sweep after sketch foundations are stronger;
+- pattern/revolve/loft/sweep after sketch-profile foundations are stronger;
 - sectioning and measurement;
 - AI planner producing validated feature operations;
 - component catalog for electronics/robotics;
@@ -134,4 +154,6 @@ Project JSON, B-Rep and manufacturing files remain owned by CAD_CAM_3D and are n
 
 ## Current foundation
 
-The project now supports a deterministic feature history, schema-v4 persistence with migration, lightweight and exact preview/STL paths, STEP, topology evolution, durable face/edge references, oriented planar-face Hole/Cut, exact Fillet and exact Chamfer. The next product milestone should prioritize the sketcher so future features are not constrained to the original centered rectangle profile.
+The project now supports a deterministic feature history, schema-v5 persistence with migration, constrained interactive Line/Circle/Arc sketch entities, closed-profile validation, lightweight and exact preview/STL paths, STEP, topology evolution, durable face/edge references, oriented planar-face Hole/Cut, exact Fillet and exact Chamfer.
+
+The next core milestone is explicit manufacturing-profile promotion for one validated Line loop or Circle, with matching mesh and OpenCascade extrusion plus bounds/volume parity checks before expanding to arcs, multiple loops and arbitrary sketch planes.
