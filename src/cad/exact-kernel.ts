@@ -21,6 +21,7 @@ import {
   type FaceLocalFrame,
 } from './topology-ref';
 import { makeOrientedBoxTool, makeOrientedCylinderTool } from './oriented-tool';
+import { makeExactBaseSolid } from './exact-profile';
 
 const HASH_UPPER_BOUND = 2_147_483_647;
 const CUT_OVERRUN_MM = 1;
@@ -127,8 +128,8 @@ function classifyBaseFaces(kernel: OcctKernel, shape: ShapeHandle, rebuilt: Rebu
       const ez = box.zmax - box.zmin;
       let role = 'base-face';
       if (ez <= tolerance) role = Math.abs(cz - rebuilt.height) <= tolerance ? 'top' : 'bottom';
-      else if (ex <= tolerance) role = cx >= 0 ? 'side:+x' : 'side:-x';
-      else if (ey <= tolerance) role = cy >= 0 ? 'side:+depth' : 'side:-depth';
+      else if (rebuilt.manufacturingProfile?.kind === 'rectangle' && ex <= tolerance) role = cx >= 0 ? 'side:+x' : 'side:-x';
+      else if (rebuilt.manufacturingProfile?.kind === 'rectangle' && ey <= tolerance) role = cy >= 0 ? 'side:+depth' : 'side:-depth';
       result.push({ hash: kernel.hashCode(face, HASH_UPPER_BOUND), role });
     } finally {
       kernel.release(face);
@@ -285,6 +286,10 @@ function resolveEdgeTreatmentHandles(
   warnings: string[],
 ) {
   if (selection.mode === 'preset') {
+    if (rebuilt.manufacturingProfile?.kind !== 'rectangle') {
+      warnings.push(`${featureName}: the four-outer-vertical-edge preset is rectangle-specific; select exact edges explicitly for a promoted sketch profile.`);
+      return [];
+    }
     const edges = findOuterVerticalEdges(kernel, solid, rebuilt.width, rebuilt.depth);
     if (edges.length !== 4) {
       for (const edge of edges) kernel.release(edge);
@@ -314,8 +319,7 @@ function buildExactShape(kernel: OcctKernel, project: CadProject, rebuilt: Rebui
   const warnings: string[] = [];
   let filletApplied = false;
   let chamferApplied = false;
-  let shape = kernel.makeBox(rebuilt.width, rebuilt.depth, rebuilt.height);
-  shape = kernel.translate(shape, -rebuilt.width / 2, -rebuilt.depth / 2, 0);
+  let shape = makeExactBaseSolid(kernel, rebuilt);
 
   const baseFeatureId = project.features.find((feature) => feature.enabled && feature.kind === 'extrude')?.id ?? 'base-extrude';
   const tracker = new FaceLineageTracker(HASH_UPPER_BOUND, baseFeatureId, classifyBaseFaces(kernel, shape, rebuilt));
@@ -452,6 +456,7 @@ export const exactKernelDescriptor = {
     faceBoundThroughFeatures: true,
     orientedFaceBoundThroughFeatures: true,
     exactChamfer: true,
+    promotedSketchProfiles: true,
     shell: false,
   },
 };
