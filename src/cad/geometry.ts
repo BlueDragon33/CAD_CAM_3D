@@ -1,11 +1,27 @@
 import * as THREE from 'three';
 import type { CadProject } from './model';
+import type { ProfilePathSegment } from './profile';
 import { rebuildProject, type RebuiltPart } from './rebuild';
 
 export type PartGeometryBuild = {
   rebuilt: RebuiltPart;
   geometry: THREE.BufferGeometry | null;
 };
+
+function appendPathSegments(shape: THREE.Shape, segments: ProfilePathSegment[]) {
+  if (segments.length === 0) return;
+  shape.moveTo(segments[0].start.x, segments[0].start.z);
+  for (const segment of segments) {
+    if (segment.kind === 'line') {
+      shape.lineTo(segment.end.x, segment.end.z);
+      continue;
+    }
+    const start = segment.startAngleDeg * Math.PI / 180;
+    const end = (segment.startAngleDeg + segment.sweepDeg) * Math.PI / 180;
+    shape.absarc(segment.center.x, segment.center.z, segment.radiusMm, start, end, segment.sweepDeg < 0);
+  }
+  shape.closePath();
+}
 
 function buildOuterProfile(rebuilt: RebuiltPart) {
   const profile = rebuilt.manufacturingProfile;
@@ -29,10 +45,7 @@ function buildOuterProfile(rebuilt: RebuiltPart) {
     return shape;
   }
 
-  const [first, ...rest] = profile.points;
-  shape.moveTo(first.x, first.z);
-  for (const point of rest) shape.lineTo(point.x, point.z);
-  shape.closePath();
+  appendPathSegments(shape, profile.segments);
   return shape;
 }
 
@@ -72,8 +85,8 @@ function buildProfile(rebuilt: RebuiltPart) {
 /**
  * Build the current printable mesh from the semantic feature-history result.
  * This module is shared by interactive preview and the lightweight STL path.
- * Promoted simple Line-loop/Circle profiles therefore use the same persisted
- * manufacturing profile as the exact B-Rep path instead of a parallel model.
+ * Promoted Line/Arc/Circle profiles therefore use the same resolved profile as
+ * the exact B-Rep path instead of a parallel geometry model.
  */
 export function buildPartGeometry(project: CadProject): PartGeometryBuild {
   const rebuilt = rebuildProject(project);
