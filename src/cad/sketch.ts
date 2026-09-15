@@ -60,6 +60,33 @@ export function distance2d(a: SketchPoint2D, b: SketchPoint2D) {
   return Math.hypot(a.x - b.x, a.z - b.z);
 }
 
+export function normalizeAngleDeg(value: number) {
+  let result = value % 360;
+  if (result < 0) result += 360;
+  return result;
+}
+
+/** Positive design sweep used by persisted Arc entities. Full circles use Circle entities. */
+export function positiveArcSweepDeg(startAngleDeg: number, endAngleDeg: number) {
+  const start = normalizeAngleDeg(startAngleDeg);
+  const end = normalizeAngleDeg(endAngleDeg);
+  let sweep = end - start;
+  if (sweep < 0) sweep += 360;
+  return sweep;
+}
+
+export function arcPointAtAngle(entity: SketchArcEntity, angleDeg: number): SketchPoint2D {
+  const angle = angleDeg * Math.PI / 180;
+  return {
+    x: entity.center.x + Math.cos(angle) * entity.radiusMm,
+    z: entity.center.z + Math.sin(angle) * entity.radiusMm,
+  };
+}
+
+export function arcEndpoint(entity: SketchArcEntity, point: 'start' | 'end'): SketchPoint2D {
+  return arcPointAtAngle(entity, point === 'start' ? entity.startAngleDeg : entity.endAngleDeg);
+}
+
 export function createLineEntity(start: SketchPoint2D, end: SketchPoint2D, construction = true): SketchLineEntity {
   return { id: crypto.randomUUID(), kind: 'line', construction, start: { ...start }, end: { ...end } };
 }
@@ -91,6 +118,13 @@ export function entityAnchors(entity: SketchEntity): SketchAnchor[] {
     return [
       { point: { ...entity.start }, ref: { entityId: entity.id, point: 'start' }, source: 'entity' },
       { point: { ...entity.end }, ref: { entityId: entity.id, point: 'end' }, source: 'entity' },
+    ];
+  }
+  if (entity.kind === 'arc') {
+    return [
+      { point: { ...entity.center }, ref: { entityId: entity.id, point: 'center' }, source: 'entity' },
+      { point: arcEndpoint(entity, 'start'), ref: { entityId: entity.id, point: 'start' }, source: 'entity' },
+      { point: arcEndpoint(entity, 'end'), ref: { entityId: entity.id, point: 'end' }, source: 'entity' },
     ];
   }
   return [{ point: { ...entity.center }, ref: { entityId: entity.id, point: 'center' }, source: 'entity' }];
@@ -174,6 +208,7 @@ export function analyzeSketchEntities(entities: SketchEntity[]): SketchEntityAna
     estimatedDegreesOfFreedom += 5;
     if (!Number.isFinite(entity.radiusMm) || entity.radiusMm <= 0) issues.push(`Arc ${entity.id} has invalid radius.`);
     if (!Number.isFinite(entity.startAngleDeg) || !Number.isFinite(entity.endAngleDeg)) issues.push(`Arc ${entity.id} has invalid angles.`);
+    if (positiveArcSweepDeg(entity.startAngleDeg, entity.endAngleDeg) <= 1e-6) issues.push(`Arc ${entity.id} has a zero sweep; use Circle for a full loop.`);
   }
 
   return {
