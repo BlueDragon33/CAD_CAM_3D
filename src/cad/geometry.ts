@@ -7,16 +7,38 @@ export type PartGeometryBuild = {
   geometry: THREE.BufferGeometry | null;
 };
 
-function buildProfile(rebuilt: RebuiltPart) {
+function buildOuterProfile(rebuilt: RebuiltPart) {
+  const profile = rebuilt.manufacturingProfile;
+  if (!profile) return null;
   const shape = new THREE.Shape();
-  const halfWidth = rebuilt.width / 2;
-  const halfDepth = rebuilt.depth / 2;
 
-  shape.moveTo(-halfWidth, -halfDepth);
-  shape.lineTo(halfWidth, -halfDepth);
-  shape.lineTo(halfWidth, halfDepth);
-  shape.lineTo(-halfWidth, halfDepth);
+  if (profile.kind === 'rectangle') {
+    const halfWidth = profile.width / 2;
+    const halfDepth = profile.depth / 2;
+    shape.moveTo(-halfWidth, -halfDepth);
+    shape.lineTo(halfWidth, -halfDepth);
+    shape.lineTo(halfWidth, halfDepth);
+    shape.lineTo(-halfWidth, halfDepth);
+    shape.closePath();
+    return shape;
+  }
+
+  if (profile.kind === 'circle') {
+    shape.absarc(profile.center.x, profile.center.z, profile.radiusMm, 0, Math.PI * 2, false);
+    shape.closePath();
+    return shape;
+  }
+
+  const [first, ...rest] = profile.points;
+  shape.moveTo(first.x, first.z);
+  for (const point of rest) shape.lineTo(point.x, point.z);
   shape.closePath();
+  return shape;
+}
+
+function buildProfile(rebuilt: RebuiltPart) {
+  const shape = buildOuterProfile(rebuilt);
+  if (!shape) return null;
 
   for (const feature of rebuilt.holes) {
     const hole = new THREE.Path();
@@ -49,17 +71,17 @@ function buildProfile(rebuilt: RebuiltPart) {
 
 /**
  * Build the current printable mesh from the semantic feature-history result.
- * This module is the single geometry adapter used by both the viewport and STL
- * export, so the exported file cannot silently diverge from the preview.
- *
- * Exact filleting intentionally remains outside this adapter until the B-Rep
- * kernel lands. The semantic fillet feature is still preserved by rebuild.ts.
+ * This module is shared by interactive preview and the lightweight STL path.
+ * Promoted simple Line-loop/Circle profiles therefore use the same persisted
+ * manufacturing profile as the exact B-Rep path instead of a parallel model.
  */
 export function buildPartGeometry(project: CadProject): PartGeometryBuild {
   const rebuilt = rebuildProject(project);
   if (!rebuilt.hasSolid) return { rebuilt, geometry: null };
+  const profile = buildProfile(rebuilt);
+  if (!profile) return { rebuilt, geometry: null };
 
-  const geometry = new THREE.ExtrudeGeometry(buildProfile(rebuilt), {
+  const geometry = new THREE.ExtrudeGeometry(profile, {
     depth: rebuilt.height,
     bevelEnabled: false,
     curveSegments: 64,
