@@ -3,12 +3,28 @@ import { OcctKernel } from 'occt-wasm';
 
 const kernel = await OcctKernel.init();
 
+function appendMixed(shape, segments) {
+  shape.moveTo(segments[0].start.x, segments[0].start.z);
+  for (const segment of segments) {
+    if (segment.kind === 'line') {
+      shape.lineTo(segment.end.x, segment.end.z);
+      continue;
+    }
+    const start = segment.startAngleDeg * Math.PI / 180;
+    const end = (segment.startAngleDeg + segment.sweepDeg) * Math.PI / 180;
+    shape.absarc(segment.center.x, segment.center.z, segment.radius, start, end, segment.sweepDeg < 0);
+  }
+  shape.closePath();
+}
+
 function threeProfileGeometry(kind, data, height) {
   const shape = new THREE.Shape();
   if (kind === 'polyline') {
     shape.moveTo(data.points[0].x, data.points[0].z);
     for (const point of data.points.slice(1)) shape.lineTo(point.x, point.z);
     shape.closePath();
+  } else if (kind === 'mixed') {
+    appendMixed(shape, data.segments);
   } else {
     shape.absarc(data.center.x, data.center.z, data.radius, 0, Math.PI * 2, false);
     shape.closePath();
@@ -47,6 +63,30 @@ function exactPolyline(points, height) {
     return kernel.makeLineEdge(
       { x: point.x, y: point.z, z: 0 },
       { x: next.x, y: next.z, z: 0 },
+    );
+  });
+  const wire = kernel.makeWire(edges);
+  const face = kernel.makeFace(wire);
+  return kernel.extrude(face, 0, 0, height);
+}
+
+function exactMixed(segments, height) {
+  const edges = segments.map((segment) => {
+    if (segment.kind === 'line') {
+      return kernel.makeLineEdge(
+        { x: segment.start.x, y: segment.start.z, z: 0 },
+        { x: segment.end.x, y: segment.end.z, z: 0 },
+      );
+    }
+    const midAngle = (segment.startAngleDeg + segment.sweepDeg / 2) * Math.PI / 180;
+    const mid = {
+      x: segment.center.x + Math.cos(midAngle) * segment.radius,
+      z: segment.center.z + Math.sin(midAngle) * segment.radius,
+    };
+    return kernel.makeArcEdge(
+      { x: segment.start.x, y: segment.start.z, z: 0 },
+      { x: mid.x, y: mid.z, z: 0 },
+      { x: segment.end.x, y: segment.end.z, z: 0 },
     );
   });
   const wire = kernel.makeWire(edges);
@@ -124,6 +164,22 @@ try {
     exactCircle(center, radius, height),
     Math.PI * radius * radius * height,
     { width: radius * 2, depth: radius * 2, height },
+  );
+
+  const capsuleRadius = 6;
+  const mixedSegments = [
+    { kind: 'line', start: { x: -12, z: -6 }, end: { x: 12, z: -6 } },
+    { kind: 'arc', center: { x: 12, z: 0 }, radius: capsuleRadius, startAngleDeg: -90, sweepDeg: 180, start: { x: 12, z: -6 }, end: { x: 12, z: 6 } },
+    { kind: 'line', start: { x: 12, z: 6 }, end: { x: -12, z: 6 } },
+    { kind: 'arc', center: { x: -12, z: 0 }, radius: capsuleRadius, startAngleDeg: 90, sweepDeg: 180, start: { x: -12, z: 6 }, end: { x: -12, z: -6 } },
+  ];
+  const capsuleArea = 24 * 12 + Math.PI * capsuleRadius * capsuleRadius;
+  verify(
+    'Mixed Line+Arc capsule profile',
+    threeProfileGeometry('mixed', { segments: mixedSegments }, height),
+    exactMixed(mixedSegments, height),
+    capsuleArea * height,
+    { width: 36, depth: 12, height },
   );
 } finally {
   kernel.releaseAll();
