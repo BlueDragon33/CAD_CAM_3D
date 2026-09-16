@@ -6,13 +6,13 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "typecheck": "tsc -b --pretty false",
-    "smoke:exact": "node scripts/exact-kernel-smoke.mjs && node scripts/oriented-face-smoke.mjs && node scripts/profile-parity-smoke.mjs && node scripts/region-parity-smoke.mjs"
+    "smoke:exact": "node scripts/exact-kernel-smoke.mjs && node scripts/oriented-face-smoke.mjs && node scripts/profile-parity-smoke.mjs && node scripts/region-parity-smoke.mjs && node scripts/side-lineage-smoke.mjs"
   },
   "dependencies": {
     "@vitejs/plugin-react": "^4.3.3",
     "occt-wasm": "5.0.0",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1",
+    "react-dom": "^18.3.0",
     "three": "^0.169.0"
   },
   "devDependencies": {
