@@ -1,6 +1,9 @@
 import { solveSketch } from './constraints';
 import type { CadProject, ChamferFeature, CutFeature, FilletFeature, HoleFeature } from './model';
-import { resolveManufacturingProfile, type ManufacturingProfile } from './profile';
+import {
+  resolveManufacturingProfileWithRegions,
+  type ResolvedManufacturingProfile,
+} from './profile-region';
 
 export type RebuildDiagnostic = {
   level: 'info' | 'warning' | 'error';
@@ -14,7 +17,7 @@ export type RebuiltPart = {
   width: number;
   depth: number;
   height: number;
-  manufacturingProfile: ManufacturingProfile | null;
+  manufacturingProfile: ResolvedManufacturingProfile | null;
   holes: HoleFeature[];
   cuts: CutFeature[];
   /** Ordered solid operations used by the exact kernel. Never regroup subtractive/edge features here. */
@@ -37,7 +40,7 @@ export function rebuildProject(project: CadProject): RebuiltPart {
   let hasSketch = false;
   let hasSolid = false;
   let fullyConstrainedSketch = false;
-  let manufacturingProfile: ManufacturingProfile | null = null;
+  let manufacturingProfile: ResolvedManufacturingProfile | null = null;
   let filletRadius = 0;
   let chamferDistance = 0;
   const holes: HoleFeature[] = [];
@@ -54,7 +57,7 @@ export function rebuildProject(project: CadProject): RebuiltPart {
       fullyConstrainedSketch = solved.fullyConstrained;
       for (const message of solved.messages) diagnostics.push({ level: 'warning', featureId: feature.id, message });
 
-      const resolvedProfile = resolveManufacturingProfile(feature.params.entities, solved.width, solved.depth);
+      const resolvedProfile = resolveManufacturingProfileWithRegions(feature.params.entities, solved.width, solved.depth);
       manufacturingProfile = resolvedProfile.profile;
       if (!manufacturingProfile) {
         for (const issue of resolvedProfile.issues) diagnostics.push({ level: 'error', featureId: feature.id, message: `Manufacturing profile: ${issue}` });
@@ -62,10 +65,13 @@ export function rebuildProject(project: CadProject): RebuiltPart {
         width = manufacturingProfile.bounds.width;
         depth = manufacturingProfile.bounds.depth;
         if (resolvedProfile.promoted) {
+          const holeSuffix = manufacturingProfile.kind === 'region'
+            ? ` · ${manufacturingProfile.holes.length} inner hole(s)`
+            : '';
           diagnostics.push({
             level: 'info',
             featureId: feature.id,
-            message: `Promoted ${manufacturingProfile.kind} sketch profile is driving the manufacturing solid (${manufacturingProfile.areaMm2.toFixed(2)} mm²).`,
+            message: `Promoted ${manufacturingProfile.kind} sketch profile is driving the manufacturing solid (${manufacturingProfile.areaMm2.toFixed(2)} mm²${holeSuffix}).`,
           });
         }
       }
