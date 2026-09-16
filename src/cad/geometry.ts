@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import type { CadProject } from './model';
 import type { ProfilePathSegment } from './profile';
+import type { ManufacturingLoop } from './profile-region';
 import { rebuildProject, type RebuiltPart } from './rebuild';
 
 export type PartGeometryBuild = {
@@ -8,19 +9,28 @@ export type PartGeometryBuild = {
   geometry: THREE.BufferGeometry | null;
 };
 
-function appendPathSegments(shape: THREE.Shape, segments: ProfilePathSegment[]) {
+function appendPathSegments(path: THREE.Path, segments: ProfilePathSegment[]) {
   if (segments.length === 0) return;
-  shape.moveTo(segments[0].start.x, segments[0].start.z);
+  path.moveTo(segments[0].start.x, segments[0].start.z);
   for (const segment of segments) {
     if (segment.kind === 'line') {
-      shape.lineTo(segment.end.x, segment.end.z);
+      path.lineTo(segment.end.x, segment.end.z);
       continue;
     }
     const start = segment.startAngleDeg * Math.PI / 180;
     const end = (segment.startAngleDeg + segment.sweepDeg) * Math.PI / 180;
-    shape.absarc(segment.center.x, segment.center.z, segment.radiusMm, start, end, segment.sweepDeg < 0);
+    path.absarc(segment.center.x, segment.center.z, segment.radiusMm, start, end, segment.sweepDeg < 0);
   }
-  shape.closePath();
+  path.closePath();
+}
+
+function appendLoop(path: THREE.Path, loop: ManufacturingLoop) {
+  if (loop.kind === 'circle') {
+    path.absarc(loop.center.x, loop.center.z, loop.radiusMm, 0, Math.PI * 2, false);
+    path.closePath();
+    return;
+  }
+  appendPathSegments(path, loop.segments);
 }
 
 function buildOuterProfile(rebuilt: RebuiltPart) {
@@ -36,6 +46,16 @@ function buildOuterProfile(rebuilt: RebuiltPart) {
     shape.lineTo(halfWidth, halfDepth);
     shape.lineTo(-halfWidth, halfDepth);
     shape.closePath();
+    return shape;
+  }
+
+  if (profile.kind === 'region') {
+    appendLoop(shape, profile.outer);
+    for (const holeLoop of profile.holes) {
+      const hole = new THREE.Path();
+      appendLoop(hole, holeLoop);
+      shape.holes.push(hole);
+    }
     return shape;
   }
 
@@ -85,7 +105,7 @@ function buildProfile(rebuilt: RebuiltPart) {
 /**
  * Build the current printable mesh from the semantic feature-history result.
  * This module is shared by interactive preview and the lightweight STL path.
- * Promoted Line/Arc/Circle profiles therefore use the same resolved profile as
+ * Promoted Line/Arc/Circle regions therefore use the same resolved profile as
  * the exact B-Rep path instead of a parallel geometry model.
  */
 export function buildPartGeometry(project: CadProject): PartGeometryBuild {
