@@ -1,5 +1,5 @@
 import type { CadProject, SketchConstraint, SketchFeature, SketchPointRef } from './model';
-import { analyzeSketchProfiles, resolveManufacturingProfile } from './profile';
+import { analyzePromotableRegion, resolveManufacturingProfileWithRegions } from './profile-region';
 import {
   analyzeSketchEntities,
   arcEndpoint,
@@ -182,8 +182,8 @@ export function solveSketch(project: CadProject, feature: SketchFeature): Solved
   const entityAnalysis = constrainedEntityDof(feature);
   const constrained = applySketchConstraints(feature.params.entities, constraints);
   const constructionEntities = constrained.filter((entity) => entity.construction);
-  const profileAnalysis = analyzeSketchProfiles(constructionEntities.length > 0 ? constructionEntities : constrained);
-  const manufacturing = resolveManufacturingProfile(constrained, project.dimensions.width, project.dimensions.depth);
+  const regionAnalysis = analyzePromotableRegion(constructionEntities.length > 0 ? constructionEntities : constrained);
+  const manufacturing = resolveManufacturingProfileWithRegions(constrained, project.dimensions.width, project.dimensions.depth);
   const messages = [...entityAnalysis.issues];
 
   if (!hasCentered) messages.push('Sketch is missing the centered profile constraint.');
@@ -203,15 +203,16 @@ export function solveSketch(project: CadProject, feature: SketchFeature): Solved
 
   if (manufacturing.promoted) {
     if (manufacturing.profile) {
-      messages.push(`Promoted ${manufacturing.profile.kind} manufacturing profile is active · area ${manufacturing.profile.areaMm2.toFixed(2)} mm².`);
+      const holeText = manufacturing.profile.kind === 'region' ? ` · ${manufacturing.profile.holes.length} inner hole(s)` : '';
+      messages.push(`Promoted ${manufacturing.profile.kind} manufacturing profile is active · area ${manufacturing.profile.areaMm2.toFixed(2)} mm²${holeText}.`);
     } else {
       messages.push(...manufacturing.issues.map((message) => `Manufacturing profile: ${message}`));
     }
-  } else if (profileAnalysis.promotable && profileAnalysis.primaryCandidate) {
-    const candidate = profileAnalysis.primaryCandidate;
-    messages.push(`Closed profile candidate ready · ${candidate.kind} · area ${candidate.areaMm2.toFixed(2)} mm² · perimeter ${candidate.perimeterMm.toFixed(2)} mm.`);
+  } else if (regionAnalysis.promotable && regionAnalysis.outerCandidate) {
+    const holeText = regionAnalysis.holeCandidates.length > 0 ? ` · ${regionAnalysis.holeCandidates.length} inner hole(s)` : '';
+    messages.push(`Closed manufacturing region ready · area ${regionAnalysis.areaMm2.toFixed(2)} mm² · perimeter ${regionAnalysis.perimeterMm.toFixed(2)} mm${holeText}.`);
   } else if (constructionEntities.length > 0) {
-    messages.push(...profileAnalysis.issues.map((message) => `Profile validation: ${message}`));
+    messages.push(...regionAnalysis.issues.map((message) => `Profile validation: ${message}`));
   }
 
   return {
@@ -221,8 +222,8 @@ export function solveSketch(project: CadProject, feature: SketchFeature): Solved
     fullyConstrained: hasCentered && hasWidth && hasDepth && entityAnalysis.estimatedDegreesOfFreedom === 0,
     entityCount: entityAnalysis.entityCount,
     estimatedDegreesOfFreedom: entityAnalysis.estimatedDegreesOfFreedom,
-    profileCandidateCount: profileAnalysis.closedLoopCount,
-    profilePromotable: profileAnalysis.promotable,
+    profileCandidateCount: regionAnalysis.analysis.closedLoopCount,
+    profilePromotable: regionAnalysis.promotable,
     messages,
   };
 }
