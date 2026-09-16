@@ -1,4 +1,5 @@
 import type { EvolutionData } from 'occt-wasm';
+import { registeredBaseFaceRole } from './base-face-lineage-registry';
 import type { FeatureKind } from './model';
 
 export type EvolutionRelation = {
@@ -73,7 +74,11 @@ export class FaceLineageTracker {
   ) {
     const roleCounts = new Map<string, number>();
     for (const face of baseFaces) {
-      const role = sanitizeRole(face.role);
+      // makeExactBaseSolid installs a transient semantic role map immediately
+      // before the exact kernel constructs this tracker. Prefer that richer
+      // sketch-entity role over the legacy bounding-box role when available.
+      const semanticRole = registeredBaseFaceRole(face.hash) ?? face.role;
+      const role = sanitizeRole(semanticRole);
       const count = roleCounts.get(role) ?? 0;
       roleCounts.set(role, count + 1);
       const suffix = count === 0 ? role : `${role}:${count + 1}`;
