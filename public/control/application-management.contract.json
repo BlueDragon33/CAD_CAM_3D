@@ -1,0 +1,56 @@
+{
+  "contract": "application-management",
+  "application": {
+    "id": "cad-cam-3d",
+    "name": "CAD CAM 3D",
+    "repository": "BlueDragon33/CAD_CAM_3D",
+    "tier": "client"
+  },
+  "controlPlane": {
+    "name": "Quản trị Ứng dụng",
+    "mode": "managed-client",
+    "status": "scaffolded"
+  },
+  "runtime": {
+    "ownership": "CAD_CAM_3D",
+    "projectDataOwnership": "CAD_CAM_3D",
+    "remoteAdminReady": false
+  },
+  "devicePolicy": {
+    "namespace": "CAD-",
+    "classes": ["desktop", "tablet", "phone"],
+    "phoneMode": "review-only"
+  },
+  "allowlist": [
+    "runtime-status",
+    "device-access-metadata",
+    "ui-policy",
+    "feature-flags",
+    "print-policy",
+    "safe-audit-metadata"
+  ],
+  "denylist": [
+    "cad-project-files",
+    "geometry-bodies",
+    "mesh-data",
+    "exported-stl-step-3mf",
+    "private-design-notes",
+    "raw-ai-prompts"
+  ],
+  "management": {
+    "uiPolicy": {
+      "workspaceDensity": ["compact", "engineering", "comfortable"],
+      "aiCommandBridge": true,
+      "printValidation": true,
+      "experimentalCadFeatures": false,
+      "phoneMode": "review-only"
+    },
+    "operations": {
+      "deviceApproval": "planned",
+      "remoteSessionRevocation": "planned",
+      "featurePolicyUpdate": "planned",
+      "interfacePolicyUpdate": "planned",
+      "auditRead": "planned"
+    }
+  }
+}

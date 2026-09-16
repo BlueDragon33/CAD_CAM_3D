@@ -1,0 +1,25 @@
+name: CAD CAM 3D CI
+
+on:
+  push:
+    branches: [main, foundation/general-system]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: package.json
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Exact B-Rep smoke
+        run: npm run smoke:exact
+      - name: Build
+        run: npm run build
