@@ -1,5 +1,6 @@
 import type { OcctKernel, ShapeHandle } from 'occt-wasm';
 import type { ProfilePathSegment } from './profile';
+import type { ManufacturingLoop } from './profile-region';
 import type { RebuiltPart } from './rebuild';
 
 function pathFace(kernel: OcctKernel, segments: ProfilePathSegment[]) {
@@ -38,6 +39,12 @@ function circleFace(kernel: OcctKernel, center: { x: number; z: number }, radius
   return kernel.makeFace(wire);
 }
 
+function loopFace(kernel: OcctKernel, loop: ManufacturingLoop) {
+  return loop.kind === 'circle'
+    ? circleFace(kernel, loop.center, loop.radiusMm)
+    : pathFace(kernel, loop.segments);
+}
+
 /**
  * Build the first exact solid from the same resolved manufacturing profile used
  * by the lightweight mesh kernel. OCCT uses X/Y for the sketch plane and +Z as
@@ -50,6 +57,19 @@ export function makeExactBaseSolid(kernel: OcctKernel, rebuilt: RebuiltPart) {
   if (profile.kind === 'rectangle') {
     let shape = kernel.makeBox(profile.width, profile.depth, rebuilt.height);
     shape = kernel.translate(shape, -profile.width / 2, -profile.depth / 2, 0);
+    return shape;
+  }
+
+  if (profile.kind === 'region') {
+    let shape = kernel.extrude(loopFace(kernel, profile.outer), 0, 0, rebuilt.height);
+    // Extend hole tools beyond both planar caps so Boolean subtraction does not
+    // depend on coincident top/bottom faces.
+    const overrun = 1;
+    for (const hole of profile.holes) {
+      let tool = kernel.extrude(loopFace(kernel, hole), 0, 0, rebuilt.height + overrun * 2);
+      tool = kernel.translate(tool, 0, 0, -overrun);
+      shape = kernel.cut(shape, tool);
+    }
     return shape;
   }
 
