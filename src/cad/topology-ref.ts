@@ -133,7 +133,7 @@ export function createFaceTopologyRef(selection: FaceSelection, capturedAfterFea
   };
 }
 
-const basePlanarRoles = [
+const legacyBasePlanarRoles = [
   ':top',
   ':bottom',
   ':side:+x',
@@ -142,14 +142,21 @@ const basePlanarRoles = [
   ':side:-depth',
 ];
 
+function isPromotedPlanarSideLineage(id: string) {
+  return id.includes(':side:outer:line:') || /:side:hole:\d+:line:/.test(id);
+}
+
 /**
- * Current oriented-through workflow is intentionally restricted to faces that
- * descend from one of the six planar base-extrusion faces. This includes side
- * faces and split planar descendants while rejecting cylindrical Hole walls and
- * curved Fillet faces until exact surface-type persistence is added.
+ * Oriented-through placement accepts only lineage known to be planar: the
+ * named-rectangle caps/sides plus side faces extruded from promoted Line sketch
+ * entities. Arc/Circle side lineage is intentionally excluded because those
+ * surfaces are cylindrical and need a different local-surface parameter model.
  */
 export function isSupportedPlanarFace(ref: FaceTopologyRef) {
-  return ref.lineageIds.some((id) => basePlanarRoles.some((role) => id.includes(role)));
+  return ref.lineageIds.some((id) => (
+    legacyBasePlanarRoles.some((role) => id.includes(role))
+    || isPromotedPlanarSideLineage(id)
+  ));
 }
 
 /** Retained for UI compatibility and horizontal fast-path decisions. */
