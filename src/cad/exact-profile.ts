@@ -1,4 +1,6 @@
 import type { OcctKernel, ShapeHandle } from 'occt-wasm';
+import { classifyBaseFaceLineage } from './base-face-lineage';
+import { installBaseFaceLineageSeeds } from './base-face-lineage-registry';
 import type { ProfilePathSegment } from './profile';
 import type { ManufacturingLoop } from './profile-region';
 import type { RebuiltPart } from './rebuild';
@@ -45,10 +47,19 @@ function loopFace(kernel: OcctKernel, loop: ManufacturingLoop) {
     : pathFace(kernel, loop.segments);
 }
 
+function finalizeBaseSolid(kernel: OcctKernel, shape: ShapeHandle, rebuilt: RebuiltPart) {
+  installBaseFaceLineageSeeds(classifyBaseFaceLineage(kernel, shape, rebuilt));
+  return shape;
+}
+
 /**
  * Build the first exact solid from the same resolved manufacturing profile used
  * by the lightweight mesh kernel. OCCT uses X/Y for the sketch plane and +Z as
  * physical extrusion height; viewport conversion remains in exact-kernel.ts.
+ *
+ * The finished base solid is also classified against the semantic sketch
+ * region. That runtime hash -> role map is transient and only feeds the lineage
+ * tracker created immediately after this function returns.
  */
 export function makeExactBaseSolid(kernel: OcctKernel, rebuilt: RebuiltPart) {
   const profile = rebuilt.manufacturingProfile;
@@ -57,7 +68,7 @@ export function makeExactBaseSolid(kernel: OcctKernel, rebuilt: RebuiltPart) {
   if (profile.kind === 'rectangle') {
     let shape = kernel.makeBox(profile.width, profile.depth, rebuilt.height);
     shape = kernel.translate(shape, -profile.width / 2, -profile.depth / 2, 0);
-    return shape;
+    return finalizeBaseSolid(kernel, shape, rebuilt);
   }
 
   if (profile.kind === 'region') {
@@ -70,11 +81,12 @@ export function makeExactBaseSolid(kernel: OcctKernel, rebuilt: RebuiltPart) {
       tool = kernel.translate(tool, 0, 0, -overrun);
       shape = kernel.cut(shape, tool);
     }
-    return shape;
+    return finalizeBaseSolid(kernel, shape, rebuilt);
   }
 
   const face = profile.kind === 'circle'
     ? circleFace(kernel, profile.center, profile.radiusMm)
     : pathFace(kernel, profile.segments);
-  return kernel.extrude(face, 0, 0, rebuilt.height);
+  const shape = kernel.extrude(face, 0, 0, rebuilt.height);
+  return finalizeBaseSolid(kernel, shape, rebuilt);
 }
