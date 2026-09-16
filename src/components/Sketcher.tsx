@@ -6,7 +6,7 @@ import {
   replaceLineOrientationConstraint,
   upsertEntityDimensionConstraint,
 } from '../cad/constraints';
-import { analyzeSketchProfiles } from '../cad/profile';
+import { analyzePromotableRegion } from '../cad/profile-region';
 import {
   analyzeSketchEntities,
   createArcEntity,
@@ -84,14 +84,14 @@ export function Sketcher({ project, feature, onChange, onMessage }: Props) {
   const analysis = useMemo(() => analyzeSketchEntities(entities), [entities]);
   const activeProfileEntities = useMemo(() => entities.filter((entity) => !entity.construction), [entities]);
   const constructionEntities = useMemo(() => entities.filter((entity) => entity.construction), [entities]);
-  const activeProfileAnalysis = useMemo(() => analyzeSketchProfiles(activeProfileEntities), [activeProfileEntities]);
+  const activeProfileAnalysis = useMemo(() => analyzePromotableRegion(activeProfileEntities), [activeProfileEntities]);
   const candidateProfileAnalysis = useMemo(
-    () => analyzeSketchProfiles(activeProfileEntities.length > 0 ? constructionEntities : entities),
+    () => analyzePromotableRegion(activeProfileEntities.length > 0 ? constructionEntities : entities),
     [activeProfileEntities.length, constructionEntities, entities],
   );
   const activeProfileEntityIds = useMemo(() => new Set(activeProfileEntities.map((entity) => entity.id)), [activeProfileEntities]);
   const candidateEntityIds = useMemo(
-    () => new Set(candidateProfileAnalysis.primaryCandidate?.entityIds ?? []),
+    () => new Set(candidateProfileAnalysis.promotionEntityIds),
     [candidateProfileAnalysis],
   );
   const selectedEntity = entities.find((entity) => entity.id === selectedEntityId) ?? null;
@@ -256,17 +256,20 @@ export function Sketcher({ project, feature, onChange, onMessage }: Props) {
   };
 
   const promoteCandidate = () => {
-    const candidate = candidateProfileAnalysis.primaryCandidate;
-    if (!candidateProfileAnalysis.promotable || !candidate) {
-      onMessage?.('Profile promotion blocked: draw exactly one validated Line loop or Circle first.');
+    const outer = candidateProfileAnalysis.outerCandidate;
+    if (!candidateProfileAnalysis.promotable || !outer) {
+      onMessage?.('Profile promotion blocked: draw one supported outer contour with optional direct inner holes first.');
       return;
     }
-    const promotedIds = new Set(candidate.entityIds);
+    const promotedIds = new Set(candidateProfileAnalysis.promotionEntityIds);
     const nextEntities = entities.map((entity) => ({ ...entity, construction: !promotedIds.has(entity.id) })) as SketchEntity[];
+    const holeText = candidateProfileAnalysis.holeCandidates.length > 0
+      ? ` · ${candidateProfileAnalysis.holeCandidates.length} inner hole(s)`
+      : '';
     applyFeatureUpdate(
       nextEntities,
       feature.params.constraints,
-      `Manufacturing profile promoted from ${candidate.kind} · ${candidate.areaMm2.toFixed(2)} mm². Preview/STL/STEP now rebuild from this loop.`,
+      `Manufacturing region promoted from ${outer.kind} · ${candidateProfileAnalysis.areaMm2.toFixed(2)} mm²${holeText}. Preview/STL/STEP now rebuild from this region.`,
     );
   };
 
@@ -307,7 +310,7 @@ export function Sketcher({ project, feature, onChange, onMessage }: Props) {
       nextEntities,
       nextConstraints,
       wasManufacturing
-        ? `${selectedEntity.kind} deleted from the manufacturing profile. Solid rebuild is blocked until the promoted loop is repaired or the rectangle profile is restored.`
+        ? `${selectedEntity.kind} deleted from the manufacturing profile. Solid rebuild is blocked until the promoted region is repaired or the rectangle profile is restored.`
         : `${selectedEntity.kind} deleted with dependent constraints.`,
     );
     setSelectedEntityId(null);
@@ -325,18 +328,24 @@ export function Sketcher({ project, feature, onChange, onMessage }: Props) {
       : selectedEntity.radiusMm
     : 0;
 
-  const activeCandidate = activeProfileAnalysis.primaryCandidate;
-  const activeProfileValid = activeProfileEntities.length > 0 && activeProfileAnalysis.promotable && Boolean(activeCandidate);
-  const candidate = candidateProfileAnalysis.primaryCandidate;
-  const candidateSummary = candidateProfileAnalysis.promotable && candidate
-    ? `Closed ${candidate.kind} ready · area ${candidate.areaMm2.toFixed(2)} mm² · perimeter ${candidate.perimeterMm.toFixed(2)} mm${candidate.winding === 'not-applicable' ? '' : ` · ${candidate.winding}`}`
-    : candidateProfileAnalysis.issues[0] ?? 'Draw one simple closed Line loop or one Circle to create a profile candidate.';
+  const activeOuter = activeProfileAnalysis.outerCandidate;
+  const activeProfileValid = activeProfileEntities.length > 0 && activeProfileAnalysis.promotable && Boolean(activeOuter);
+  const candidateOuter = candidateProfileAnalysis.outerCandidate;
+  const candidateHoleText = candidateProfileAnalysis.holeCandidates.length > 0
+    ? ` · ${candidateProfileAnalysis.holeCandidates.length} hole(s)`
+    : '';
+  const candidateSummary = candidateProfileAnalysis.promotable && candidateOuter
+    ? `Closed ${candidateOuter.kind} region ready${candidateHoleText} · area ${candidateProfileAnalysis.areaMm2.toFixed(2)} mm² · perimeter ${candidateProfileAnalysis.perimeterMm.toFixed(2)} mm`
+    : candidateProfileAnalysis.issues[0] ?? 'Draw one closed outer contour, optionally with direct inner holes.';
 
+  const activeHoleText = activeProfileAnalysis.holeCandidates.length > 0
+    ? ` · ${activeProfileAnalysis.holeCandidates.length} hole(s)`
+    : '';
   const manufacturingSummary = activeProfileEntities.length === 0
     ? `Named rectangle ${project.dimensions.width} × ${project.dimensions.depth} mm`
-    : activeProfileValid && activeCandidate
-      ? `Promoted ${activeCandidate.kind} · area ${activeCandidate.areaMm2.toFixed(2)} mm² · perimeter ${activeCandidate.perimeterMm.toFixed(2)} mm`
-      : `INVALID promoted profile · ${activeProfileAnalysis.issues[0] ?? 'repair the loop or restore the named rectangle'}`;
+    : activeProfileValid && activeOuter
+      ? `Promoted ${activeOuter.kind} region${activeHoleText} · net area ${activeProfileAnalysis.areaMm2.toFixed(2)} mm²`
+      : `INVALID promoted region · ${activeProfileAnalysis.issues[0] ?? 'repair the region or restore the named rectangle'}`;
 
   return (
     <div className="sketcher-shell">
@@ -440,7 +449,7 @@ export function Sketcher({ project, feature, onChange, onMessage }: Props) {
         <small>{tool === 'select'
           ? selectedEntity ? 'Selected entity · drag to move · edit dimensions/constraints in the entity panel.' : 'Select an entity to drag, dimension, constrain or delete it.'
           : `${tool} tool · grid/anchor snapping active · ${pending.length} point(s) captured`}</small>
-        {activeProfileEntities.length > 0 ? <small>Promoted entity IDs persist through the existing construction flag; Save/Open keeps this manufacturing profile without a project-format migration.</small> : null}
+        {activeProfileEntities.length > 0 ? <small>Promoted entity IDs persist through the existing construction flag; Save/Open keeps the outer contour and direct holes without a project-format migration.</small> : null}
       </div>
     </div>
   );
