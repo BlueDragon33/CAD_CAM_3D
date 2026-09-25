@@ -17,3 +17,10 @@ The system is designed to grow from a general CAD/printing foundation into deepe
 - Add UAV/USV/UGV domain intelligence as modules, not hard-coded assumptions.
 
 The initial implementation lives on a development branch before being promoted to `main`.
+
+
+## Application Management contract
+
+Repository này công bố metadata tại `control/application-management.contract.json` theo schema `application-management.contract/v1`.
+
+Contract hiện chỉ dùng để Application Management tự nhận diện ứng dụng và phân loại **Kỹ thuật**. Remote admin, device registry và production runtime vẫn **chưa sẵn sàng**; Trung tâm không được suy diễn hoặc bật thao tác giả trước khi backend thật được triển khai.
