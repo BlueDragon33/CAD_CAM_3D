@@ -1,0 +1,128 @@
+.sketch-construction .sketch-entity {
+  pointer-events: stroke;
+  cursor: grab;
+  transition: stroke-width .12s ease, opacity .12s ease;
+}
+
+.sketch-construction .sketch-entity:hover {
+  stroke: #ea580c;
+  stroke-width: 1.65;
+}
+
+.sketch-construction .sketch-entity.is-selected {
+  stroke: #dc2626;
+  stroke-width: 1.9;
+  stroke-dasharray: none;
+}
+
+.sketch-selection-handles circle,
+.sketch-selection-center {
+  fill: #fff;
+  stroke: #dc2626;
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+}
+
+.sketch-entity-inspector {
+  position: absolute;
+  z-index: 5;
+  top: 12px;
+  right: 12px;
+  width: min(245px, calc(100% - 24px));
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid #cbd5e1;
+  border-radius: 10px;
+  background: rgba(255,255,255,.96);
+  box-shadow: 0 8px 24px rgba(15,23,42,.09);
+}
+
+.sketch-entity-inspector > div:first-child {
+  display: grid;
+  gap: 2px;
+}
+
+.sketch-entity-inspector strong {
+  color: #0f172a;
+  font-size: 12px;
+  text-transform: capitalize;
+}
+
+.sketch-entity-inspector small,
+.sketch-entity-inspector label > span {
+  color: #64748b;
+  font-size: 11px;
+}
+
+.sketch-entity-inspector label {
+  display: grid;
+  gap: 4px;
+}
+
+.sketch-entity-inspector label > div {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #fff;
+}
+
+.sketch-entity-inspector input {
+  min-width: 0;
+  width: 100%;
+  border: 0;
+  padding: 8px;
+  outline: none;
+}
+
+.sketch-entity-inspector label b {
+  padding-right: 8px;
+  color: #94a3b8;
+  font-size: 10px;
+}
+
+.sketch-constraint-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.sketch-constraint-actions button {
+  min-width: 0;
+  border: 1px solid #cbd5e1;
+  border-radius: 7px;
+  padding: 7px;
+  background: #f8fafc;
+  color: #475569;
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.sketch-constraint-actions button[data-active="true"] {
+  border-color: #93c5fd;
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.sketch-constraint-actions button.danger {
+  border-color: #fecaca;
+  background: #fff7f7;
+  color: #b91c1c;
+}
+
+.sketch-constraint-actions button:disabled {
+  opacity: .42;
+}
+
+@media (max-width: 760px) {
+  .sketch-entity-inspector {
+    top: auto;
+    right: 8px;
+    bottom: 8px;
+    width: min(235px, calc(100% - 16px));
+  }
+}
