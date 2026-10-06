@@ -298,7 +298,11 @@ export function Viewport({
         exactEdgeLinesRef.current = edgeLines;
         for (const line of edgeLines) group.add(line);
 
-        frameCamera(snapshot.rebuilt.width, snapshot.rebuilt.depth, snapshot.rebuilt.height);
+        frameCamera(
+          snapshot.report.dimensionsMm.width,
+          snapshot.report.dimensionsMm.depth,
+          snapshot.report.dimensionsMm.height,
+        );
 
         const currentSelection = selectionRef.current;
         if (currentSelection) {
