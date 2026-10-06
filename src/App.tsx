@@ -17,6 +17,7 @@ import {
   createEdgeTopologyRef,
   createFaceLocalFrame,
   createFaceTopologyRef,
+  createSketchPlaneRef,
   isSupportedPlanarFace,
   localCoordinatesOnFace,
   pointFromFaceLocal,
@@ -102,6 +103,24 @@ export default function App() {
 
   const addFeature = (kind: FeatureKind) => {
     let feature = createFeature(kind, project);
+    if (feature.kind === 'sketch' && topologySelection?.kind === 'face') {
+      const plane = createSketchPlaneRef(topologySelection, lastEnabledFeatureId(project.features));
+      if (!isSupportedPlanarFace(plane.ref)) {
+        setStatus('Sketch attachment blocked: select a supported planar exact face. Curved Arc/Circle side faces remain inspection-only.');
+        return;
+      }
+      feature = {
+        ...feature,
+        params: {
+          ...feature.params,
+          plane,
+          entities: [],
+          constraints: [],
+        },
+      };
+      appendFeature(feature, 'Attached Sketch added on the selected planar face with a durable FaceTopologyRef and local U/V origin.');
+      return;
+    }
     if (feature.kind === 'fillet' || feature.kind === 'chamfer') {
       feature = bindEdgeTreatmentToCurrentEdge(feature, project.features);
       const boundToEdge = feature.params.selection.mode === 'topology';
@@ -284,7 +303,7 @@ export default function App() {
     if (selection.kind === 'edge') setStatus(`Exact edge selected · ${selection.signature.curveKind} · ${selection.signature.lengthMm.toFixed(2)} mm · ready for Fillet/Chamfer binding.`);
     else {
       const ref = createFaceTopologyRef(selection, lastEnabledFeatureId(project.features));
-      setStatus(`Exact face selected · ${selection.signature.areaMm2.toFixed(2)} mm² · ${selection.lineageIds.length} lineage anchor(s) · ${isSupportedPlanarFace(ref) ? 'oriented Hole/Cut binding ready' : 'inspection only'}.`);
+      setStatus(`Exact face selected · ${selection.signature.areaMm2.toFixed(2)} mm² · ${selection.lineageIds.length} lineage anchor(s) · ${isSupportedPlanarFace(ref) ? 'Sketch/Hole/Cut attachment ready' : 'inspection only'}.`);
     }
   };
 
@@ -313,14 +332,24 @@ export default function App() {
 
   const renderInspector = () => {
     if (!selectedFeature) return <p className="empty-inspector">Select a feature from the history to edit its parameters.</p>;
-    if (selectedFeature.kind === 'sketch') return <div className="inspector-grid">
-      <label><span>Width</span><div><input type="number" step="0.1" value={project.dimensions.width} onChange={(e) => setDimension('width', e.target.value)} /><b>mm</b></div></label>
-      <label><span>Depth</span><div><input type="number" step="0.1" value={project.dimensions.depth} onChange={(e) => setDimension('depth', e.target.value)} /><b>mm</b></div></label>
-      <div className="constraint-state" data-ready={rebuilt.fullyConstrainedSketch}>
-        <strong>{rebuilt.fullyConstrainedSketch ? 'Fully constrained' : 'Under constrained'}</strong>
-        <small>Centered manufacturing rectangle · {selectedFeature.params.entities.length} persisted construction primitive(s) · select Sketch in history to edit in 2D.</small>
-      </div>
-    </div>;
+    if (selectedFeature.kind === 'sketch') {
+      const attached = selectedFeature.params.plane.kind === 'face';
+      return <div className="inspector-grid">
+        {attached ? <>
+          <div className="constraint-state" data-ready>
+            <strong>Attached planar sketch</strong>
+            <small>Durable face lineage · local origin U {selectedFeature.params.plane.originUMm.toFixed(2)} mm · V {selectedFeature.params.plane.originVMm.toFixed(2)} mm</small>
+          </div>
+        </> : <>
+          <label><span>Width</span><div><input type="number" step="0.1" value={project.dimensions.width} onChange={(e) => setDimension('width', e.target.value)} /><b>mm</b></div></label>
+          <label><span>Depth</span><div><input type="number" step="0.1" value={project.dimensions.depth} onChange={(e) => setDimension('depth', e.target.value)} /><b>mm</b></div></label>
+        </>}
+        <div className="constraint-state" data-ready={rebuilt.fullyConstrainedSketch}>
+          <strong>{rebuilt.fullyConstrainedSketch ? 'Fully constrained' : 'Under constrained'}</strong>
+          <small>{attached ? 'Local U/V sketch intent · material operation follows in WP-B.' : 'Centered base manufacturing rectangle'} · {selectedFeature.params.entities.length} persisted primitive(s).</small>
+        </div>
+      </div>;
+    }
     if (selectedFeature.kind === 'extrude') return <div className="inspector-grid">
       <label><span>Distance</span><div><input type="number" step="0.1" value={project.dimensions.height} onChange={(e) => setDimension('height', e.target.value)} /><b>mm</b></div></label>
       <div className="constraint-state" data-ready><strong>Parametric</strong><small>Extrude distance is linked to the named height parameter.</small></div>
@@ -383,14 +412,14 @@ export default function App() {
           {(['sketch', 'extrude', 'hole', 'cut', 'fillet', 'chamfer'] as FeatureKind[]).map((kind) => (
             <button key={kind} type="button" className="tool-button" onClick={() => addFeature(kind)}>
               <span>{featureLabels[kind]}</span>
-              <small>{(kind === 'fillet' || kind === 'chamfer') && topologySelection?.kind === 'edge' ? 'Use selected edge' : (kind === 'hole' || kind === 'cut') && topologySelection?.kind === 'face' ? 'Use selected face' : 'Add feature'}</small>
+              <small>{kind === 'sketch' && topologySelection?.kind === 'face' ? 'Attach selected face' : (kind === 'fillet' || kind === 'chamfer') && topologySelection?.kind === 'edge' ? 'Use selected edge' : (kind === 'hole' || kind === 'cut') && topologySelection?.kind === 'face' ? 'Use selected face' : 'Add feature'}</small>
             </button>
           ))}
           <h2>Exact topology</h2>
           <div className="profile-card">
             <strong>{topologySelection ? `${topologySelection.kind} selected` : 'No topology selected'}</strong>
             <span>{topologySelection?.kind === 'edge' ? `${topologySelection.signature.curveKind} · ${topologySelection.signature.lengthMm.toFixed(2)} mm` : topologySelection?.kind === 'face' ? `${topologySelection.signature.areaMm2.toFixed(2)} mm²` : 'Use Face / Edge controls in the viewport.'}</span>
-            <small>{topologySelection?.kind === 'edge' ? 'Adding Fillet/Chamfer stores a durable edge reference.' : topologySelection?.kind === 'face' ? 'Adding Hole/Cut stores face-local U/V; side-face features use exact preview/STL.' : 'Exact selection is lazy-loaded only when requested or required.'}</small>
+            <small>{topologySelection?.kind === 'edge' ? 'Adding Fillet/Chamfer stores a durable edge reference.' : topologySelection?.kind === 'face' ? 'Adding Sketch/Hole/Cut stores durable face-local intent; unsupported curved faces remain inspection-only.' : 'Exact selection is lazy-loaded only when requested or required.'}</small>
           </div>
           <h2>Master parameters</h2>
           <div className="dimension-grid">{(['width', 'depth', 'height'] as const).map((key) => <label key={key}><span>{key}</span><div><input type="number" min="0.1" max="1000" step="0.1" value={project.dimensions[key]} onChange={(e) => setDimension(key, e.target.value)} /><b>mm</b></div></label>)}</div>
@@ -406,13 +435,13 @@ export default function App() {
             />
           ) : <Viewport project={project} onSelectionChange={handleTopologySelection} />}
           <div className="canvas-caption">{sketchSelected
-            ? `Sketch workspace · schema-v5 construction primitives · profile ${project.dimensions.width} × ${project.dimensions.depth} mm`
+            ? `Sketch workspace · schema-v6 · ${selectedFeature.params.plane.kind === 'face' ? 'attached local U/V plane' : `base XZ profile ${project.dimensions.width} × ${project.dimensions.depth} mm`}`
             : `Rebuilt solid · ${rebuilt.width} × ${rebuilt.depth} × ${rebuilt.height} mm · ${rebuilt.holes.length} hole(s) · ${rebuilt.cuts.length} cut(s)${topologySelection ? ` · ${topologySelection.kind} selected` : ''}`}</div>
         </section>
 
         <aside className="panel history-panel">
           <h2>Feature history</h2>
-          <ol className="feature-tree">{project.features.map((feature) => <li key={feature.id} data-selected={feature.id === selectedFeatureId} data-disabled={!feature.enabled}><button type="button" onClick={() => setSelectedFeatureId(feature.id)}><span className="feature-dot" /><div><strong>{feature.name}</strong><small>{feature.kind}{feature.kind === 'sketch' && feature.params.entities.length > 0 ? ` · ${feature.params.entities.length} primitive(s)` : ''}{(feature.kind === 'fillet' || feature.kind === 'chamfer') && feature.params.selection.mode === 'topology' ? ' · topology-bound' : ''}{(feature.kind === 'hole' || feature.kind === 'cut') && feature.params.placement.mode === 'face' ? ' · face-bound' : ''}{feature.enabled ? '' : ' · suppressed'}</small></div></button></li>)}</ol>
+          <ol className="feature-tree">{project.features.map((feature) => <li key={feature.id} data-selected={feature.id === selectedFeatureId} data-disabled={!feature.enabled}><button type="button" onClick={() => setSelectedFeatureId(feature.id)}><span className="feature-dot" /><div><strong>{feature.name}</strong><small>{feature.kind}{feature.kind === 'sketch' ? ` · ${feature.params.plane.kind === 'face' ? 'attached' : 'base XZ'}${feature.params.entities.length > 0 ? ` · ${feature.params.entities.length} primitive(s)` : ''}` : ''}{(feature.kind === 'fillet' || feature.kind === 'chamfer') && feature.params.selection.mode === 'topology' ? ' · topology-bound' : ''}{(feature.kind === 'hole' || feature.kind === 'cut') && feature.params.placement.mode === 'face' ? ' · face-bound' : ''}{feature.enabled ? '' : ' · suppressed'}</small></div></button></li>)}</ol>
           <h2>Feature inspector</h2>
           <div className="feature-inspector">{renderInspector()}{selectedFeature ? <div className="inspector-actions"><button type="button" onClick={toggleSelectedFeature}>{selectedFeature.enabled ? 'Suppress' : 'Enable'}</button><button type="button" className="danger" onClick={removeSelectedFeature}>Remove</button></div> : null}</div>
           <h2>Rebuild diagnostics</h2>
