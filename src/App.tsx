@@ -13,6 +13,7 @@ import { activeCadKernel } from './cad/kernel';
 import { exactKernelDescriptor } from './cad/exact-kernel';
 import { downloadProjectFile, loadProjectFile } from './cad/project-io';
 import { rebuildProject } from './cad/rebuild';
+import { resolveManufacturingProfileWithRegions } from './cad/profile-region';
 import {
   createEdgeTopologyRef,
   createFaceLocalFrame,
@@ -31,7 +32,7 @@ import { Viewport } from './components/Viewport';
 import { defaultManagementPolicy, managementIdentity } from './management/policy';
 
 const featureLabels: Record<FeatureKind, string> = {
-  sketch: 'Sketch', extrude: 'Extrude', cut: 'Cut', hole: 'Hole', fillet: 'Fillet', chamfer: 'Chamfer',
+  sketch: 'Sketch', extrude: 'Extrude', pad: 'Pad', pocket: 'Pocket', cut: 'Cut', hole: 'Hole', fillet: 'Fillet', chamfer: 'Chamfer',
 };
 
 function clampDimension(value: number, minimum = 0.1) {
@@ -123,6 +124,39 @@ export default function App() {
         },
       };
       appendFeature(feature, 'Attached Sketch added on the selected planar face with a durable FaceTopologyRef and local U/V origin.');
+      return;
+    }
+    if (feature.kind === 'pad' || feature.kind === 'pocket') {
+      if (!selectedFeature || selectedFeature.kind !== 'sketch' || selectedFeature.params.plane.kind !== 'face') {
+        setStatus(`${featureLabels[feature.kind]} creation blocked: select a face-attached Sketch first.`);
+        return;
+      }
+      if (!selectedFeature.params.entities.some((entity) => !entity.construction)) {
+        setStatus(`${featureLabels[feature.kind]} creation blocked: promote one valid attached feature profile first.`);
+        return;
+      }
+      const profile = resolveManufacturingProfileWithRegions(
+        selectedFeature.params.entities,
+        project.dimensions.width,
+        project.dimensions.depth,
+      );
+      if (!profile.promoted || !profile.profile) {
+        setStatus(`${featureLabels[feature.kind]} creation blocked: the attached Sketch profile is invalid or ambiguous.`);
+        return;
+      }
+      feature = {
+        ...feature,
+        params: {
+          ...feature.params,
+          sketchId: selectedFeature.id,
+        },
+      };
+      appendFeature(
+        feature,
+        feature.kind === 'pad'
+          ? 'Pad added from the selected attached Sketch. Exact preview/STL/STEP will fuse the promoted profile along the resolved face normal.'
+          : 'Pocket added from the selected attached Sketch. Exact preview/STL/STEP will remove the promoted profile inward from the resolved face.',
+      );
       return;
     }
     if (feature.kind === 'fillet' || feature.kind === 'chamfer') {
@@ -359,6 +393,21 @@ export default function App() {
       <label><span>Distance</span><div><input type="number" step="0.1" value={project.dimensions.height} onChange={(e) => setDimension('height', e.target.value)} /><b>mm</b></div></label>
       <div className="constraint-state" data-ready><strong>Parametric</strong><small>Extrude distance is linked to the named height parameter.</small></div>
     </div>;
+    if (selectedFeature.kind === 'pad') return <div className="inspector-grid">
+      <label><span>Distance</span><div><input type="number" min="0.1" step="0.1" value={selectedFeature.params.distanceMm} onChange={(e) => updateFeature(selectedFeature.id, (feature) => feature.kind === 'pad' ? { ...feature, params: { ...feature.params, distanceMm: numberValue(e.target.value, 0.1) } } : feature)} /><b>mm</b></div></label>
+      <div className="constraint-state" data-ready={exactKernelDescriptor.capabilities.attachedPlanarMaterialFeatures}>
+        <strong>Exact attached Pad</strong>
+        <small>Source Sketch {selectedFeature.params.sketchId.slice(0, 8)} · outward along the resolved durable plane normal.</small>
+      </div>
+    </div>;
+    if (selectedFeature.kind === 'pocket') return <div className="inspector-grid">
+      <label><span>Extent</span><select value={selectedFeature.params.extent} onChange={(e) => updateFeature(selectedFeature.id, (feature) => feature.kind === 'pocket' ? { ...feature, params: { ...feature.params, extent: e.target.value === 'through-all' ? 'through-all' : 'distance' } } : feature)}><option value="distance">Distance</option><option value="through-all">Through all</option></select></label>
+      {selectedFeature.params.extent === 'distance' ? <label><span>Depth</span><div><input type="number" min="0.1" step="0.1" value={selectedFeature.params.distanceMm} onChange={(e) => updateFeature(selectedFeature.id, (feature) => feature.kind === 'pocket' ? { ...feature, params: { ...feature.params, distanceMm: numberValue(e.target.value, 0.1) } } : feature)} /><b>mm</b></div></label> : null}
+      <div className="constraint-state" data-ready={exactKernelDescriptor.capabilities.attachedPlanarMaterialFeatures}>
+        <strong>Exact attached Pocket</strong>
+        <small>Source Sketch {selectedFeature.params.sketchId.slice(0, 8)} · removes material opposite the resolved durable plane normal.</small>
+      </div>
+    </div>;
     if (selectedFeature.kind === 'hole') {
       const faceBound = selectedFeature.params.placement.mode === 'face';
       return <div className="inspector-grid">
@@ -414,10 +463,18 @@ export default function App() {
       <section className="workspace">
         <aside className="panel tools-panel">
           <h2>Build</h2>
-          {(['sketch', 'extrude', 'hole', 'cut', 'fillet', 'chamfer'] as FeatureKind[]).map((kind) => (
+          {(['sketch', 'extrude', 'pad', 'pocket', 'hole', 'cut', 'fillet', 'chamfer'] as FeatureKind[]).map((kind) => (
             <button key={kind} type="button" className="tool-button" onClick={() => addFeature(kind)}>
               <span>{featureLabels[kind]}</span>
-              <small>{kind === 'sketch' && topologySelection?.kind === 'face' ? 'Attach selected face' : (kind === 'fillet' || kind === 'chamfer') && topologySelection?.kind === 'edge' ? 'Use selected edge' : (kind === 'hole' || kind === 'cut') && topologySelection?.kind === 'face' ? 'Use selected face' : 'Add feature'}</small>
+              <small>{kind === 'sketch' && topologySelection?.kind === 'face'
+  ? 'Attach selected face'
+  : (kind === 'pad' || kind === 'pocket') && selectedFeature?.kind === 'sketch' && selectedFeature.params.plane.kind === 'face'
+    ? 'Use selected Sketch'
+    : (kind === 'fillet' || kind === 'chamfer') && topologySelection?.kind === 'edge'
+      ? 'Use selected edge'
+      : (kind === 'hole' || kind === 'cut') && topologySelection?.kind === 'face'
+        ? 'Use selected face'
+        : 'Add feature'}</small>
             </button>
           ))}
           <h2>Exact topology</h2>
@@ -446,7 +503,7 @@ export default function App() {
 
         <aside className="panel history-panel">
           <h2>Feature history</h2>
-          <ol className="feature-tree">{project.features.map((feature) => <li key={feature.id} data-selected={feature.id === selectedFeatureId} data-disabled={!feature.enabled}><button type="button" onClick={() => setSelectedFeatureId(feature.id)}><span className="feature-dot" /><div><strong>{feature.name}</strong><small>{feature.kind}{feature.kind === 'sketch' ? ` · ${feature.params.plane.kind === 'face' ? 'attached' : 'base XZ'}${feature.params.entities.length > 0 ? ` · ${feature.params.entities.length} primitive(s)` : ''}` : ''}{(feature.kind === 'fillet' || feature.kind === 'chamfer') && feature.params.selection.mode === 'topology' ? ' · topology-bound' : ''}{(feature.kind === 'hole' || feature.kind === 'cut') && feature.params.placement.mode === 'face' ? ' · face-bound' : ''}{feature.enabled ? '' : ' · suppressed'}</small></div></button></li>)}</ol>
+          <ol className="feature-tree">{project.features.map((feature) => <li key={feature.id} data-selected={feature.id === selectedFeatureId} data-disabled={!feature.enabled}><button type="button" onClick={() => setSelectedFeatureId(feature.id)}><span className="feature-dot" /><div><strong>{feature.name}</strong><small>{feature.kind}{feature.kind === 'sketch' ? ` · ${feature.params.plane.kind === 'face' ? 'attached' : 'base XZ'}${feature.params.entities.length > 0 ? ` · ${feature.params.entities.length} primitive(s)` : ''}` : ''}{(feature.kind === 'fillet' || feature.kind === 'chamfer') && feature.params.selection.mode === 'topology' ? ' · topology-bound' : ''}{(feature.kind === 'hole' || feature.kind === 'cut') && feature.params.placement.mode === 'face' ? ' · face-bound' : ''}{(feature.kind === 'pad' || feature.kind === 'pocket') ? ` · sketch ${feature.params.sketchId.slice(0, 8)}` : ''}{feature.enabled ? '' : ' · suppressed'}</small></div></button></li>)}</ol>
           <h2>Feature inspector</h2>
           <div className="feature-inspector">{renderInspector()}{selectedFeature ? <div className="inspector-actions"><button type="button" onClick={toggleSelectedFeature}>{selectedFeature.enabled ? 'Suppress' : 'Enable'}</button><button type="button" className="danger" onClick={removeSelectedFeature}>Remove</button></div> : null}</div>
           <h2>Rebuild diagnostics</h2>
@@ -458,7 +515,7 @@ export default function App() {
           {lastStepExport ? <div className="profile-card"><strong>Last STEP · {lastStepExport.valid ? 'PASS' : 'WARN'}</strong><span>{lastStepExport.faceCount} faces · {lastStepExport.edgeCount} edges · {(lastStepExport.byteLength / 1024).toFixed(1)} KB</span><small>Volume {lastStepExport.volumeMm3.toFixed(1)} mm³ · Surface {lastStepExport.surfaceAreaMm2.toFixed(1)} mm²</small><small>Kernel: {lastStepExport.kernelId}{lastStepExport.filletApplied ? ' · fillet' : ''}{lastStepExport.chamferApplied ? ' · chamfer' : ''}</small>{lastStepExport.warnings.length > 0 ? <small>{lastStepExport.warnings.join(' ')}</small> : null}</div> : null}
           <h2>Kernel</h2>
           <div className="profile-card"><strong>{activeCadKernel.label}</strong><span>{activeCadKernel.capabilities.exactBrep ? 'Exact B-Rep' : 'Fast deterministic mesh'} · STL {activeCadKernel.capabilities.stlExport ? 'ready' : 'off'}</span><small>Simple vertical features stay lightweight. Exact edge/face features promote preview/STL automatically.</small></div>
-          <div className="profile-card"><strong>{exactKernelDescriptor.label}</strong><span>Exact B-Rep · STEP/STL · Fillet + Chamfer · face tools</span><small>Durable edge refs drive Fillet/Chamfer; supported planar face refs drive oriented Hole/Cut.</small></div>
+          <div className="profile-card"><strong>{exactKernelDescriptor.label}</strong><span>Exact B-Rep · STEP/STL · Pad/Pocket · Fillet/Chamfer · face tools</span><small>Attached Sketches drive exact Pad/Pocket; durable edge refs drive Fillet/Chamfer; supported planar face refs drive oriented Hole/Cut.</small></div>
           <h2>Management</h2>
           <div className="management-card"><strong>{managementIdentity.controlPlane}</strong><span>UI policy · feature flags · print policy</span><small>Project geometry and export files remain inside CAD_CAM_3D.</small></div>
         </aside>
