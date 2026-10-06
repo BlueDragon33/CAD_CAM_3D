@@ -115,7 +115,7 @@ mesh + exact-kernel parity
 
 Profile validation checks endpoint closure, connected components, vertex degree, exact line/arc perimeter, signed area/winding, repeated vertices, open/branched geometry and sampled non-adjacent self-intersections for curved paths. Region validation then adds pairwise loop intersection checks and containment-depth classification.
 
-Schema v5 already persists each sketch entity's `construction` flag, so profile promotion reuses that durable distinction instead of changing the file format solely for selection state. `construction: false` marks membership in the active manufacturing region; zero non-construction entities means the named width/depth rectangle is active.
+Schema v5 introduced each sketch entity's `construction` flag, so profile promotion reuses that durable distinction instead of adding a separate profile-membership store. Schema v6 adds durable `SketchPlaneRef` attachment while keeping those entity semantics unchanged. `construction: false` marks membership in the active profile region; zero non-construction entities means the named width/depth rectangle is active for the base sketch.
 
 If a promoted region becomes invalid after editing, semantic rebuild blocks the solid rather than silently reverting to another profile. `scripts/profile-parity-smoke.mjs` gates single-loop Line/Circle/Line+Arc extrusion; `scripts/region-parity-smoke.mjs` gates one outer contour with multiple holes against Three.js/OpenCascade bounds and volume.
 
@@ -161,14 +161,15 @@ For the named rectangle, manufacturing binding accepts descendants of the six pl
 
 ## Project persistence
 
-Current editable project schema is v5.
+Current editable project schema is v6.
 
 Migration chain:
 - v1: legacy Fillet selection + global Hole/Cut;
 - v2: durable edge references for Fillet;
 - v3: durable face references + local U/V Hole/Cut;
 - v4: Chamfer using durable edge references;
-- v5: persisted Line/Circle/Arc entities, entity constraints and durable construction/manufacturing membership.
+- v5: persisted Line/Circle/Arc entities, entity constraints and durable construction/manufacturing membership;
+- v6: durable sketch-plane references — legacy XZ sketches migrate to `{ kind: 'base-xz' }`, while new attached sketches persist a planar `FaceTopologyRef` plus local U/V origin.
 
 The loader accepts v1-v5 and validates supported fields before a project enters the workspace. Multi-loop region membership and side-face semantic lineage reuse schema-v5 entity IDs/flags, so no file-format bump is required for these milestones.
 
