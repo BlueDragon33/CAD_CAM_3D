@@ -1,6 +1,6 @@
 import type { SketchEntity } from './sketch';
 
-export type FeatureKind = 'sketch' | 'extrude' | 'pad' | 'pocket' | 'cut' | 'hole' | 'fillet' | 'chamfer';
+export type FeatureKind = 'sketch' | 'extrude' | 'pad' | 'pocket' | 'cut' | 'hole' | 'fillet' | 'chamfer' | 'shell';
 
 export type Dimensions = {
   width: number;
@@ -141,7 +141,13 @@ export type ChamferFeature = FeatureBase<'chamfer', {
   selection: ChamferSelection;
 }>;
 
-export type CadFeature = SketchFeature | ExtrudeFeature | PadFeature | PocketFeature | CutFeature | HoleFeature | FilletFeature | ChamferFeature;
+export type ShellFeature = FeatureBase<'shell', {
+  thicknessMm: number;
+  openings: FaceTopologyRef[];
+  join: 'arc';
+}>;
+
+export type CadFeature = SketchFeature | ExtrudeFeature | PadFeature | PocketFeature | CutFeature | HoleFeature | FilletFeature | ChamferFeature | ShellFeature;
 
 export type PrintProfile = {
   name: string;
@@ -170,6 +176,7 @@ function featureName(kind: FeatureKind, project: CadProject) {
     hole: 'Hole',
     fillet: 'Fillet',
     chamfer: 'Chamfer',
+    shell: 'Shell',
   };
   return `${label[kind]} ${count}`;
 }
@@ -231,12 +238,24 @@ export function createFeature(kind: FeatureKind, project: CadProject): CadFeatur
     };
   }
 
+  if (kind === 'chamfer') {
+    return {
+      ...base,
+      kind,
+      params: {
+        distance: 1.5,
+        selection: { mode: 'preset', preset: 'outer-vertical-edges' },
+      },
+    };
+  }
+
   return {
     ...base,
-    kind: 'chamfer',
+    kind: 'shell',
     params: {
-      distance: 1.5,
-      selection: { mode: 'preset', preset: 'outer-vertical-edges' },
+      thicknessMm: 2,
+      openings: [],
+      join: 'arc',
     },
   };
 }
