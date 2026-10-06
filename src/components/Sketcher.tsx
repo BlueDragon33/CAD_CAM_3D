@@ -81,6 +81,7 @@ export function Sketcher({ project, feature, onChange, onMessage }: Props) {
   const dragRef = useRef<{ entityId: string; last: SketchPoint2D; moved: boolean } | null>(null);
 
   const entities = feature.params.entities;
+  const attachedPlane = feature.params.plane.kind === 'face';
   const analysis = useMemo(() => analyzeSketchEntities(entities), [entities]);
   const activeProfileEntities = useMemo(() => entities.filter((entity) => !entity.construction), [entities]);
   const constructionEntities = useMemo(() => entities.filter((entity) => entity.construction), [entities]);
@@ -97,13 +98,14 @@ export function Sketcher({ project, feature, onChange, onMessage }: Props) {
   const selectedEntity = entities.find((entity) => entity.id === selectedEntityId) ?? null;
   const selectedDimension = selectedEntity ? dimensionConstraintFor(selectedEntity, feature.params.constraints) : undefined;
   const selectedOrientation = selectedEntity?.kind === 'line' ? lineOrientation(selectedEntity.id, feature.params.constraints) : null;
-  const viewWidth = Math.max(90, project.dimensions.width * 1.55);
-  const viewHeight = Math.max(70, project.dimensions.depth * 1.7);
+  const attachedSpan = attachedPlane ? Math.max(40, Math.sqrt(feature.params.plane.ref.signature.areaMm2) * 1.8) : 0;
+  const viewWidth = attachedPlane ? Math.max(90, attachedSpan) : Math.max(90, project.dimensions.width * 1.55);
+  const viewHeight = attachedPlane ? Math.max(70, attachedSpan * 0.78) : Math.max(70, project.dimensions.depth * 1.7);
   const minX = -viewWidth / 2;
   const minZ = -viewHeight / 2;
   const profileAnchors = useMemo(
-    () => rectangleProfileAnchors(project.dimensions.width, project.dimensions.depth),
-    [project.dimensions.width, project.dimensions.depth],
+    () => attachedPlane ? [] : rectangleProfileAnchors(project.dimensions.width, project.dimensions.depth),
+    [attachedPlane, project.dimensions.width, project.dimensions.depth],
   );
 
   const rawPoint = (clientX: number, clientY: number): SketchPoint2D => {
@@ -273,10 +275,16 @@ export function Sketcher({ project, feature, onChange, onMessage }: Props) {
     );
   };
 
-  const useNamedRectangle = () => {
+  const clearActiveProfile = () => {
     if (activeProfileEntities.length === 0) return;
     const nextEntities = entities.map((entity) => ({ ...entity, construction: true })) as SketchEntity[];
-    applyFeatureUpdate(nextEntities, feature.params.constraints, 'Manufacturing profile reverted to the named width/depth rectangle.');
+    applyFeatureUpdate(
+      nextEntities,
+      feature.params.constraints,
+      attachedPlane
+        ? 'Attached sketch profile cleared. Geometry remains as construction intent until another candidate is promoted.'
+        : 'Manufacturing profile reverted to the named width/depth rectangle.',
+    );
   };
 
   const setSelectedDimension = (value: number) => {
@@ -342,10 +350,12 @@ export function Sketcher({ project, feature, onChange, onMessage }: Props) {
     ? ` · ${activeProfileAnalysis.holeCandidates.length} hole(s)`
     : '';
   const manufacturingSummary = activeProfileEntities.length === 0
-    ? `Named rectangle ${project.dimensions.width} × ${project.dimensions.depth} mm`
+    ? attachedPlane
+      ? 'Attached sketch · no promoted feature profile'
+      : `Named rectangle ${project.dimensions.width} × ${project.dimensions.depth} mm`
     : activeProfileValid && activeOuter
-      ? `Promoted ${activeOuter.kind} region${activeHoleText} · net area ${activeProfileAnalysis.areaMm2.toFixed(2)} mm²`
-      : `INVALID promoted region · ${activeProfileAnalysis.issues[0] ?? 'repair the region or restore the named rectangle'}`;
+      ? `${attachedPlane ? 'Attached feature' : 'Promoted manufacturing'} ${activeOuter.kind} region${activeHoleText} · net area ${activeProfileAnalysis.areaMm2.toFixed(2)} mm²`
+      : `INVALID promoted region · ${activeProfileAnalysis.issues[0] ?? (attachedPlane ? 'repair the attached profile' : 'repair the region or restore the named rectangle')}`;
 
   return (
     <div className="sketcher-shell">
@@ -353,8 +363,8 @@ export function Sketcher({ project, feature, onChange, onMessage }: Props) {
         {(['select', 'line', 'circle', 'arc'] as SketchTool[]).map((entry) => (
           <button key={entry} type="button" data-active={tool === entry} onClick={() => chooseTool(entry)}>{entry}</button>
         ))}
-        <button type="button" onClick={promoteCandidate} disabled={!candidateProfileAnalysis.promotable}>Use candidate as profile</button>
-        <button type="button" onClick={useNamedRectangle} disabled={activeProfileEntities.length === 0}>Use rectangle</button>
+        <button type="button" onClick={promoteCandidate} disabled={!candidateProfileAnalysis.promotable}>{attachedPlane ? 'Use candidate for feature' : 'Use candidate as profile'}</button>
+        <button type="button" onClick={clearActiveProfile} disabled={activeProfileEntities.length === 0}>{attachedPlane ? 'Clear active profile' : 'Use rectangle'}</button>
         <button type="button" onClick={clearConstruction} disabled={constructionEntities.length === 0}>Clear construction</button>
       </div>
 
@@ -391,7 +401,7 @@ export function Sketcher({ project, feature, onChange, onMessage }: Props) {
           if (tool !== 'select') setHover(null);
           if (dragRef.current && event.buttons === 0) handlePointerUp();
         }}
-        aria-label="XZ sketch workspace"
+        aria-label={attachedPlane ? 'Attached planar local U/V sketch workspace' : 'XZ base sketch workspace'}
       >
         <g className="sketch-grid">
           {gridXs.map((x) => <line key={`x-${x}`} x1={x} y1={minZ} x2={x} y2={minZ + viewHeight} />)}
