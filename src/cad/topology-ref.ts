@@ -138,7 +138,10 @@ export function createFaceTopologyRef(selection: FaceSelection, capturedAfterFea
  * U/V origin is relative to the deterministic face frame, while sketch entity
  * coordinates remain local to that origin.
  */
-export function createSketchPlaneRef(selection: FaceSelection, capturedAfterFeatureId: string | null): SketchPlaneRef {
+export function createSketchPlaneRef(
+  selection: FaceSelection,
+  capturedAfterFeatureId: string | null,
+): Extract<SketchPlaneRef, { kind: 'face' }> {
   const ref = createFaceTopologyRef(selection, capturedAfterFeatureId);
   const frame = createFaceLocalFrame(ref.signature);
   const local = localCoordinatesOnFace(frame, selection.pickedPoint);
