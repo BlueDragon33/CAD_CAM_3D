@@ -67,7 +67,6 @@ export function rebuildProject(project: CadProject): RebuiltPart {
       const solved = solveSketch(project, feature);
       lastSketch = feature;
       sketchesById.set(feature.id, feature);
-      fullyConstrainedSketch = solved.fullyConstrained;
       for (const message of solved.messages) diagnostics.push({ level: 'warning', featureId: feature.id, message });
 
       if (feature.params.plane.kind === 'face') {
@@ -88,6 +87,7 @@ export function rebuildProject(project: CadProject): RebuiltPart {
       }
 
       hasSketch = true;
+      fullyConstrainedSketch = solved.fullyConstrained;
       const resolvedProfile = resolveManufacturingProfileWithRegions(feature.params.entities, solved.width, solved.depth);
       manufacturingProfile = resolvedProfile.profile;
       if (!manufacturingProfile) {
