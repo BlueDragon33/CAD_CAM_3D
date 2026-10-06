@@ -100,7 +100,5 @@ export function makeOrientedBoxTool(
   const length = throughToolLength(dimensions);
   let tool = kernel.makeBox(widthMm, depthMm, length);
   tool = kernel.translate(tool, -widthMm / 2, -depthMm / 2, -length / 2);
-  tool = orientCanonicalTool(kernel, tool, frame);
-  const center = appPointToOcct(point);
-  return kernel.translate(tool, center.x, center.y, center.z);
+  return placeCanonicalShapeOnFace(kernel, tool, point, frame);
 }
