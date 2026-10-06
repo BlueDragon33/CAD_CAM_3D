@@ -103,6 +103,10 @@ export default function App() {
 
   const addFeature = (kind: FeatureKind) => {
     let feature = createFeature(kind, project);
+    if (feature.kind === 'sketch' && topologySelection?.kind !== 'face' && rebuilt.hasSolid) {
+      setStatus('Sketch creation needs a selected supported planar face once a solid exists. This prevents a second base sketch from silently replacing the manufacturing profile.');
+      return;
+    }
     if (feature.kind === 'sketch' && topologySelection?.kind === 'face') {
       const plane = createSketchPlaneRef(topologySelection, lastEnabledFeatureId(project.features));
       if (!isSupportedPlanarFace(plane.ref)) {
