@@ -1,6 +1,6 @@
 # WP-B — Attached Sketch Material Features
 
-Status: **ACTIVE**
+Status: **COMPLETE — EXACT MATERIAL FOUNDATION ACCEPTED**
 Project: `CAD_CAM_3D`
 Depends on: `WP-A-ARBITRARY-PLANAR-SKETCH-ATTACHMENT`
 
@@ -141,3 +141,39 @@ Required evidence:
 ## Exit criteria
 
 A promoted attached Sketch can drive a real exact Pad or Pocket, persist through schema v7, export through exact STL/STEP and participate in topology history without changing the project source-of-truth model.
+
+
+## Completion evidence
+
+Implemented through exact-material code head `af6d6dfcd9ec9d05fb61006bed8eaab6fd7b44b8` and documentation head `cfcb018bc2f82b39eba7a86455a38298c4aebcb8`.
+
+Verified GitHub Actions:
+
+- run: `37491907683`;
+- TypeScript: PASS;
+- exact B-Rep smoke: PASS;
+- production build: PASS.
+
+Exact attached-feature smoke evidence:
+
+- Pad: `12400.000 mm³`;
+- finite Pocket: `11892.000 mm³`;
+- through-all Pocket: `11750.000 mm³`;
+- side-oriented Pad: `12108.000 mm³`;
+- all tested B-Reps valid;
+- OCCT topology history present.
+
+The documentation-only follow-up head `cfcb018bc2f82b39eba7a86455a38298c4aebcb8` also completed CI successfully in run `37492015116`.
+
+## Accepted boundary
+
+WP-B is accepted for the declared scope only:
+
+- planar-face attached Sketch;
+- exact Pad;
+- exact finite/through-all Pocket;
+- schema-v7 persistence;
+- exact preview/STL/STEP routing;
+- topology history.
+
+This does not claim curved-surface attachment, mid-plane/symmetric extents, draft angle, termination-to-face, lightweight mesh parity or general multi-body semantics.
