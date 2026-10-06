@@ -1,4 +1,4 @@
-import type { EdgeTopologyRef, FaceTopologyRef, Vec3Tuple } from './model';
+import type { EdgeTopologyRef, FaceTopologyRef, SketchPlaneRef, Vec3Tuple } from './model';
 import type {
   EdgeSelection,
   ExactEdgeTopology,
@@ -130,6 +130,23 @@ export function createFaceTopologyRef(selection: FaceSelection, capturedAfterFea
       normal: [...selection.signature.normal],
       areaMm2: selection.signature.areaMm2,
     },
+  };
+}
+
+/**
+ * Capture a durable sketch attachment from a picked planar face. The stored
+ * U/V origin is relative to the deterministic face frame, while sketch entity
+ * coordinates remain local to that origin.
+ */
+export function createSketchPlaneRef(selection: FaceSelection, capturedAfterFeatureId: string | null): SketchPlaneRef {
+  const ref = createFaceTopologyRef(selection, capturedAfterFeatureId);
+  const frame = createFaceLocalFrame(ref.signature);
+  const local = localCoordinatesOnFace(frame, selection.pickedPoint);
+  return {
+    kind: 'face',
+    ref,
+    originUMm: local.uMm,
+    originVMm: local.vMm,
   };
 }
 
