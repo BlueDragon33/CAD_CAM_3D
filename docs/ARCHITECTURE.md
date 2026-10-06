@@ -57,7 +57,7 @@ simple preview/STL       exact preview / STEP / STL
 
 ## Dual-kernel strategy
 
-`mesh-mvp-v1` handles direct profile extrusion and lightweight STL quickly. `occt-wasm-v5` is lazy-loaded for exact topology, exact edge treatments, oriented face features, STEP, adaptive STL and promoted-profile Boolean operations.
+`mesh-mvp-v1` handles direct base-profile extrusion and lightweight STL quickly. `occt-wasm-v5` is lazy-loaded for exact topology, exact edge treatments, oriented face features, attached planar Pad/Pocket, STEP, adaptive STL and promoted-profile Boolean operations.
 
 `src/cad/project-analysis.ts` promotes models automatically when the fast kernel would be incomplete. Current exact triggers include Fillet, Chamfer, non-horizontal face-bound Hole/Cut, and Hole/Cut on a promoted sketch profile.
 
@@ -81,7 +81,8 @@ simple preview/STL       exact preview / STEP / STL
 - promoted-profile Hole/Cut Boolean handling;
 - selected-edge and four-edge-preset Fillet;
 - selected-edge and four-edge-preset Chamfer;
-- topology evolution through Hole/Cut/Fillet/Chamfer;
+- attached planar Sketch → Pad/Pocket using resolved local U/V/normal frames;
+- topology evolution through Pad/Pocket/Hole/Cut/Fillet/Chamfer;
 - exact face/edge picking and durable reference resolution;
 - exact preview tessellation;
 - adaptive STL + preflight;
@@ -161,7 +162,7 @@ For the named rectangle, manufacturing binding accepts descendants of the six pl
 
 ## Project persistence
 
-Current editable project schema is v6.
+Current editable project schema is v7.
 
 Migration chain:
 - v1: legacy Fillet selection + global Hole/Cut;
@@ -169,7 +170,8 @@ Migration chain:
 - v3: durable face references + local U/V Hole/Cut;
 - v4: Chamfer using durable edge references;
 - v5: persisted Line/Circle/Arc entities, entity constraints and durable construction/manufacturing membership;
-- v6: durable sketch-plane references — legacy XZ sketches migrate to `{ kind: 'base-xz' }`, while new attached sketches persist a planar `FaceTopologyRef` plus local U/V origin.
+- v6: durable sketch-plane references — legacy XZ sketches migrate to `{ kind: 'base-xz' }`, while new attached sketches persist a planar `FaceTopologyRef` plus local U/V origin;
+- v7: attached `Pad` and `Pocket` features persist a durable source Sketch ID and exact material-operation parameters.
 
 The loader accepts v1-v5 and validates supported fields before a project enters the workspace. Multi-loop region membership and side-face semantic lineage reuse schema-v5 entity IDs/flags, so no file-format bump is required for these milestones.
 
