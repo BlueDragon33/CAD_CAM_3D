@@ -20,11 +20,18 @@ import {
   resolveFaceTopologyRef,
   type FaceLocalFrame,
 } from './topology-ref';
-import { makeOrientedBoxTool, makeOrientedCylinderTool } from './oriented-tool';
-import { makeExactBaseSolid } from './exact-profile';
+import {
+  makeOrientedBoxTool,
+  makeOrientedCylinderTool,
+  placeCanonicalShapeOnFace,
+  throughToolLength,
+} from './oriented-tool';
+import { makeExactBaseSolid, makeExactProfilePrism } from './exact-profile';
+import { resolveManufacturingProfileWithRegions } from './profile-region';
 
 const HASH_UPPER_BOUND = 2_147_483_647;
 const CUT_OVERRUN_MM = 1;
+const ATTACHED_FEATURE_OVERLAP_MM = 0.05;
 
 export type ExactTopologySnapshot = {
   faceIds: string[];
@@ -193,6 +200,71 @@ function currentExactFaces(kernel: OcctKernel, shape: ShapeHandle, tracker: Face
 
 type ResolvedFacePlacement = { point: Vec3Tuple; frame: FaceLocalFrame };
 
+function currentShapeDimensions(kernel: OcctKernel, shape: ShapeHandle) {
+  const box = kernel.getBoundingBox(shape, false);
+  return {
+    width: Math.max(0.1, box.xmax - box.xmin),
+    depth: Math.max(0.1, box.ymax - box.ymin),
+    height: Math.max(0.1, box.zmax - box.zmin),
+  };
+}
+
+function resolveAttachedSketchInput(
+  kernel: OcctKernel,
+  shape: ShapeHandle,
+  tracker: FaceLineageTracker,
+  project: CadProject,
+  rebuilt: RebuiltPart,
+  featureName: string,
+  sketchId: string,
+  warnings: string[],
+) {
+  const source = project.features.find((feature) => feature.id === sketchId);
+  if (!source || !source.enabled || source.kind !== 'sketch' || source.params.plane.kind !== 'face') {
+    warnings.push(`${featureName}: attached source Sketch is missing, disabled, or no longer face-bound.`);
+    return null;
+  }
+  if (!isSupportedPlanarFace(source.params.plane.ref)) {
+    warnings.push(`${featureName}: attached source Sketch no longer references a supported planar lineage.`);
+    return null;
+  }
+  if (!source.params.entities.some((entity) => !entity.construction)) {
+    warnings.push(`${featureName}: attached source Sketch has no promoted feature profile.`);
+    return null;
+  }
+
+  const profileResolution = resolveManufacturingProfileWithRegions(
+    source.params.entities,
+    project.dimensions.width,
+    project.dimensions.depth,
+  );
+  if (!profileResolution.promoted || !profileResolution.profile) {
+    warnings.push(`${featureName}: attached source profile is invalid or ambiguous.`);
+    return null;
+  }
+
+  const faces = currentExactFaces(kernel, shape, tracker);
+  const spanMm = Math.max(rebuilt.width, rebuilt.depth, rebuilt.height, 1);
+  const resolution = resolveFaceTopologyRef(source.params.plane.ref, faces, spanMm);
+  if (!resolution) {
+    warnings.push(`${featureName}: attached sketch plane could not be resolved safely against current topology.`);
+    return null;
+  }
+  if (resolution.confidence === 'medium') {
+    warnings.push(`${featureName}: attached sketch plane resolved with medium confidence after upstream rebuild.`);
+  }
+
+  return {
+    profile: profileResolution.profile,
+    frame: resolution.frame,
+    origin: pointFromFaceLocal(
+      resolution.frame,
+      source.params.plane.originUMm,
+      source.params.plane.originVMm,
+    ),
+  };
+}
+
 function resolveFaceBoundPlacement(
   kernel: OcctKernel,
   shape: ShapeHandle,
@@ -325,6 +397,49 @@ function buildExactShape(kernel: OcctKernel, project: CadProject, rebuilt: Rebui
   const tracker = new FaceLineageTracker(HASH_UPPER_BOUND, baseFeatureId, classifyBaseFaces(kernel, shape, rebuilt));
 
   for (const feature of rebuilt.operationSequence) {
+    if (feature.kind === 'pad' || feature.kind === 'pocket') {
+      const input = resolveAttachedSketchInput(
+        kernel,
+        shape,
+        tracker,
+        project,
+        rebuilt,
+        feature.name,
+        feature.params.sketchId,
+        warnings,
+      );
+      if (!input) continue;
+
+      let tool: ShapeHandle;
+      if (feature.kind === 'pad') {
+        const distance = Math.max(0.1, feature.params.distanceMm);
+        tool = makeExactProfilePrism(kernel, input.profile, distance + ATTACHED_FEATURE_OVERLAP_MM);
+        tool = kernel.translate(tool, 0, 0, -ATTACHED_FEATURE_OVERLAP_MM);
+      } else {
+        const distance = feature.params.extent === 'through-all'
+          ? throughToolLength(currentShapeDimensions(kernel, shape))
+          : Math.max(0.1, feature.params.distanceMm);
+        tool = makeExactProfilePrism(kernel, input.profile, distance + ATTACHED_FEATURE_OVERLAP_MM);
+        tool = kernel.translate(tool, 0, 0, -distance);
+      }
+      tool = placeCanonicalShapeOnFace(kernel, tool, input.origin, input.frame);
+
+      const before = currentFaceHashes(kernel, shape);
+      try {
+        const evolution = feature.kind === 'pad'
+          ? kernel.fuseWithHistory(shape, tool, before, HASH_UPPER_BOUND)
+          : kernel.cutWithHistory(shape, tool, before, HASH_UPPER_BOUND);
+        shape = evolution.result;
+        const after = currentFaceHashes(kernel, shape);
+        tracker.record(feature.id, feature.kind, before, after, evolution);
+      } catch (error) {
+        warnings.push(error instanceof Error
+          ? `${feature.name}: exact ${feature.kind} failed: ${error.message}`
+          : `${feature.name}: exact ${feature.kind} failed.`);
+      }
+      continue;
+    }
+
     if (feature.kind === 'hole') {
       let tool: ShapeHandle;
       if (feature.params.placement.mode === 'face') {
@@ -457,6 +572,7 @@ export const exactKernelDescriptor = {
     orientedFaceBoundThroughFeatures: true,
     exactChamfer: true,
     promotedSketchProfiles: true,
+    attachedPlanarMaterialFeatures: true,
     shell: false,
   },
 };
