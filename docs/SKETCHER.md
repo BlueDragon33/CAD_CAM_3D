@@ -1,28 +1,72 @@
-# Sketcher foundation
+# Sketcher
 
-The sketch subsystem now has an application-level primitive model that is independent from Three.js and OpenCascade.
+The sketch subsystem is application/domain data. It is independent from Three.js rendering and OpenCascade runtime identity.
 
-## Persisted sketch data
+## Persisted model
 
-Project schema v5 adds `SketchFeature.params.entities` with three primitive types:
+Current project schema: **v7**.
 
-- `line`: start/end XZ points;
-- `circle`: center + radius;
-- `arc`: center + radius + start/end angle.
+Sketch primitives:
 
-Each entity has a stable project ID and a `construction` flag. The editable project also supports entity-level constraints:
+- Line;
+- Circle;
+- Arc.
 
-- horizontal / vertical;
-- coincident point references;
-- distance;
-- radius;
-- the existing centered/width/depth named-parameter constraints.
+Each entity has:
 
-Older schema v1-v4 projects load with an empty construction-entity list and keep the existing centered rectangle manufacturing profile.
+- stable project ID;
+- geometry parameters;
+- `construction` membership flag.
+
+Supported constraint vocabulary:
+
+- base-profile `centered`;
+- named `width`;
+- named `depth`;
+- Line horizontal;
+- Line vertical;
+- point coincidence;
+- Line distance;
+- Circle/Arc radius.
+
+Schema history relevant to Sketch:
+
+- v5: persisted entities/constraints + construction/profile membership;
+- v6: durable `SketchPlaneRef`;
+- v7: attached Sketch may be consumed by Pad/Pocket.
+
+## Sketch planes
+
+### Base sketch
+
+```ts
+{ kind: 'base-xz' }
+```
+
+The base sketch owns the primary manufacturing profile that the first Extrude consumes.
+
+### Attached planar sketch
+
+```ts
+{
+  kind: 'face',
+  ref: FaceTopologyRef,
+  originUMm: number,
+  originVMm: number
+}
+```
+
+Entity x/z coordinates are interpreted as local U/V coordinates relative to the captured sketch origin.
+
+A durable face reference is resolved after upstream rebuild. Runtime OCCT face hashes are never persisted.
+
+Curved Arc/Circle-derived side faces are not accepted as planar sketch attachment.
 
 ## Interactive workspace
 
-Selecting a Sketch feature switches the center canvas to the XZ sketch workspace. The current tool set is:
+Selecting a Sketch opens the 2D editor.
+
+Current tools:
 
 ```text
 Select
@@ -31,48 +75,135 @@ Circle
 Arc
 ```
 
-New construction geometry is written directly into `CadProject`, so Save/Open round-trips the sketch primitives instead of keeping them as disposable UI state.
+Interaction includes:
 
-The workspace provides:
+- 1 mm grid snap;
+- entity-anchor snap;
+- base rectangle anchors for the base sketch;
+- near-horizontal/vertical inference;
+- automatic Circle/Arc radius constraint on creation;
+- coincidence capture when snapping to persisted anchors;
+- entity selection and drag;
+- direct Line length / Circle/Arc radius editing;
+- horizontal/vertical toggle;
+- dimension removal;
+- safe dependent-constraint cleanup on entity deletion;
+- explicit profile promotion.
 
-- 1 mm grid snapping;
-- snapping to the current manufacturing-profile corners/center;
-- snapping to persisted entity anchors;
-- automatic horizontal/vertical inference for near-orthogonal lines;
-- automatic radius constraints for Circle/Arc creation;
-- coincident constraints when new geometry starts/ends on an existing entity anchor;
-- estimated degrees-of-freedom diagnostics.
+Attached sketches deliberately do not render the base rectangle as if it belonged to the attached plane.
 
-## Current manufacturing boundary
+## Constraint state
 
-The manufacturing profile is still the existing centered rectangle driven by the named `width` and `depth` parameters. Schema-v5 line/circle/arc entities are currently persisted **construction geometry** and do not silently alter the extruded solid.
+The solver remains a deterministic application-level solver, not a full nonlinear industrial geometric solver.
 
-This restriction is intentional. Arbitrary closed-loop profile extrusion must be implemented end-to-end in both the lightweight mesh path and the OpenCascade exact path before a non-construction primitive is allowed to change manufacturing geometry.
-
-Therefore the current invariant is:
+The public sketch state is explicit:
 
 ```text
-CadProject sketch entities
-        ↓
-constraint / snap / DOF model
-        ↓
-interactive 2D sketch workspace
-
-centered named-parameter rectangle
-        ↓
-current manufacturing profile
-        ↓
-mesh + exact B-Rep kernels
+empty
+under-constrained
+fully-constrained
+over-constrained
+inconsistent
 ```
 
-## Next sketch milestones
+The constraint analyzer currently detects:
 
-1. Entity selection, drag editing and explicit dimension editing.
-2. Constraint solving instead of only constraint capture/diagnostics.
-3. Closed-loop detection and profile regions.
-4. Promote validated line/arc loops and circles from construction geometry into manufacturing profiles.
-5. Build the same arbitrary planar profile in both geometry kernels.
-6. Add arbitrary sketch-plane references on exact planar faces.
-7. Feed the stronger profile model into Revolve, Pattern, Sweep and Loft.
+- conflicting Line distance values;
+- conflicting Circle/Arc radius values;
+- horizontal + vertical contradiction on a positive-length Line;
+- missing entity references;
+- incompatible constraint/entity types;
+- invalid point references;
+- duplicate centered/width/depth;
+- duplicate orientation;
+- repeated equal distance/radius;
+- duplicate/reversed coincidence.
 
-The goal is to grow the sketcher without creating a second geometry source of truth or allowing preview/export divergence.
+Rules:
+
+- inconsistent constraints are preserved as user intent but are **not applied by execution order**;
+- inconsistent base sketch blocks manufacturing solid creation;
+- inconsistent attached sketch blocks Pad/Pocket consumption;
+- redundant constraints are preserved and surfaced but do not receive independent DOF credit;
+- a future stronger solver must preserve the semantic constraint contract or migrate it explicitly.
+
+## Profile pipeline
+
+```text
+editable Line/Circle/Arc
+      ↓
+constraint analysis + deterministic solve
+      ↓
+closed-loop extraction
+      ↓
+intersection / containment validation
+      ↓
+explicit profile promotion
+      ↓
+ManufacturingProfile / ManufacturingRegionProfile
+```
+
+Supported promoted region:
+
+- exactly one outer closed contour;
+- zero or more direct inner holes;
+- Line/Circle/mixed Line+Arc loops.
+
+Rejected rather than guessed:
+
+- intersecting/touching loops;
+- multiple outer islands;
+- nested islands deeper than direct holes;
+- invalid/open/branched profiles.
+
+## Material use
+
+### Base sketch
+
+Promoted/base profile → base Extrude.
+
+### Attached planar sketch
+
+Promoted attached profile → exact Pad or Pocket.
+
+```text
+selected planar face
+  ↓
+Create Sketch
+  ↓
+draw + constrain
+  ↓
+promote valid region
+  ↓
+Pad / Pocket
+  ↓
+resolve durable sketch plane
+  ↓
+exact OpenCascade fuse/cut
+```
+
+Pad/Pocket are exact-kernel first. The lightweight mesh path does not claim attached-material support.
+
+## Regression
+
+Vitest covers:
+
+- contradiction classes;
+- redundancy classes;
+- sketch state;
+- schema v1-v7 migration and invalid feature references.
+
+Exact smoke separately covers profile geometry, side lineage and attached Pad/Pocket B-Rep behavior.
+
+## Known boundaries
+
+Not yet claimed:
+
+- full nonlinear geometric constraint solving;
+- tangent/perpendicular/parallel/equal/symmetry constraints;
+- curved-surface sketch attachment;
+- arbitrary datum plane/axis;
+- nested-island/multi-body semantics;
+- lightweight Pad/Pocket parity.
+
+The next solver work should expand semantic constraint capability without creating a second sketch source-of-truth.
