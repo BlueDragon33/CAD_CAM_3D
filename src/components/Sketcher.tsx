@@ -1,8 +1,10 @@
 import { useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import type { CadProject, SketchConstraint, SketchFeature, SketchPointRef } from '../cad/model';
 import {
+  analyzeSketchConstraintSet,
   applySketchConstraints,
   removeEntityConstraints,
+  solveSketch,
   replaceLineOrientationConstraint,
   upsertEntityDimensionConstraint,
 } from '../cad/constraints';
@@ -83,6 +85,7 @@ export function Sketcher({ project, feature, onChange, onMessage }: Props) {
   const entities = feature.params.entities;
   const attachedPlane = feature.params.plane.kind === 'face';
   const analysis = useMemo(() => analyzeSketchEntities(entities), [entities]);
+  const solvedSketch = useMemo(() => solveSketch(project, feature), [project, feature]);
   const activeProfileEntities = useMemo(() => entities.filter((entity) => !entity.construction), [entities]);
   const constructionEntities = useMemo(() => entities.filter((entity) => entity.construction), [entities]);
   const activeProfileAnalysis = useMemo(() => analyzePromotableRegion(activeProfileEntities), [activeProfileEntities]);
@@ -129,9 +132,16 @@ export function Sketcher({ project, feature, onChange, onMessage }: Props) {
   };
 
   const applyFeatureUpdate = (nextEntities: SketchFeature['params']['entities'], nextConstraints: SketchConstraint[], message?: string) => {
-    const solvedEntities = applySketchConstraints(nextEntities, nextConstraints);
+    const constraintAnalysis = analyzeSketchConstraintSet(nextEntities, nextConstraints);
+    const solvedEntities = constraintAnalysis.conflicts.length > 0
+      ? nextEntities
+      : applySketchConstraints(nextEntities, nextConstraints);
     onChange({ ...feature, params: { ...feature.params, entities: solvedEntities, constraints: nextConstraints } });
-    if (message) onMessage?.(message);
+    if (constraintAnalysis.conflicts.length > 0) {
+      onMessage?.(`Constraint conflict preserved without solving: ${constraintAnalysis.conflicts[0].message}`);
+    } else if (message) {
+      onMessage?.(message);
+    }
   };
 
   const addLine = (first: SketchSnapResult, second: SketchSnapResult) => {
@@ -457,6 +467,11 @@ export function Sketcher({ project, feature, onChange, onMessage }: Props) {
         <strong>{attachedPlane ? 'Sketch · attached U/V' : 'Sketch · base XZ'}</strong>
         <span className="sketch-manufacturing-status" data-ready={activeProfileEntities.length === 0 || activeProfileValid}>
           {attachedPlane ? 'Feature profile' : 'Manufacturing profile'}: {manufacturingSummary}
+        </span>
+        <span className="sketch-constraint-status" data-state={solvedSketch.constraintState}>
+          Constraint state: {solvedSketch.constraintState} · ~{solvedSketch.estimatedDegreesOfFreedom} remaining DOF
+          {solvedSketch.redundantConstraintIds.length > 0 ? ` · ${solvedSketch.redundantConstraintIds.length} redundant` : ''}
+          {solvedSketch.conflicts.length > 0 ? ` · ${solvedSketch.conflicts.length} conflict(s)` : ''}
         </span>
         <span>Geometry: {analysis.lineCount} line · {analysis.circleCount} circle · {analysis.arcCount} arc · ~{analysis.estimatedDegreesOfFreedom} raw DOF</span>
         <span className="sketch-profile-readiness" data-ready={candidateProfileAnalysis.promotable}>
