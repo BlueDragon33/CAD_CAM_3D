@@ -1,6 +1,6 @@
 # WP-A — Arbitrary Planar Sketch Attachment
 
-Status: **ACTIVE**
+Status: **COMPLETE — FOUNDATION ACCEPTED**
 Project: `CAD_CAM_3D`
 Governing blueprint: `docs/CAD_CAM_3D_CENTURY_GRADE_COMMERCIAL_BLUEPRINT.md`
 Prompt: `prompts/CAD_CAM_3D_MASTER_CENTURY_GRADE_EXECUTION_PROMPT.md`
@@ -130,3 +130,29 @@ WP-A is complete when a planar face can be selected, an attached Sketch can be c
 ## Next-stage contract
 
 WP-B may consume an attached Sketch only through `SketchPlaneRef` and must resolve the persisted face reference against exact topology immediately before applying the material feature.
+
+
+## Completion evidence
+
+Implemented on `foundation/general-system` through head `ccef6edea936ac90bb833364355c32c56643d878`.
+
+Evidence:
+
+- schema advanced to v6 with v1-v5 migration support;
+- legacy XZ sketches load as `base-xz`;
+- planar face selection can create a durable face-attached Sketch;
+- attachment stores FaceTopologyRef plus local U/V origin;
+- attached sketch UI uses local U/V semantics and does not render the base rectangle as if it were the attached plane;
+- attached Sketch does not replace the base manufacturing profile;
+- a second unbound base Sketch is blocked once a solid exists;
+- unsupported curved-face attachment is blocked rather than silently redirected;
+- TypeScript gate: PASS;
+- exact B-Rep smoke gate: PASS;
+- production build: PASS;
+- GitHub Actions run: `37490025294`.
+
+Known boundary carried into WP-B:
+
+- attached Sketch is durable input intent only;
+- it does not yet add/remove material;
+- material operations must resolve the persisted plane immediately before Boolean/fuse execution.
