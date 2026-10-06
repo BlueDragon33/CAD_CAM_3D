@@ -270,6 +270,10 @@ export function Sketcher({ project, feature, onChange, onMessage }: Props) {
   };
 
   const promoteCandidate = () => {
+    if (solvedSketch.constraintState === 'inconsistent') {
+      onMessage?.('Profile promotion blocked: repair the sketch constraint conflict first.');
+      return;
+    }
     const outer = candidateProfileAnalysis.outerCandidate;
     if (!candidateProfileAnalysis.promotable || !outer) {
       onMessage?.('Profile promotion blocked: draw one supported outer contour with optional direct inner holes first.');
@@ -379,7 +383,7 @@ export function Sketcher({ project, feature, onChange, onMessage }: Props) {
         {(['select', 'line', 'circle', 'arc'] as SketchTool[]).map((entry) => (
           <button key={entry} type="button" data-active={tool === entry} onClick={() => chooseTool(entry)}>{entry}</button>
         ))}
-        <button type="button" onClick={promoteCandidate} disabled={!candidateProfileAnalysis.promotable}>{attachedPlane ? 'Use candidate for feature' : 'Use candidate as profile'}</button>
+        <button type="button" onClick={promoteCandidate} disabled={!candidateProfileAnalysis.promotable || solvedSketch.constraintState === 'inconsistent'}>{attachedPlane ? 'Use candidate for feature' : 'Use candidate as profile'}</button>
         <button type="button" onClick={clearActiveProfile} disabled={activeProfileEntities.length === 0}>{attachedPlane ? 'Clear active profile' : 'Use rectangle'}</button>
         <button type="button" onClick={clearConstruction} disabled={constructionEntities.length === 0}>Clear construction</button>
       </div>
