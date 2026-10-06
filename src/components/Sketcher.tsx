@@ -271,7 +271,9 @@ export function Sketcher({ project, feature, onChange, onMessage }: Props) {
     applyFeatureUpdate(
       nextEntities,
       feature.params.constraints,
-      `Manufacturing region promoted from ${outer.kind} · ${candidateProfileAnalysis.areaMm2.toFixed(2)} mm²${holeText}. Preview/STL/STEP now rebuild from this region.`,
+      attachedPlane
+        ? `Attached feature region promoted from ${outer.kind} · ${candidateProfileAnalysis.areaMm2.toFixed(2)} mm²${holeText}. The base solid remains unchanged until an attached material feature consumes this sketch.`
+        : `Manufacturing region promoted from ${outer.kind} · ${candidateProfileAnalysis.areaMm2.toFixed(2)} mm²${holeText}. Preview/STL/STEP now rebuild from this region.`,
     );
   };
 
@@ -318,7 +320,9 @@ export function Sketcher({ project, feature, onChange, onMessage }: Props) {
       nextEntities,
       nextConstraints,
       wasManufacturing
-        ? `${selectedEntity.kind} deleted from the manufacturing profile. Solid rebuild is blocked until the promoted region is repaired or the rectangle profile is restored.`
+        ? attachedPlane
+          ? `${selectedEntity.kind} deleted from the attached feature profile. The profile must be repaired before a material feature can consume it.`
+          : `${selectedEntity.kind} deleted from the manufacturing profile. Solid rebuild is blocked until the promoted region is repaired or the rectangle profile is restored.`
         : `${selectedEntity.kind} deleted with dependent constraints.`,
     );
     setSelectedEntityId(null);
@@ -410,14 +414,14 @@ export function Sketcher({ project, feature, onChange, onMessage }: Props) {
           <line className="sketch-axis" x1={0} y1={minZ} x2={0} y2={minZ + viewHeight} />
         </g>
 
-        <rect
+        {!attachedPlane ? <rect
           className="sketch-profile"
           data-active={activeProfileEntities.length === 0}
           x={-project.dimensions.width / 2}
           y={-project.dimensions.depth / 2}
           width={project.dimensions.width}
           height={project.dimensions.depth}
-        />
+        /> : null}
 
         <g className="sketch-construction">
           {entities.map((entity) => {
@@ -448,9 +452,9 @@ export function Sketcher({ project, feature, onChange, onMessage }: Props) {
       </svg>
 
       <div className="sketcher-status">
-        <strong>Sketch · XZ</strong>
+        <strong>{attachedPlane ? 'Sketch · attached U/V' : 'Sketch · base XZ'}</strong>
         <span className="sketch-manufacturing-status" data-ready={activeProfileEntities.length === 0 || activeProfileValid}>
-          Manufacturing profile: {manufacturingSummary}
+          {attachedPlane ? 'Feature profile' : 'Manufacturing profile'}: {manufacturingSummary}
         </span>
         <span>Geometry: {analysis.lineCount} line · {analysis.circleCount} circle · {analysis.arcCount} arc · ~{analysis.estimatedDegreesOfFreedom} raw DOF</span>
         <span className="sketch-profile-readiness" data-ready={candidateProfileAnalysis.promotable}>
@@ -459,7 +463,7 @@ export function Sketcher({ project, feature, onChange, onMessage }: Props) {
         <small>{tool === 'select'
           ? selectedEntity ? 'Selected entity · drag to move · edit dimensions/constraints in the entity panel.' : 'Select an entity to drag, dimension, constrain or delete it.'
           : `${tool} tool · grid/anchor snapping active · ${pending.length} point(s) captured`}</small>
-        {activeProfileEntities.length > 0 ? <small>Promoted entity IDs persist through the existing construction flag; Save/Open keeps the outer contour and direct holes without a project-format migration.</small> : null}
+        {activeProfileEntities.length > 0 ? <small>Promoted entity IDs persist through the construction flag; schema v6 Save/Open keeps the active outer contour and direct holes together with the sketch-plane attachment.</small> : null}
       </div>
     </div>
   );
