@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import type { Mesh, OcctKernel, ShapeHandle } from 'occt-wasm';
 import type { CadProject, EdgeTreatmentSelection, FeaturePlacement } from './model';
 import { rebuildProject, type RebuiltPart } from './rebuild';
+import { solveSketch } from './constraints';
 import {
   deriveFaceTopology,
   type ExactEdgeTopology,
@@ -233,10 +234,11 @@ function resolveAttachedSketchInput(
     return null;
   }
 
+  const solvedSource = solveSketch(project, source);
   const profileResolution = resolveManufacturingProfileWithRegions(
-    source.params.entities,
-    project.dimensions.width,
-    project.dimensions.depth,
+    solvedSource.entities,
+    solvedSource.width,
+    solvedSource.depth,
   );
   if (!profileResolution.promoted || !profileResolution.profile) {
     warnings.push(`${featureName}: attached source profile is invalid or ambiguous.`);
