@@ -1,96 +1,214 @@
 # Exact B-Rep kernel
 
-CAD_CAM_3D uses two geometry paths for different jobs.
+CAD_CAM_3D uses two geometry paths behind one semantic parametric project.
 
 ## Interactive path
 
-`mesh-mvp-v1` remains the default interactive kernel for simple vertical Sketch/Extrude/Hole/Cut work. Projects that contain exact-only geometry are automatically promoted to OpenCascade so preview and manufacturing output never silently omit exact edge or oriented-face features.
+`mesh-mvp-v1` remains the fast path for geometry it can represent truthfully.
 
-Current promotion triggers include enabled Fillet/Chamfer features and Hole/Cut features bound to non-horizontal planar faces.
+Current lightweight coverage includes:
 
-## Exact manufacturing and topology path
+- base rectangle / Line / Circle / mixed Line+Arc profiles;
+- one outer region with direct inner holes;
+- base extrusion;
+- legacy/simple vertical Hole/Cut where parity is known;
+- fast preview;
+- lightweight STL when no exact-only feature is enabled.
 
-`occt-wasm-v5` is lazy-loaded when exact topology, exact-only preview, STEP or adaptive STL is required.
+The fast path must never silently omit a feature.
 
-Current exact feature coverage:
+## Exact path
 
-- centered rectangular base profile and extrusion;
-- global vertical through Hole/Cut;
-- oriented through Hole/Cut on supported top/bottom/side planar base-face descendants;
-- local U/V placement rebuilt from the resolved face plane;
-- tool axis rebuilt from the resolved face normal;
-- four-outer-vertical-edge Fillet preset;
-- selected-edge Fillet through persisted `EdgeTopologyRef`;
-- four-outer-vertical-edge Chamfer preset;
-- selected-edge Chamfer through persisted `EdgeTopologyRef`;
-- ordered Hole / Cut / Fillet / Chamfer execution;
-- B-Rep validity, bounds, volume and surface-area queries;
-- exact tessellation for inspection and adaptive STL;
-- exact face/edge picking, adjacency and topology evolution;
-- STEP export.
+`occt-wasm-v5` is lazy-loaded whenever exact topology or an exact-only feature is required.
 
-Shell, curved-surface drilling, arbitrary sketch planes and the full interactive sketcher remain outside the currently exposed product capability set.
+Current exact coverage includes:
 
-## Durable edge references
+- exact base B-Rep from the same resolved manufacturing profile;
+- profile regions with direct inner holes;
+- global and oriented planar-face Hole/Cut;
+- durable face-local U/V placement;
+- selected-edge and rectangle-preset Fillet;
+- selected-edge and rectangle-preset Chamfer;
+- attached planar Sketch → Pad;
+- attached planar Sketch → finite Pocket;
+- attached planar Sketch → through-all Pocket;
+- ordered topology evolution through Pad/Pocket/Hole/Cut/Fillet/Chamfer;
+- exact validity/bounds/volume/surface-area queries;
+- exact face/edge picking;
+- adaptive STL;
+- STEP.
 
-Fillet and Chamfer share the same application-level `EdgeTopologyRef`. It stores semantic adjacent-face ancestry plus a compact geometry signature, never an OCCT handle or runtime hash.
+Projects with enabled Pad/Pocket always route preview/STL through the exact path.
 
-```text
-select exact edge
-    -> Add Fillet or Chamfer
-        -> persist EdgeTopologyRef
-            -> edit upstream geometry
-                -> rebuild topology evolution
-                    -> resolve intended edge conservatively
-                        -> exact OpenCascade edge treatment
-```
+## Attached sketch material path
 
-A weak or ambiguous match is rejected rather than silently targeting another edge. Edge operations execute at their exact position in the feature tree, so a later Chamfer sees topology produced by earlier Hole/Cut/Fillet operations.
-
-## Persisted face references and oriented placement
-
-Project schema v3 introduced `FaceTopologyRef` and face-local placement for Hole/Cut. A deterministic local frame is derived from the resolved face plane. If tessellation orientation flips after a rebuild, the resolved normal is aligned back to the persisted reference normal before local U/V is reconstructed.
-
-`src/cad/oriented-tool.ts` converts that frame into OCCT coordinates, derives an axis-angle transform and creates a through tool longer than twice the part diagonal. The tool is centered on the selected point so the Boolean remains through-cut regardless of normal direction.
-
-Current manufacturing face binding accepts only descendants of the six planar base-extrusion faces: top, bottom, ±X and ±depth. Curved Hole walls and Fillet/Chamfer surfaces remain inspection-only.
-
-## Preview and STL parity
-
-`src/cad/project-analysis.ts` decides when exact geometry is required.
+Schema v6 introduced durable `SketchPlaneRef`:
 
 ```text
-simple vertical project
-    -> mesh-mvp-v1
-    -> preview + STL
-
-Fillet / Chamfer / oriented-face project
-    -> OpenCascade B-Rep
-    -> exact tessellation
-    -> preview + STL preflight + STL
+planar FaceTopologyRef
+      +
+captured local U/V origin
+      ↓
+SketchPlaneRef
 ```
 
-STEP always comes from the exact B-Rep path.
+Schema v7 adds exact material consumers:
+
+```text
+attached Sketch
+      ↓
+promoted valid local profile
+      ↓
+resolve FaceTopologyRef against topology immediately before operation
+      ↓
+rebuild deterministic face-local frame
+      ↓
+canonical XY/+Z profile prism
+      ↓
+rotate/translate onto face
+      ├─ Pad: overlap inward slightly + fuseWithHistory
+      └─ Pocket: extend inward + cutWithHistory
+      ↓
+FaceLineageTracker
+```
+
+Pad follows the persisted reference normal outward. Pocket removes material opposite that reference normal.
+
+The tiny face overlap is deliberate: Boolean success must not depend on perfect coincident-face contact.
+
+Curved Arc/Circle-derived side faces remain inspection-only for attached Sketch because cylindrical/surface parameter coordinates are not yet part of the durable project contract.
+
+## Durable topology references
+
+### EdgeTopologyRef
+
+Used by selected-edge Fillet and Chamfer.
+
+Persists:
+
+- semantic adjacent-face lineage;
+- curve kind;
+- length;
+- midpoint;
+- endpoints;
+- capture boundary.
+
+It never persists an OCCT handle/hash.
+
+### FaceTopologyRef
+
+Used by:
+
+- oriented Hole/Cut;
+- SketchPlaneRef.
+
+Persists:
+
+- semantic face lineage;
+- centroid;
+- normal;
+- area;
+- capture boundary.
+
+Resolution prefers semantic lineage and then uses geometric signature/confidence to disambiguate.
+
+Ambiguous resolution is rejected.
+
+## Semantic side lineage
+
+Promoted sketch profiles assign side ancestry to originating sketch entities.
+
+Examples:
+
+```text
+<extrude>:side:outer:line:<entityId>
+<extrude>:side:outer:arc:<entityId>
+<extrude>:side:hole:1:line:<entityId>
+<extrude>:side:hole:2:circle:<entityId>
+```
+
+Line-derived side faces are planar and may participate in face-bound workflows.
+Arc/Circle side faces are curved and currently remain inspection-first.
+
+## Preview / export routing
+
+`src/cad/project-analysis.ts` decides whether exact geometry is required.
+
+```text
+simple supported project
+    → mesh-mvp-v1
+    → fast preview / STL
+
+Pad / Pocket / Fillet / Chamfer /
+oriented face feature / promoted-profile Boolean
+    → occt-wasm-v5
+    → exact preview / exact STL
+
+STEP
+    → occt-wasm-v5 always
+```
+
+The exact viewport frames from final B-Rep bounds rather than the pre-operation base envelope.
 
 ## Project schema migration
 
-Editable project files now save as schema v4.
+Current editable schema: **v7**.
 
-- schema v1: legacy Fillet string + global Hole/Cut coordinates;
-- schema v2: durable edge references for Fillet;
-- schema v3: durable face references + local U/V Hole/Cut placement;
-- schema v4: parametric Chamfer using the same durable edge-reference model.
+- v1: legacy Fillet selection + global Hole/Cut;
+- v2: durable edge references for Fillet;
+- v3: durable face references + local U/V Hole/Cut;
+- v4: Chamfer using durable edge references;
+- v5: persisted Line/Circle/Arc entities, constraints and construction/profile membership;
+- v6: durable SketchPlaneRef for base-XZ or attached planar face;
+- v7: Pad/Pocket features referencing an earlier face-attached Sketch.
 
-The loader accepts v1-v4 and validates every supported feature before it enters runtime state.
+The loader accepts v1-v7 and validates Pad/Pocket source-Sketch ordering/type before runtime entry.
 
 ## Coordinate convention
 
-OCCT uses `X=width, Y=depth, Z=height`; the application viewport uses `X=width, Y=height, Z=depth`. Tessellation and oriented-tool adapters perform this conversion explicitly.
+OCCT:
 
-## Product boundary
+`X = width, Y = depth, Z = height`
 
-`CadProject` and ordered feature history remain the source of truth. B-Rep handles, OCCT runtime hashes and WASM objects are transient and never enter project JSON or the central Quản trị Ứng dụng control-plane.
+Application viewport:
 
-## Next exact-kernel work
+`X = width, Y = height, Z = depth`
 
-The next high-value geometry work is Shell and richer surface metadata, while the larger product priority moves toward a stronger sketcher with more primitives, snapping, dimensions/constraints and arbitrary planar sketch support.
+The tessellation and face-orientation adapters convert explicitly.
+
+## Quality evidence
+
+The exact smoke suite currently includes:
+
+- base B-Rep / STEP;
+- oriented face Hole/Cut;
+- single-loop profile parity;
+- mixed Line+Arc parity;
+- multi-loop region parity;
+- semantic side-lineage checks;
+- attached Pad;
+- finite Pocket;
+- through-all Pocket;
+- side-oriented Pad.
+
+A green smoke suite is engineering evidence, not Production authority.
+
+## Current boundary
+
+Not yet claimed:
+
+- curved-surface Sketch attachment;
+- Shell;
+- arbitrary datum-plane Sketch;
+- symmetric/mid-plane Pad/Pocket;
+- termination-to-face/up-to-next;
+- draft angle;
+- general multi-body Boolean semantics.
+
+These require explicit contracts and tests before capability flags may be enabled.
+
+## Product ownership
+
+`CadProject` remains the source of editable truth.
+
+Transient B-Rep handles, OCCT hashes, tessellation and provider runtime objects never enter canonical project JSON and are never transferred into Quản trị Ứng dụng as project ownership.
