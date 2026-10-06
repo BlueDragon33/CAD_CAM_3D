@@ -1,6 +1,6 @@
 import type { SketchEntity } from './sketch';
 
-export type FeatureKind = 'sketch' | 'extrude' | 'cut' | 'hole' | 'fillet' | 'chamfer';
+export type FeatureKind = 'sketch' | 'extrude' | 'pad' | 'pocket' | 'cut' | 'hole' | 'fillet' | 'chamfer';
 
 export type Dimensions = {
   width: number;
@@ -100,6 +100,19 @@ export type ExtrudeFeature = FeatureBase<'extrude', {
   direction: 'positive';
 }>;
 
+export type PadFeature = FeatureBase<'pad', {
+  sketchId: string;
+  distanceMm: number;
+  direction: 'normal';
+}>;
+
+export type PocketFeature = FeatureBase<'pocket', {
+  sketchId: string;
+  extent: 'distance' | 'through-all';
+  distanceMm: number;
+  direction: 'inward';
+}>;
+
 export type CutFeature = FeatureBase<'cut', {
   shape: 'rectangle';
   width: number;
@@ -128,7 +141,7 @@ export type ChamferFeature = FeatureBase<'chamfer', {
   selection: ChamferSelection;
 }>;
 
-export type CadFeature = SketchFeature | ExtrudeFeature | CutFeature | HoleFeature | FilletFeature | ChamferFeature;
+export type CadFeature = SketchFeature | ExtrudeFeature | PadFeature | PocketFeature | CutFeature | HoleFeature | FilletFeature | ChamferFeature;
 
 export type PrintProfile = {
   name: string;
@@ -151,6 +164,8 @@ function featureName(kind: FeatureKind, project: CadProject) {
   const label: Record<FeatureKind, string> = {
     sketch: 'Sketch',
     extrude: 'Extrude',
+    pad: 'Pad',
+    pocket: 'Pocket',
     cut: 'Cut',
     hole: 'Hole',
     fillet: 'Fillet',
@@ -185,6 +200,16 @@ export function createFeature(kind: FeatureKind, project: CadProject): CadFeatur
 
   if (kind === 'extrude') {
     return { ...base, kind, params: { distanceParameter: 'height', direction: 'positive' } };
+  }
+
+  if (kind === 'pad') {
+    const sourceSketch = [...project.features].reverse().find((feature) => feature.kind === 'sketch');
+    return { ...base, kind, params: { sketchId: sourceSketch?.id ?? '', distanceMm: 5, direction: 'normal' } };
+  }
+
+  if (kind === 'pocket') {
+    const sourceSketch = [...project.features].reverse().find((feature) => feature.kind === 'sketch');
+    return { ...base, kind, params: { sketchId: sourceSketch?.id ?? '', extent: 'distance', distanceMm: 5, direction: 'inward' } };
   }
 
   if (kind === 'hole') {
