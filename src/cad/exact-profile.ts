@@ -2,7 +2,7 @@ import type { OcctKernel, ShapeHandle } from 'occt-wasm';
 import { classifyBaseFaceLineage } from './base-face-lineage';
 import { installBaseFaceLineageSeeds } from './base-face-lineage-registry';
 import type { ProfilePathSegment } from './profile';
-import type { ManufacturingLoop } from './profile-region';
+import type { ManufacturingLoop, ResolvedManufacturingProfile } from './profile-region';
 import type { RebuiltPart } from './rebuild';
 
 function pathFace(kernel: OcctKernel, segments: ProfilePathSegment[]) {
@@ -50,6 +50,40 @@ function loopFace(kernel: OcctKernel, loop: ManufacturingLoop) {
 function finalizeBaseSolid(kernel: OcctKernel, shape: ShapeHandle, rebuilt: RebuiltPart) {
   installBaseFaceLineageSeeds(classifyBaseFaceLineage(kernel, shape, rebuilt));
   return shape;
+}
+
+/**
+ * Build a canonical +Z prism from any resolved profile. The profile lives in
+ * local XY (application sketch x/z), centered/oriented exactly as persisted.
+ * Callers may transform this solid onto an attached face before Boolean use.
+ */
+export function makeExactProfilePrism(
+  kernel: OcctKernel,
+  profile: ResolvedManufacturingProfile,
+  distanceMm: number,
+) {
+  const distance = Math.max(1e-4, distanceMm);
+  if (profile.kind === 'rectangle') {
+    let shape = kernel.makeBox(profile.width, profile.depth, distance);
+    shape = kernel.translate(shape, -profile.width / 2, -profile.depth / 2, 0);
+    return shape;
+  }
+
+  if (profile.kind === 'region') {
+    let shape = kernel.extrude(loopFace(kernel, profile.outer), 0, 0, distance);
+    const overrun = Math.max(0.1, Math.min(1, distance * 0.1));
+    for (const hole of profile.holes) {
+      let tool = kernel.extrude(loopFace(kernel, hole), 0, 0, distance + overrun * 2);
+      tool = kernel.translate(tool, 0, 0, -overrun);
+      shape = kernel.cut(shape, tool);
+    }
+    return shape;
+  }
+
+  const face = profile.kind === 'circle'
+    ? circleFace(kernel, profile.center, profile.radiusMm)
+    : pathFace(kernel, profile.segments);
+  return kernel.extrude(face, 0, 0, distance);
 }
 
 /**
