@@ -9,6 +9,7 @@ import {
 } from './sketch';
 
 export type SolvedSketch = {
+  entities: SketchEntity[];
   width: number;
   depth: number;
   centered: boolean;
@@ -219,6 +220,7 @@ export function solveSketch(project: CadProject, feature: SketchFeature): Solved
   }
 
   return {
+    entities: constrained,
     width: Math.max(0.1, project.dimensions.width),
     depth: Math.max(0.1, project.dimensions.depth),
     centered: hasCentered,
