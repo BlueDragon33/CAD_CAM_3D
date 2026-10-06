@@ -4,6 +4,7 @@ import {
   resolveManufacturingProfileWithRegions,
   type ResolvedManufacturingProfile,
 } from './profile-region';
+import { isSupportedPlanarFace } from './topology-ref';
 
 export type RebuildDiagnostic = {
   level: 'info' | 'warning' | 'error';
@@ -59,11 +60,19 @@ export function rebuildProject(project: CadProject): RebuiltPart {
       for (const message of solved.messages) diagnostics.push({ level: 'warning', featureId: feature.id, message });
 
       if (feature.params.plane.kind === 'face') {
-        diagnostics.push({
-          level: 'info',
-          featureId: feature.id,
-          message: 'Attached planar sketch is persisted as local U/V intent. It does not replace the base manufacturing profile.',
-        });
+        if (!isSupportedPlanarFace(feature.params.plane.ref)) {
+          diagnostics.push({
+            level: 'error',
+            featureId: feature.id,
+            message: 'Attached sketch references a surface that is not in the currently supported planar lineage set.',
+          });
+        } else {
+          diagnostics.push({
+            level: 'info',
+            featureId: feature.id,
+            message: 'Attached planar sketch is persisted as local U/V intent. It does not replace the base manufacturing profile.',
+          });
+        }
         continue;
       }
 
