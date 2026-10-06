@@ -36,6 +36,20 @@ export type FaceTopologyRef = {
   };
 };
 
+/**
+ * Durable sketch-plane attachment. Entity x/z coordinates remain the persisted
+ * local 2D sketch coordinates; on a face-attached sketch they mean U/V offsets
+ * relative to the captured sketch origin.
+ */
+export type SketchPlaneRef =
+  | { kind: 'base-xz' }
+  | {
+      kind: 'face';
+      ref: FaceTopologyRef;
+      originUMm: number;
+      originVMm: number;
+    };
+
 export type EdgeTreatmentSelection =
   | { mode: 'preset'; preset: 'outer-vertical-edges' }
   | { mode: 'topology'; ref: EdgeTopologyRef };
@@ -69,7 +83,7 @@ type FeatureBase<K extends FeatureKind, P> = {
 };
 
 export type SketchFeature = FeatureBase<'sketch', {
-  plane: 'XZ';
+  plane: SketchPlaneRef;
   profile: 'rectangle';
   /**
    * General sketch entities currently act as persisted construction geometry
@@ -157,7 +171,7 @@ export function createFeature(kind: FeatureKind, project: CadProject): CadFeatur
       ...base,
       kind,
       params: {
-        plane: 'XZ',
+        plane: { kind: 'base-xz' },
         profile: 'rectangle',
         entities: [],
         constraints: [
