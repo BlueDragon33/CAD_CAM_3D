@@ -13,6 +13,7 @@ import { activeCadKernel } from './cad/kernel';
 import { exactKernelDescriptor } from './cad/exact-kernel';
 import { downloadProjectFile, loadProjectFile } from './cad/project-io';
 import { rebuildProject } from './cad/rebuild';
+import { solveSketch } from './cad/constraints';
 import { resolveManufacturingProfileWithRegions } from './cad/profile-region';
 import {
   createEdgeTopologyRef,
@@ -63,6 +64,10 @@ export default function App() {
   const rebuilt = useMemo(() => rebuildProject(project), [project]);
   const checks = useMemo(() => validateForPrint(project), [project]);
   const selectedFeature = project.features.find((feature) => feature.id === selectedFeatureId) ?? null;
+  const selectedSketchSolution = useMemo(
+    () => selectedFeature?.kind === 'sketch' ? solveSketch(project, selectedFeature) : null,
+    [project, selectedFeature],
+  );
 
   const setDimension = (key: keyof CadProject['dimensions'], raw: string) => {
     const value = clampDimension(Number(raw));
@@ -381,9 +386,21 @@ export default function App() {
           <label><span>Width</span><div><input type="number" step="0.1" value={project.dimensions.width} onChange={(e) => setDimension('width', e.target.value)} /><b>mm</b></div></label>
           <label><span>Depth</span><div><input type="number" step="0.1" value={project.dimensions.depth} onChange={(e) => setDimension('depth', e.target.value)} /><b>mm</b></div></label>
         </>}
-        <div className="constraint-state" data-ready={rebuilt.fullyConstrainedSketch}>
-          <strong>{rebuilt.fullyConstrainedSketch ? 'Fully constrained' : 'Under constrained'}</strong>
-          <small>{attached ? 'Local U/V sketch intent · material operation follows in WP-B.' : 'Centered base manufacturing rectangle'} · {selectedFeature.params.entities.length} persisted primitive(s).</small>
+        <div
+          className="constraint-state"
+          data-ready={selectedSketchSolution?.constraintState === 'fully-constrained'}
+          data-constraint-state={selectedSketchSolution?.constraintState ?? 'unknown'}
+        >
+          <strong>{selectedSketchSolution?.constraintState ?? 'unknown'}</strong>
+          <small>
+            {attached ? 'Local U/V attached sketch intent.' : 'Centered base manufacturing rectangle'}
+            {' · '}{selectedFeature.params.entities.length} persisted primitive(s)
+            {selectedSketchSolution ? ` · ~${selectedSketchSolution.estimatedDegreesOfFreedom} remaining DOF` : ''}
+          </small>
+          {selectedSketchSolution?.conflicts[0] ? <small>{selectedSketchSolution.conflicts[0].message}</small> : null}
+          {selectedSketchSolution && selectedSketchSolution.redundantConstraintIds.length > 0
+            ? <small>{selectedSketchSolution.redundantConstraintIds.length} redundant constraint(s) preserved.</small>
+            : null}
         </div>
       </div>;
     }
