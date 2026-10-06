@@ -88,7 +88,7 @@ export function rebuildProject(project: CadProject): RebuiltPart {
 
       hasSketch = true;
       fullyConstrainedSketch = solved.fullyConstrained;
-      const resolvedProfile = resolveManufacturingProfileWithRegions(feature.params.entities, solved.width, solved.depth);
+      const resolvedProfile = resolveManufacturingProfileWithRegions(solved.entities, solved.width, solved.depth);
       manufacturingProfile = resolvedProfile.profile;
       if (!manufacturingProfile) {
         for (const issue of resolvedProfile.issues) diagnostics.push({ level: 'error', featureId: feature.id, message: `Manufacturing profile: ${issue}` });
@@ -144,7 +144,7 @@ export function rebuildProject(project: CadProject): RebuiltPart {
       }
       const sourceSolved = solveSketch(project, sourceSketch);
       const sourceProfile = resolveManufacturingProfileWithRegions(
-        sourceSketch.params.entities,
+        sourceSolved.entities,
         sourceSolved.width,
         sourceSolved.depth,
       );
