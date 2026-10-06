@@ -16,6 +16,7 @@ export function projectRequiresExactGeometry(project: CadProject) {
 
   return project.features.some((feature) => {
     if (!feature.enabled) return false;
+    if (feature.kind === 'pad' || feature.kind === 'pocket') return true;
     if (feature.kind === 'fillet') return feature.params.radius > 0;
     if (feature.kind === 'chamfer') return feature.params.distance > 0;
     if (feature.kind !== 'hole' && feature.kind !== 'cut') return false;
