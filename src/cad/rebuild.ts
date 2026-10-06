@@ -67,10 +67,20 @@ export function rebuildProject(project: CadProject): RebuiltPart {
       const solved = solveSketch(project, feature);
       lastSketch = feature;
       sketchesById.set(feature.id, feature);
-      for (const message of solved.messages) diagnostics.push({ level: 'warning', featureId: feature.id, message });
+      for (const message of solved.messages) diagnostics.push({
+        level: message.startsWith('Constraint conflict:') ? 'error' : 'warning',
+        featureId: feature.id,
+        message,
+      });
 
       if (feature.params.plane.kind === 'face') {
-        if (!isSupportedPlanarFace(feature.params.plane.ref)) {
+        if (solved.constraintState === 'inconsistent') {
+          diagnostics.push({
+            level: 'error',
+            featureId: feature.id,
+            message: 'Attached sketch has inconsistent constraints. Downstream material features must not consume it until the conflict is repaired.',
+          });
+        } else if (!isSupportedPlanarFace(feature.params.plane.ref)) {
           diagnostics.push({
             level: 'error',
             featureId: feature.id,
@@ -88,6 +98,15 @@ export function rebuildProject(project: CadProject): RebuiltPart {
 
       hasSketch = true;
       fullyConstrainedSketch = solved.fullyConstrained;
+      if (solved.constraintState === 'inconsistent') {
+        manufacturingProfile = null;
+        diagnostics.push({
+          level: 'error',
+          featureId: feature.id,
+          message: 'Base manufacturing sketch has inconsistent constraints; solid creation is blocked instead of choosing a constraint by execution order.',
+        });
+        continue;
+      }
       const resolvedProfile = resolveManufacturingProfileWithRegions(solved.entities, solved.width, solved.depth);
       manufacturingProfile = resolvedProfile.profile;
       if (!manufacturingProfile) {
@@ -114,7 +133,7 @@ export function rebuildProject(project: CadProject): RebuiltPart {
         diagnostics.push({
           level: 'error',
           featureId: feature.id,
-          message: 'Extrude from an attached planar sketch is not enabled in WP-A; the existing solid is preserved until the attached-feature contract is implemented.',
+          message: 'Base Extrude does not consume an attached Sketch. Use Pad or Pocket for face-attached material operations.',
         });
         continue;
       }
@@ -143,6 +162,14 @@ export function rebuildProject(project: CadProject): RebuiltPart {
         continue;
       }
       const sourceSolved = solveSketch(project, sourceSketch);
+      if (sourceSolved.constraintState === 'inconsistent') {
+        diagnostics.push({
+          level: 'error',
+          featureId: feature.id,
+          message: `${feature.name} source Sketch has inconsistent constraints and cannot be consumed safely.`,
+        });
+        continue;
+      }
       const sourceProfile = resolveManufacturingProfileWithRegions(
         sourceSolved.entities,
         sourceSolved.width,
