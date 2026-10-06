@@ -51,6 +51,22 @@ function orientCanonicalTool(kernel: OcctKernel, shape: ShapeHandle, frame: Face
 }
 
 /**
+ * Place canonical sketch geometry (XY plane, +Z normal in OCCT coordinates)
+ * onto an application face frame. This is shared by attached Pad/Pocket tools
+ * and keeps the orientation convention identical to Hole/Cut.
+ */
+export function placeCanonicalShapeOnFace(
+  kernel: OcctKernel,
+  shape: ShapeHandle,
+  point: Vec3Tuple,
+  frame: FaceLocalFrame,
+) {
+  const oriented = orientCanonicalTool(kernel, shape, frame);
+  const origin = appPointToOcct(point);
+  return kernel.translate(oriented, origin.x, origin.y, origin.z);
+}
+
+/**
  * A through-feature tool is centered on the selected face point and extends
  * farther than the complete part diagonal in both normal directions. This
  * makes the Boolean independent from whether the resolved face normal points
@@ -70,9 +86,7 @@ export function makeOrientedCylinderTool(
   const length = throughToolLength(dimensions);
   let tool = kernel.makeCylinder(radiusMm, length);
   tool = kernel.translate(tool, 0, 0, -length / 2);
-  tool = orientCanonicalTool(kernel, tool, frame);
-  const center = appPointToOcct(point);
-  return kernel.translate(tool, center.x, center.y, center.z);
+  return placeCanonicalShapeOnFace(kernel, tool, point, frame);
 }
 
 export function makeOrientedBoxTool(
