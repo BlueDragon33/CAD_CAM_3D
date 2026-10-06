@@ -1,5 +1,14 @@
 import { solveSketch } from './constraints';
-import type { CadProject, ChamferFeature, CutFeature, FilletFeature, HoleFeature, SketchFeature } from './model';
+import type {
+  CadProject,
+  ChamferFeature,
+  CutFeature,
+  FilletFeature,
+  HoleFeature,
+  PadFeature,
+  PocketFeature,
+  SketchFeature,
+} from './model';
 import {
   resolveManufacturingProfileWithRegions,
   type ResolvedManufacturingProfile,
@@ -12,7 +21,7 @@ export type RebuildDiagnostic = {
   message: string;
 };
 
-export type SolidOperationFeature = HoleFeature | CutFeature | FilletFeature | ChamferFeature;
+export type SolidOperationFeature = PadFeature | PocketFeature | HoleFeature | CutFeature | FilletFeature | ChamferFeature;
 
 export type RebuiltPart = {
   width: number;
@@ -49,6 +58,7 @@ export function rebuildProject(project: CadProject): RebuiltPart {
   const cuts: CutFeature[] = [];
   const operationSequence: SolidOperationFeature[] = [];
   const diagnostics: RebuildDiagnostic[] = [];
+  const sketchesById = new Map<string, SketchFeature>();
 
   for (const feature of project.features) {
     if (!feature.enabled) continue;
@@ -56,6 +66,7 @@ export function rebuildProject(project: CadProject): RebuiltPart {
     if (feature.kind === 'sketch') {
       const solved = solveSketch(project, feature);
       lastSketch = feature;
+      sketchesById.set(feature.id, feature);
       fullyConstrainedSketch = solved.fullyConstrained;
       for (const message of solved.messages) diagnostics.push({ level: 'warning', featureId: feature.id, message });
 
@@ -113,6 +124,48 @@ export function rebuildProject(project: CadProject): RebuiltPart {
       }
       height = Math.max(0.1, project.dimensions.height);
       hasSolid = true;
+      continue;
+    }
+
+    if (feature.kind === 'pad' || feature.kind === 'pocket') {
+      if (!hasSolid) {
+        diagnostics.push({ level: 'error', featureId: feature.id, message: `${feature.name} requires an existing solid.` });
+        continue;
+      }
+      const sourceSketch = sketchesById.get(feature.params.sketchId);
+      if (!sourceSketch || sourceSketch.params.plane.kind !== 'face') {
+        diagnostics.push({ level: 'error', featureId: feature.id, message: `${feature.name} requires an enabled earlier face-attached Sketch.` });
+        continue;
+      }
+      const promotedEntities = sourceSketch.params.entities.filter((entity) => !entity.construction);
+      if (promotedEntities.length === 0) {
+        diagnostics.push({ level: 'error', featureId: feature.id, message: `${feature.name} requires a promoted profile in its attached Sketch.` });
+        continue;
+      }
+      const sourceSolved = solveSketch(project, sourceSketch);
+      const sourceProfile = resolveManufacturingProfileWithRegions(
+        sourceSketch.params.entities,
+        sourceSolved.width,
+        sourceSolved.depth,
+      );
+      if (!sourceProfile.promoted || !sourceProfile.profile) {
+        diagnostics.push({
+          level: 'error',
+          featureId: feature.id,
+          message: `${feature.name} source Sketch does not contain one valid supported profile region.`,
+        });
+        continue;
+      }
+      operationSequence.push(feature);
+      diagnostics.push({
+        level: 'info',
+        featureId: feature.id,
+        message: feature.kind === 'pad'
+          ? `Pad will add material ${feature.params.distanceMm.toFixed(2)} mm along the resolved sketch-plane normal using the exact kernel.`
+          : feature.params.extent === 'through-all'
+            ? 'Pocket will remove material through-all opposite the resolved sketch-plane normal using the exact kernel.'
+            : `Pocket will remove material ${feature.params.distanceMm.toFixed(2)} mm inward using the exact kernel.`,
+      });
       continue;
     }
 
