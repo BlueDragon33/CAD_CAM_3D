@@ -140,10 +140,15 @@ export default function App() {
         setStatus(`${featureLabels[feature.kind]} creation blocked: promote one valid attached feature profile first.`);
         return;
       }
+      const solvedSource = solveSketch(project, selectedFeature);
+      if (solvedSource.constraintState === 'inconsistent') {
+        setStatus(`${featureLabels[feature.kind]} creation blocked: repair the attached Sketch constraint conflict first.`);
+        return;
+      }
       const profile = resolveManufacturingProfileWithRegions(
-        selectedFeature.params.entities,
-        project.dimensions.width,
-        project.dimensions.depth,
+        solvedSource.entities,
+        solvedSource.width,
+        solvedSource.depth,
       );
       if (!profile.promoted || !profile.profile) {
         setStatus(`${featureLabels[feature.kind]} creation blocked: the attached Sketch profile is invalid or ambiguous.`);
