@@ -1,5 +1,5 @@
 import { solveSketch } from './constraints';
-import type { CadProject, ChamferFeature, CutFeature, FilletFeature, HoleFeature } from './model';
+import type { CadProject, ChamferFeature, CutFeature, FilletFeature, HoleFeature, SketchFeature } from './model';
 import {
   resolveManufacturingProfileWithRegions,
   type ResolvedManufacturingProfile,
@@ -39,6 +39,7 @@ export function rebuildProject(project: CadProject): RebuiltPart {
   let height = 0;
   let hasSketch = false;
   let hasSolid = false;
+  let lastSketch: SketchFeature | null = null;
   let fullyConstrainedSketch = false;
   let manufacturingProfile: ResolvedManufacturingProfile | null = null;
   let filletRadius = 0;
@@ -53,10 +54,20 @@ export function rebuildProject(project: CadProject): RebuiltPart {
 
     if (feature.kind === 'sketch') {
       const solved = solveSketch(project, feature);
-      hasSketch = true;
+      lastSketch = feature;
       fullyConstrainedSketch = solved.fullyConstrained;
       for (const message of solved.messages) diagnostics.push({ level: 'warning', featureId: feature.id, message });
 
+      if (feature.params.plane.kind === 'face') {
+        diagnostics.push({
+          level: 'info',
+          featureId: feature.id,
+          message: 'Attached planar sketch is persisted as local U/V intent. It does not replace the base manufacturing profile.',
+        });
+        continue;
+      }
+
+      hasSketch = true;
       const resolvedProfile = resolveManufacturingProfileWithRegions(feature.params.entities, solved.width, solved.depth);
       manufacturingProfile = resolvedProfile.profile;
       if (!manufacturingProfile) {
@@ -79,8 +90,16 @@ export function rebuildProject(project: CadProject): RebuiltPart {
     }
 
     if (feature.kind === 'extrude') {
+      if (lastSketch?.params.plane.kind === 'face') {
+        diagnostics.push({
+          level: 'error',
+          featureId: feature.id,
+          message: 'Extrude from an attached planar sketch is not enabled in WP-A; the existing solid is preserved until the attached-feature contract is implemented.',
+        });
+        continue;
+      }
       if (!hasSketch || !manufacturingProfile) {
-        diagnostics.push({ level: 'error', featureId: feature.id, message: 'Extrude requires an enabled sketch with a valid manufacturing profile before it.' });
+        diagnostics.push({ level: 'error', featureId: feature.id, message: 'Extrude requires an enabled base sketch with a valid manufacturing profile before it.' });
         continue;
       }
       height = Math.max(0.1, project.dimensions.height);
