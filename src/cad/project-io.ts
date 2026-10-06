@@ -9,16 +9,17 @@ import type {
   FilletSelection,
   PrintProfile,
   SketchConstraint,
+  SketchPlaneRef,
   SketchPointRef,
   Vec3Tuple,
 } from './model';
 import type { SketchEntity, SketchPoint2D } from './sketch';
 
 const PROJECT_FORMAT = 'cad-cam-3d-project';
-const PROJECT_SCHEMA_VERSION = 5;
+const PROJECT_SCHEMA_VERSION = 6;
 const materials = new Set<PrintProfile['material']>(['PLA', 'PETG', 'ABS', 'ASA', 'PA-CF', 'Other']);
 
-export type ProjectDocumentV5 = {
+export type ProjectDocumentV6 = {
   format: typeof PROJECT_FORMAT;
   schemaVersion: typeof PROJECT_SCHEMA_VERSION;
   savedAt: string;
@@ -205,6 +206,21 @@ function readFaceTopologyRef(value: unknown, label: string): FaceTopologyRef {
   };
 }
 
+function readSketchPlaneRef(value: unknown, label: string, sourceSchemaVersion: number): SketchPlaneRef {
+  if (sourceSchemaVersion <= 5) return { kind: 'base-xz' };
+  if (!isRecord(value)) throw new Error(`${label} must be a sketch plane reference.`);
+  if (value.kind === 'base-xz') return { kind: 'base-xz' };
+  if (value.kind === 'face') {
+    return {
+      kind: 'face',
+      ref: readFaceTopologyRef(value.ref, `${label}.ref`),
+      originUMm: readNumber(value, 'originUMm', `${label}.originUMm`),
+      originVMm: readNumber(value, 'originVMm', `${label}.originVMm`),
+    };
+  }
+  throw new Error(`${label}.kind must be base-xz or face.`);
+}
+
 function readPlacement(value: unknown, label: string, sourceSchemaVersion: number): FeaturePlacement {
   if (sourceSchemaVersion <= 2) return { mode: 'global-xz' };
   if (!isRecord(value)) throw new Error(`${label} must be an object.`);
@@ -245,11 +261,12 @@ function readFeature(value: unknown, index: number, sourceSchemaVersion: number)
   if (!isRecord(params)) throw new Error(`${label}.params must be an object.`);
 
   if (kind === 'sketch') {
-    if (params.plane !== 'XZ' || params.profile !== 'rectangle') throw new Error(`${label} contains an unsupported sketch definition.`);
+    if (params.profile !== 'rectangle') throw new Error(`${label} contains an unsupported sketch profile definition.`);
+    const plane = readSketchPlaneRef(params.plane, `${label}.params.plane`, sourceSchemaVersion);
     const entities = readSketchEntities(params.entities, `${label}.params.entities`, sourceSchemaVersion);
     const constraints = readConstraints(params.constraints, `${label}.params.constraints`);
     validateSketchConstraintReferences(entities, constraints, `${label}.params.constraints`);
-    return { id, kind, name, enabled, params: { plane: 'XZ', profile: 'rectangle', entities, constraints } };
+    return { id, kind, name, enabled, params: { plane, profile: 'rectangle', entities, constraints } };
   }
   if (kind === 'extrude') {
     if (params.distanceParameter !== 'height' || params.direction !== 'positive') throw new Error(`${label} contains an unsupported extrude definition.`);
@@ -316,7 +333,7 @@ function safeFileName(name: string) {
 }
 
 export function serializeProject(project: CadProject): string {
-  const document: ProjectDocumentV5 = { format: PROJECT_FORMAT, schemaVersion: PROJECT_SCHEMA_VERSION, savedAt: new Date().toISOString(), project };
+  const document: ProjectDocumentV6 = { format: PROJECT_FORMAT, schemaVersion: PROJECT_SCHEMA_VERSION, savedAt: new Date().toISOString(), project };
   return JSON.stringify(document, null, 2);
 }
 
@@ -326,8 +343,8 @@ export function parseProjectDocument(text: string): { project: CadProject; schem
   if (!isRecord(raw)) throw new Error('Project document must be an object.');
   if (raw.format !== PROJECT_FORMAT) throw new Error('This file is not a CAD_CAM_3D project document.');
   const sourceSchemaVersion = raw.schemaVersion;
-  if (![1, 2, 3, 4, PROJECT_SCHEMA_VERSION].includes(sourceSchemaVersion as number)) {
-    throw new Error(`Unsupported project schema version ${String(sourceSchemaVersion)}. Supported versions are 1, 2, 3, 4 and ${PROJECT_SCHEMA_VERSION}.`);
+  if (![1, 2, 3, 4, 5, PROJECT_SCHEMA_VERSION].includes(sourceSchemaVersion as number)) {
+    throw new Error(`Unsupported project schema version ${String(sourceSchemaVersion)}. Supported versions are 1 through ${PROJECT_SCHEMA_VERSION}.`);
   }
   return {
     project: readProject(raw.project, sourceSchemaVersion as number), schemaVersion: PROJECT_SCHEMA_VERSION,
