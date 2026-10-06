@@ -98,7 +98,9 @@ export function Sketcher({ project, feature, onChange, onMessage }: Props) {
   const selectedEntity = entities.find((entity) => entity.id === selectedEntityId) ?? null;
   const selectedDimension = selectedEntity ? dimensionConstraintFor(selectedEntity, feature.params.constraints) : undefined;
   const selectedOrientation = selectedEntity?.kind === 'line' ? lineOrientation(selectedEntity.id, feature.params.constraints) : null;
-  const attachedSpan = attachedPlane ? Math.max(40, Math.sqrt(feature.params.plane.ref.signature.areaMm2) * 1.8) : 0;
+  const attachedSpan = feature.params.plane.kind === 'face'
+    ? Math.max(40, Math.sqrt(feature.params.plane.ref.signature.areaMm2) * 1.8)
+    : 0;
   const viewWidth = attachedPlane ? Math.max(90, attachedSpan) : Math.max(90, project.dimensions.width * 1.55);
   const viewHeight = attachedPlane ? Math.max(70, attachedSpan * 0.78) : Math.max(70, project.dimensions.depth * 1.7);
   const minX = -viewWidth / 2;
