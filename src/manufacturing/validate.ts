@@ -15,7 +15,13 @@ export function validateForPrint(project: CadProject): PrintCheck[] {
     return [{ level: 'warning', message: 'No valid solid is available for print validation.' }];
   }
 
-  if (part.width > v.width || part.depth > v.depth || part.height > v.height) {
+  const hasAttachedMaterial = project.features.some((feature) => feature.enabled && (feature.kind === 'pad' || feature.kind === 'pocket'));
+  if (hasAttachedMaterial) {
+    checks.push({
+      level: 'warning',
+      message: 'Attached Pad/Pocket changes the final exact envelope; lightweight build-volume validation is deferred to the exact manufacturing path.',
+    });
+  } else if (part.width > v.width || part.depth > v.depth || part.height > v.height) {
     checks.push({ level: 'warning', message: 'Part exceeds the selected printer build volume.' });
   } else {
     checks.push({ level: 'ok', message: 'Part fits inside the selected printer build volume.' });
