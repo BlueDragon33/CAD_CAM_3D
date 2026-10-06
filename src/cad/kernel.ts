@@ -9,6 +9,7 @@ export type CadKernelCapabilities = {
   stepExport: boolean;
   exactFillet: boolean;
   exactChamfer: boolean;
+  attachedPlanarMaterialFeatures: boolean;
   shell: boolean;
 };
 
@@ -40,6 +41,7 @@ export const meshMvpKernel: CadKernel = {
     stepExport: false,
     exactFillet: false,
     exactChamfer: false,
+    attachedPlanarMaterialFeatures: false,
     shell: false,
   },
   buildMesh(project) {
