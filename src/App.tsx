@@ -144,13 +144,11 @@ export default function App() {
         setStatus(`${featureLabels[feature.kind]} creation blocked: the attached Sketch profile is invalid or ambiguous.`);
         return;
       }
-      feature = {
-        ...feature,
-        params: {
-          ...feature.params,
-          sketchId: selectedFeature.id,
-        },
-      };
+      if (feature.kind === 'pad') {
+        feature = { ...feature, params: { ...feature.params, sketchId: selectedFeature.id } };
+      } else {
+        feature = { ...feature, params: { ...feature.params, sketchId: selectedFeature.id } };
+      }
       appendFeature(
         feature,
         feature.kind === 'pad'
