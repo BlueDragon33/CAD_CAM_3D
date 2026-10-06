@@ -214,6 +214,7 @@ export function analyzeSketchConstraintSet(
       continue;
     }
 
+    if (constraint.kind !== 'distance' && constraint.kind !== 'radius') continue;
     const key = `${constraint.kind}:${entity.id}`;
     const group = dimensions.get(key) ?? { kind: constraint.kind, values: [] };
     group.values.push({ id: constraint.id, value: constraint.valueMm });
