@@ -176,6 +176,7 @@ function constrainedEntityDof(feature: SketchFeature) {
 /** Deterministic sketch-state analyzer shared by editing and semantic rebuild. */
 export function solveSketch(project: CadProject, feature: SketchFeature): SolvedSketch {
   const constraints = feature.params.constraints;
+  const basePlane = feature.params.plane.kind === 'base-xz';
   const hasCentered = constraints.some((constraint) => constraint.kind === 'centered');
   const hasWidth = constraints.some((constraint) => constraint.kind === 'width');
   const hasDepth = constraints.some((constraint) => constraint.kind === 'depth');
@@ -183,12 +184,14 @@ export function solveSketch(project: CadProject, feature: SketchFeature): Solved
   const constrained = applySketchConstraints(feature.params.entities, constraints);
   const constructionEntities = constrained.filter((entity) => entity.construction);
   const regionAnalysis = analyzePromotableRegion(constructionEntities.length > 0 ? constructionEntities : constrained);
-  const manufacturing = resolveManufacturingProfileWithRegions(constrained, project.dimensions.width, project.dimensions.depth);
+  const manufacturing = basePlane
+    ? resolveManufacturingProfileWithRegions(constrained, project.dimensions.width, project.dimensions.depth)
+    : null;
   const messages = [...entityAnalysis.issues];
 
-  if (!hasCentered) messages.push('Sketch is missing the centered profile constraint.');
-  if (!hasWidth) messages.push('Sketch width is not tied to the named width parameter.');
-  if (!hasDepth) messages.push('Sketch depth is not tied to the named depth parameter.');
+  if (basePlane && !hasCentered) messages.push('Sketch is missing the centered profile constraint.');
+  if (basePlane && !hasWidth) messages.push('Sketch width is not tied to the named width parameter.');
+  if (basePlane && !hasDepth) messages.push('Sketch depth is not tied to the named depth parameter.');
   if (entityAnalysis.entityCount > 0 && entityAnalysis.estimatedDegreesOfFreedom > 0) {
     messages.push(`${entityAnalysis.estimatedDegreesOfFreedom} estimated sketch degree(s) of freedom remain.`);
   }
@@ -201,7 +204,7 @@ export function solveSketch(project: CadProject, feature: SketchFeature): Solved
     }
   }
 
-  if (manufacturing.promoted) {
+  if (manufacturing?.promoted) {
     if (manufacturing.profile) {
       const holeText = manufacturing.profile.kind === 'region' ? ` · ${manufacturing.profile.holes.length} inner hole(s)` : '';
       messages.push(`Promoted ${manufacturing.profile.kind} manufacturing profile is active · area ${manufacturing.profile.areaMm2.toFixed(2)} mm²${holeText}.`);
@@ -219,7 +222,9 @@ export function solveSketch(project: CadProject, feature: SketchFeature): Solved
     width: Math.max(0.1, project.dimensions.width),
     depth: Math.max(0.1, project.dimensions.depth),
     centered: hasCentered,
-    fullyConstrained: hasCentered && hasWidth && hasDepth && entityAnalysis.estimatedDegreesOfFreedom === 0,
+    fullyConstrained: basePlane
+      ? hasCentered && hasWidth && hasDepth && entityAnalysis.estimatedDegreesOfFreedom === 0
+      : entityAnalysis.entityCount > 0 && entityAnalysis.estimatedDegreesOfFreedom === 0,
     entityCount: entityAnalysis.entityCount,
     estimatedDegreesOfFreedom: entityAnalysis.estimatedDegreesOfFreedom,
     profileCandidateCount: regionAnalysis.analysis.closedLoopCount,
