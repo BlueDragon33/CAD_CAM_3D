@@ -1,6 +1,6 @@
 # WP-C — Sketch Constraint Maturity
 
-Status: **ACTIVE**
+Status: **COMPLETE — DETERMINISTIC CONSTRAINT DIAGNOSTICS ACCEPTED**
 Project: `CAD_CAM_3D`
 Depends on: WP-A / WP-B sketch-plane and attached-feature foundations.
 
@@ -128,3 +128,42 @@ The UI and semantic rebuild can distinguish and explain the five sketch states u
 ## Next-stage contract
 
 A later solver backend may replace/augment the deterministic implementation only behind the same semantic constraint model and must preserve project compatibility or provide explicit migration.
+
+
+## Completion evidence
+
+Implemented through head `29d215060d36cb6372eac6abfdc62cae89125e64`.
+
+GitHub Actions run `37493816315`:
+
+- TypeScript: PASS;
+- Vitest: **2 test files / 19 tests PASS**;
+- exact B-Rep smoke suite: PASS;
+- production build: PASS.
+
+Regression coverage includes:
+
+- conflicting Line distance values;
+- conflicting Circle/Arc radius values;
+- horizontal + vertical positive-length contradiction;
+- missing/incompatible targets;
+- duplicate equal dimensions;
+- reversed duplicate coincidence;
+- base fully-constrained state;
+- attached empty/under/inconsistent states;
+- redundant base intent → over-constrained;
+- schema v1-v6 migration into current schema v7;
+- schema-v7 round trip;
+- invalid Pad source reference rejection;
+- future schema rejection.
+
+Manufacturing safety:
+
+- inconsistent base Sketch blocks solid creation;
+- inconsistent attached Sketch blocks profile promotion/material consumption;
+- conflicts are preserved rather than applied according to incidental constraint order;
+- redundant constraints remain persisted but receive no independent DOF credit.
+
+## Accepted boundary
+
+This Work Package does not claim a nonlinear industrial geometric solver. The accepted foundation is the explicit constraint-state/diagnostic contract and regression harness that a future stronger solver must preserve or migrate explicitly.
