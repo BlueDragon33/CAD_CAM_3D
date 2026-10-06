@@ -337,12 +337,13 @@ export default function App() {
   const renderInspector = () => {
     if (!selectedFeature) return <p className="empty-inspector">Select a feature from the history to edit its parameters.</p>;
     if (selectedFeature.kind === 'sketch') {
-      const attached = selectedFeature.params.plane.kind === 'face';
+      const sketchPlane = selectedFeature.params.plane;
+      const attached = sketchPlane.kind === 'face';
       return <div className="inspector-grid">
-        {attached ? <>
+        {sketchPlane.kind === 'face' ? <>
           <div className="constraint-state" data-ready>
             <strong>Attached planar sketch</strong>
-            <small>Durable face lineage · local origin U {selectedFeature.params.plane.originUMm.toFixed(2)} mm · V {selectedFeature.params.plane.originVMm.toFixed(2)} mm</small>
+            <small>Durable face lineage · local origin U {sketchPlane.originUMm.toFixed(2)} mm · V {sketchPlane.originVMm.toFixed(2)} mm</small>
           </div>
         </> : <>
           <label><span>Width</span><div><input type="number" step="0.1" value={project.dimensions.width} onChange={(e) => setDimension('width', e.target.value)} /><b>mm</b></div></label>
