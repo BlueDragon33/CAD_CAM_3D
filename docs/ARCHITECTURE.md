@@ -59,7 +59,7 @@ simple preview/STL       exact preview / STEP / STL
 
 `mesh-mvp-v1` handles direct base-profile extrusion and lightweight STL quickly. `occt-wasm-v5` is lazy-loaded for exact topology, exact edge treatments, oriented face features, attached planar Pad/Pocket, STEP, adaptive STL and promoted-profile Boolean operations.
 
-`src/cad/project-analysis.ts` promotes models automatically when the fast kernel would be incomplete. Current exact triggers include Fillet, Chamfer, non-horizontal face-bound Hole/Cut, and Hole/Cut on a promoted sketch profile.
+`src/cad/project-analysis.ts` promotes models automatically when the fast kernel would be incomplete. Current exact triggers include Pad, Pocket, Fillet, Chamfer, non-horizontal face-bound Hole/Cut, and Hole/Cut on a promoted sketch profile.
 
 ### Lightweight path
 
@@ -115,6 +115,8 @@ mesh + exact-kernel parity
 `src/cad/profile-region.ts` classifies multiple valid loops. The enabled region model is intentionally narrow: exactly one depth-0 outer contour plus zero or more depth-1 direct holes. Pairwise touching/intersection, multiple outer islands and nesting depth greater than one are rejected.
 
 Profile validation checks endpoint closure, connected components, vertex degree, exact line/arc perimeter, signed area/winding, repeated vertices, open/branched geometry and sampled non-adjacent self-intersections for curved paths. Region validation then adds pairwise loop intersection checks and containment-depth classification.
+
+Constraint analysis separately classifies each Sketch as `empty`, `under-constrained`, `fully-constrained`, `over-constrained` or `inconsistent`. Provable contradictions are preserved but not applied by execution order; inconsistent Sketches are blocked from manufacturing consumption. Redundant constraints remain persisted and visible but do not receive independent degree-of-freedom credit.
 
 Schema v5 introduced each sketch entity's `construction` flag, so profile promotion reuses that durable distinction instead of adding a separate profile-membership store. Schema v6 adds durable `SketchPlaneRef` attachment while keeping those entity semantics unchanged. `construction: false` marks membership in the active profile region; zero non-construction entities means the named width/depth rectangle is active for the base sketch.
 
@@ -173,13 +175,14 @@ Migration chain:
 - v6: durable sketch-plane references — legacy XZ sketches migrate to `{ kind: 'base-xz' }`, while new attached sketches persist a planar `FaceTopologyRef` plus local U/V origin;
 - v7: attached `Pad` and `Pocket` features persist a durable source Sketch ID and exact material-operation parameters.
 
-The loader accepts v1-v5 and validates supported fields before a project enters the workspace. Multi-loop region membership and side-face semantic lineage reuse schema-v5 entity IDs/flags, so no file-format bump is required for these milestones.
+The loader accepts v1-v7 and validates supported fields before a project enters the workspace. Multi-loop region membership and side-face semantic lineage reuse stable entity IDs/flags; schema bumps are reserved for changes to durable project meaning such as SketchPlaneRef and Pad/Pocket.
 
 Project JSON, B-Rep and manufacturing files remain owned by CAD_CAM_3D and are not mirrored into Quản trị Ứng dụng.
 
 ## Planned modules
 
-- arbitrary planar sketch attachment via durable face reference + local sketch frame;
+- stronger sketch constraint vocabulary/solver behind the existing semantic model;
+- arbitrary datum planes/axes beyond face attachment;
 - explicit nested islands / multi-body semantics;
 - cylindrical-surface local coordinates for curved-face placement;
 - Shell and richer exact surface metadata;
@@ -192,6 +195,6 @@ Project JSON, B-Rep and manufacturing files remain owned by CAD_CAM_3D and are n
 
 ## Current foundation
 
-The project now supports deterministic feature history, schema-v5 persistence with migration, constrained interactive Line/Circle/Arc sketch entities, closed-loop validation, explicit Line/Line+Arc/Circle region promotion, direct inner-hole classification, mesh/OpenCascade parity gating, sketch-entity semantic side-face lineage, planar promoted-side Hole/Cut binding, lightweight and exact preview/STL paths, STEP, topology evolution, durable face/edge references, oriented planar-face Hole/Cut, exact Fillet and exact Chamfer.
+The project now supports deterministic feature history, schema-v7 persistence with v1-v6 migration, explicit five-state sketch constraint diagnostics, constrained interactive Line/Circle/Arc entities, closed-loop validation, explicit Line/Line+Arc/Circle region promotion, direct inner-hole classification, durable planar Sketch attachment, exact attached Pad/Pocket, mesh/OpenCascade parity gating, sketch-entity semantic side-face lineage, planar promoted-side Hole/Cut binding, lightweight and exact preview/STL paths, STEP, topology evolution, durable face/edge references, oriented planar-face Hole/Cut, exact Fillet and exact Chamfer.
 
-The next topology milestone is arbitrary planar sketch attachment using a durable face reference and local sketch plane. Nested islands should only be enabled together with explicit island/multi-body semantics.
+The next sketch milestone is stronger solver maturity and constraint vocabulary behind the same persisted semantic model. Nested islands should only be enabled together with explicit island/multi-body semantics.
