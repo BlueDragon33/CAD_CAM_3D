@@ -17,6 +17,28 @@ The system is designed to grow from a general CAD/printing foundation into deepe
 - Add UAV/USV/UGV domain intelligence as modules, not hard-coded assumptions.
 - Operate as a managed level-1 client under the central **Quản trị Ứng dụng** control-plane.
 - Keep CAD project geometry, mesh payloads and exported manufacturing files owned by CAD_CAM_3D rather than copied into the central control-plane.
+- Preserve local-first/offline-capable core behavior and keep external providers replaceable where practical.
+- Build only justified capability floors, while keeping the structural foundation capable of large future commercial scale.
+
+## Constitutional governance
+
+CAD_CAM_3D adopts the Blueprint OS Universal Constitution through:
+
+- `.blueprint/constitution-adoption.json`
+
+The canonical project-level commercial/architecture source is:
+
+- `docs/CAD_CAM_3D_CENTURY_GRADE_COMMERCIAL_BLUEPRINT.md`
+
+The durable execution prompt is:
+
+- `prompts/CAD_CAM_3D_MASTER_CENTURY_GRADE_EXECUTION_PROMPT.md`
+
+Agents and contributors should begin with:
+
+- `AGENTS.md`
+
+The execution prompt is a projection, not the source-of-truth. Fundamental architecture changes belong in the canonical blueprint first.
 
 ## Application management
 
