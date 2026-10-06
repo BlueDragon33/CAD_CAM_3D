@@ -16,10 +16,10 @@ import type {
 import type { SketchEntity, SketchPoint2D } from './sketch';
 
 const PROJECT_FORMAT = 'cad-cam-3d-project';
-const PROJECT_SCHEMA_VERSION = 6;
+const PROJECT_SCHEMA_VERSION = 7;
 const materials = new Set<PrintProfile['material']>(['PLA', 'PETG', 'ABS', 'ASA', 'PA-CF', 'Other']);
 
-export type ProjectDocumentV6 = {
+export type ProjectDocumentV7 = {
   format: typeof PROJECT_FORMAT;
   schemaVersion: typeof PROJECT_SCHEMA_VERSION;
   savedAt: string;
@@ -272,6 +272,26 @@ function readFeature(value: unknown, index: number, sourceSchemaVersion: number)
     if (params.distanceParameter !== 'height' || params.direction !== 'positive') throw new Error(`${label} contains an unsupported extrude definition.`);
     return { id, kind, name, enabled, params: { distanceParameter: 'height', direction: 'positive' } };
   }
+  if (kind === 'pad') {
+    if (sourceSchemaVersion < 7) throw new Error(`${label} contains Pad but schema ${sourceSchemaVersion} predates attached material features.`);
+    if (params.direction !== 'normal') throw new Error(`${label}.params.direction must be normal.`);
+    return { id, kind, name, enabled, params: {
+      sketchId: readString(params, 'sketchId', `${label}.params.sketchId`),
+      distanceMm: readNumber(params, 'distanceMm', `${label}.params.distanceMm`, 0.1),
+      direction: 'normal',
+    } };
+  }
+  if (kind === 'pocket') {
+    if (sourceSchemaVersion < 7) throw new Error(`${label} contains Pocket but schema ${sourceSchemaVersion} predates attached material features.`);
+    if (params.direction !== 'inward') throw new Error(`${label}.params.direction must be inward.`);
+    if (params.extent !== 'distance' && params.extent !== 'through-all') throw new Error(`${label}.params.extent must be distance or through-all.`);
+    return { id, kind, name, enabled, params: {
+      sketchId: readString(params, 'sketchId', `${label}.params.sketchId`),
+      extent: params.extent,
+      distanceMm: readNumber(params, 'distanceMm', `${label}.params.distanceMm`, 0.1),
+      direction: 'inward',
+    } };
+  }
   if (kind === 'hole') {
     if (params.through !== true) throw new Error(`${label}.params.through must be true.`);
     return { id, kind, name, enabled, params: {
@@ -316,13 +336,32 @@ function readPrintProfile(value: unknown): PrintProfile {
   };
 }
 
+function validateFeatureReferences(features: CadFeature[]) {
+  const seen = new Map<string, CadFeature>();
+  for (const feature of features) {
+    if (seen.has(feature.id)) throw new Error(`project.features contains duplicate feature id ${feature.id}.`);
+    if (feature.kind === 'pad' || feature.kind === 'pocket') {
+      const source = seen.get(feature.params.sketchId);
+      if (!source || source.kind !== 'sketch') {
+        throw new Error(`${feature.name} references a missing or later sketch ${feature.params.sketchId}.`);
+      }
+      if (source.params.plane.kind !== 'face') {
+        throw new Error(`${feature.name} must reference a face-attached sketch.`);
+      }
+    }
+    seen.set(feature.id, feature);
+  }
+}
+
 function readProject(value: unknown, sourceSchemaVersion: number): CadProject {
   if (!isRecord(value)) throw new Error('project must be an object.');
   if (!Array.isArray(value.features)) throw new Error('project.features must be an array.');
+  const features = value.features.map((feature, index) => readFeature(feature, index, sourceSchemaVersion));
+  validateFeatureReferences(features);
   return {
     id: readString(value, 'id', 'project.id'), name: readString(value, 'name', 'project.name'),
     dimensions: readDimensions(value.dimensions, 'project.dimensions'),
-    features: value.features.map((feature, index) => readFeature(feature, index, sourceSchemaVersion)),
+    features,
     printProfile: readPrintProfile(value.printProfile),
   };
 }
@@ -333,7 +372,7 @@ function safeFileName(name: string) {
 }
 
 export function serializeProject(project: CadProject): string {
-  const document: ProjectDocumentV6 = { format: PROJECT_FORMAT, schemaVersion: PROJECT_SCHEMA_VERSION, savedAt: new Date().toISOString(), project };
+  const document: ProjectDocumentV7 = { format: PROJECT_FORMAT, schemaVersion: PROJECT_SCHEMA_VERSION, savedAt: new Date().toISOString(), project };
   return JSON.stringify(document, null, 2);
 }
 
@@ -343,7 +382,7 @@ export function parseProjectDocument(text: string): { project: CadProject; schem
   if (!isRecord(raw)) throw new Error('Project document must be an object.');
   if (raw.format !== PROJECT_FORMAT) throw new Error('This file is not a CAD_CAM_3D project document.');
   const sourceSchemaVersion = raw.schemaVersion;
-  if (![1, 2, 3, 4, 5, PROJECT_SCHEMA_VERSION].includes(sourceSchemaVersion as number)) {
+  if (![1, 2, 3, 4, 5, 6, PROJECT_SCHEMA_VERSION].includes(sourceSchemaVersion as number)) {
     throw new Error(`Unsupported project schema version ${String(sourceSchemaVersion)}. Supported versions are 1 through ${PROJECT_SCHEMA_VERSION}.`);
   }
   return {
