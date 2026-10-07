@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import type { Mesh, OcctKernel, ShapeHandle } from 'occt-wasm';
-import type { CadProject, EdgeTreatmentSelection, FaceTopologyRef, FeaturePlacement } from './model';
+import type { CadProject, CutFeature, EdgeTreatmentSelection, FaceTopologyRef, FeaturePlacement, HoleFeature } from './model';
 import { rebuildProject, type RebuiltPart } from './rebuild';
 import { solveSketch } from './constraints';
 import {
@@ -576,7 +576,7 @@ function buildExactShape(kernel: OcctKernel, project: CadProject, rebuilt: Rebui
     }
 
     if (feature.kind === 'linear-pattern') {
-      const source = project.features.find((candidate) => (
+      const source = project.features.find((candidate): candidate is HoleFeature | CutFeature => (
         candidate.enabled
         && candidate.id === feature.params.sourceFeatureId
         && (candidate.kind === 'hole' || candidate.kind === 'cut')
