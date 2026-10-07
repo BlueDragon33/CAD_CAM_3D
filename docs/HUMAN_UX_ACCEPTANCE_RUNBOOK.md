@@ -1,6 +1,6 @@
 # CAD_CAM_3D Human UX Acceptance Runbook
 
-Status: **CONTINUATION AUTHORIZED; ALIGNED-SPLIT HUMAN GATE ACCEPTED 2026-10-08**
+Status: **CONTINUATION AUTHORIZED; FIT-CALIBRATION HUMAN GATE OPEN**
 Scope: current foundation branch `foundation/general-system`
 Purpose: verify premium usability and real-browser/slicer behavior that CI cannot prove.
 
@@ -132,6 +132,45 @@ Expected fail-closed behavior:
 Recorded result: **ACCEPT ALIGNED SPLIT 3MF** — Product Owner, 2026-10-08.
 
 This gate authorizes further work built on automatic registration geometry. It still does not authorize PR merge or Production.
+
+### 4C. Persisted registration clearance calibration — CURRENT HUMAN GATE
+
+This gate covers project-persisted registration clearance and its effect on Aligned Split 3MF.
+
+1. Keep the same simple `300 × 40 × 12 mm` single-axis split case with a 0.4 mm nozzle.
+2. In **Print readiness**, locate **Registration clearance / side**.
+3. With the field blank, confirm the UI states the uncalibrated default is **0.20 mm/side**.
+4. Run **Analyze Print** and note that Aligned Split uses about:
+   - 2.00 mm pin diameter;
+   - 0.20 mm/side clearance;
+   - 2.40 mm pocket diameter.
+5. Enter **0.30 mm** in Registration clearance / side.
+6. Confirm the prior manufacturing/split report disappears or otherwise requires **Analyze Print** again; stale evidence must not remain usable.
+7. Run **Analyze Print** again.
+8. Confirm the alignment text now reflects:
+   - 2.00 mm pin diameter;
+   - **0.30 mm/side clearance**;
+   - **2.60 mm pocket diameter**.
+9. Click **Save** and download the project.
+10. Reset or reopen the app, then **Open** that saved project.
+11. Confirm the calibration field still contains **0.30 mm**.
+12. Export **Aligned Split 3MF** and open it in Bambu Studio or OrcaSlicer.
+13. Confirm there are still two separate objects and the female pockets are visibly larger than in the 0.20 mm default case.
+14. Clear the calibration field.
+15. Confirm it returns to the documented default rather than storing an invented zero value.
+
+Required wording boundary:
+- calibrated value = recorded project manufacturing intent;
+- not a certified fit;
+- not a structural/watertight/press-fit guarantee.
+
+For this targeted gate, report one of:
+
+- **ACCEPT FIT CALIBRATION**
+- **ACCEPT FIT CALIBRATION WITH FINDINGS** + concrete issue(s)
+- **REJECT FIT CALIBRATION** + screenshot/error where practical
+
+This gate authorizes or blocks further work built on persisted fit calibration. It does not authorize PR merge or Production.
 
 ## 5. Recovery
 
