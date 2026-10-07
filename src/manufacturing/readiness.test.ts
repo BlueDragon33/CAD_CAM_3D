@@ -16,11 +16,30 @@ describe('manufacturing readiness foundation', () => {
       false,
     );
 
-    const finding = report.findings.find((entry) => entry.id === 'build-volume:exceeded');
+    const finding = report.findings.find((entry) => entry.id === 'build-volume:no-axis-aligned-fit');
     expect(finding?.level).toBe('blocker');
     expect(finding?.blocksExport).toBe(false);
     expect(report.exportBlocked).toBe(false);
     expect(report.selectedPrinterReady).toBe(false);
+  });
+
+  it('recommends a 90-degree axis-aligned orientation when the current orientation does not fit', () => {
+    const project = createDefaultProject();
+    project.printProfile.buildVolume = { width: 120, depth: 80, height: 200 };
+    const rebuilt = rebuildProject(project);
+    const report = evaluateManufacturingReadiness(
+      project,
+      rebuilt,
+      { width: 160, depth: 70, height: 100 },
+      'occt-wasm-v5',
+      true,
+    );
+
+    const finding = report.findings.find((entry) => entry.id === 'orientation:axis-aligned-fit');
+    expect(finding?.level).toBe('warning');
+    expect(report.recommendedOrientation).toMatchObject({ width: 100, depth: 70, height: 160 });
+    expect(report.selectedPrinterReady).toBe(true);
+    expect(report.exportBlocked).toBe(false);
   });
 
   it('warns when a through hole is below two nozzle diameters', () => {
