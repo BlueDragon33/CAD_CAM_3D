@@ -1,6 +1,6 @@
 # WP-E5 — Persisted Registration Fit Calibration
 
-Status: **ACTIVE**
+Status: **HUMAN GATE OPEN — AUTOMATED GATES PASS**
 Parent: `WP-E4A-VERIFIED-REGISTRATION-PINS`
 Blueprint zone: Floors 51–60 — Manufacturing Intelligence
 
@@ -85,3 +85,17 @@ Acceptance should verify:
 - browser save/open + aligned 3MF human check accepted;
 - schema v13 truth reflected in PR;
 - merge/Production remain separate authority.
+
+## Automated evidence
+
+- schema v1–v12 migration to v13: PASS;
+- schema v13 calibrated round-trip and invalid-range rejection: PASS;
+- default/calibrated fit-policy regression: PASS;
+- aligned split exact smoke regression: PASS;
+- TypeScript: PASS;
+- unit regression: PASS;
+- exact B-Rep smoke suite: PASS;
+- production build: PASS;
+- Preview Pages deployment: PASS.
+
+Human browser Save/Open + slicer verification remains required before WP-E5 is accepted.
