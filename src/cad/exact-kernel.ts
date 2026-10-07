@@ -663,6 +663,57 @@ function buildExactShape(kernel: OcctKernel, project: CadProject, rebuilt: Rebui
       continue;
     }
 
+    if (feature.kind === 'mirror') {
+      const source = project.features.find((candidate): candidate is HoleFeature | CutFeature => (
+        candidate.enabled && candidate.id === feature.params.sourceFeatureId
+        && (candidate.kind === 'hole' || candidate.kind === 'cut')
+      ));
+      if (!source) throw new Error(`${feature.name}: Mirror source Hole/Cut is unavailable during exact rebuild.`);
+
+      const faceBound = source.params.placement.mode === 'face';
+      if (faceBound !== (feature.params.plane.kind === 'face-local')) {
+        throw new Error(`${feature.name}: mirror plane family does not match source placement.`);
+      }
+
+      const reflect = (value: number) => feature.params.plane.offsetMm * 2 - value;
+      let tool: ShapeHandle;
+
+      if (source.params.placement.mode === 'face') {
+        const plane = feature.params.plane;
+        if (plane.kind !== 'face-local') throw new Error(`${feature.name}: expected face-local plane.`);
+        const placement = {
+          ...source.params.placement,
+          uMm: plane.axis === 'u' ? reflect(source.params.placement.uMm) : source.params.placement.uMm,
+          vMm: plane.axis === 'v' ? reflect(source.params.placement.vMm) : source.params.placement.vMm,
+        };
+        const resolved = resolveFaceBoundPlacement(kernel, shape, tracker, rebuilt, feature.name, placement, warnings);
+        if (!resolved) throw new Error(`${feature.name}: mirrored source face could not be resolved safely.`);
+        tool = source.kind === 'hole'
+          ? makeOrientedCylinderTool(kernel, source.params.diameter / 2, resolved.point, resolved.frame, rebuilt)
+          : makeOrientedBoxTool(kernel, source.params.width, source.params.depth, resolved.point, resolved.frame, rebuilt);
+      } else {
+        const plane = feature.params.plane;
+        if (plane.kind !== 'global') throw new Error(`${feature.name}: expected global plane.`);
+        const x = plane.axis === 'x' ? reflect(source.params.x) : source.params.x;
+        const z = plane.axis === 'z' ? reflect(source.params.z) : source.params.z;
+        if (source.kind === 'hole') {
+          tool = kernel.makeCylinder(source.params.diameter / 2, rebuilt.height + CUT_OVERRUN_MM * 2);
+          tool = kernel.translate(tool, x, z, -CUT_OVERRUN_MM);
+        } else {
+          tool = kernel.makeBox(source.params.width, source.params.depth, rebuilt.height + CUT_OVERRUN_MM * 2);
+          tool = kernel.translate(tool, x - source.params.width / 2, z - source.params.depth / 2, -CUT_OVERRUN_MM);
+        }
+      }
+
+      const before = currentFaceHashes(kernel, shape);
+      const evolution = kernel.cutWithHistory(shape, tool, before, HASH_UPPER_BOUND);
+      shape = evolution.result;
+      if (!kernel.isValid(shape)) throw new Error(`${feature.name}: mirrored instance produced an invalid exact body.`);
+      const after = currentFaceHashes(kernel, shape);
+      tracker.record(`${feature.id}:mirror`, 'mirror', before, after, evolution);
+      continue;
+    }
+
     const size = feature.kind === 'fillet' ? feature.params.radius : feature.params.distance;
     const amount = Math.max(0, Math.min(size, rebuilt.width / 2, rebuilt.depth / 2, rebuilt.height / 2));
     if (amount <= 0) continue;
