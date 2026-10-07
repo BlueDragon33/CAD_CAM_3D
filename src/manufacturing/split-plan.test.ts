@@ -32,6 +32,17 @@ describe('build-volume split planning', () => {
       endFromEnvelopeMinMm: 300,
       lengthMm: 150,
     });
+    expect(plan?.seams).toEqual([
+      expect.objectContaining({
+        normalAxis: 'X',
+        positionFromEnvelopeMinMm: 150,
+        negativePieceId: 'piece-x1-y1-z1',
+        positivePieceId: 'piece-x2-y1-z1',
+        envelopeContactAreaMm2: 480,
+        alignmentStrategy: 'none',
+        structuralAssessment: 'unassessed',
+      }),
+    ]);
     expect(plan?.geometryGenerationReady).toBe(false);
   });
 
@@ -46,6 +57,9 @@ describe('build-volume split planning', () => {
     expect(plan?.splitAxes.map((axis) => axis.segmentCount).sort()).toEqual([2, 2]);
     expect(plan?.pieces).toHaveLength(4);
     expect(new Set(plan?.pieces.map((piece) => piece.id)).size).toBe(4);
+    expect(plan?.seams).toHaveLength(4);
+    expect(new Set(plan?.seams.map((seam) => seam.id)).size).toBe(4);
+    expect(plan?.seams.every((seam) => seam.structuralAssessment === 'unassessed')).toBe(true);
   });
 
   it('selects the orientation that minimizes total piece count for a non-cubic printer', () => {
