@@ -61,6 +61,7 @@ export function planDesignInstruction(input: string, context: DesignPlannerConte
     if (values.some((value) => !Number.isFinite(value) || value <= 0)) {
       return {
         input,
+        sourceFingerprint,
         status: 'blocked',
         summary: 'Dimension update is invalid.',
         operations: [],
@@ -82,6 +83,7 @@ export function planDesignInstruction(input: string, context: DesignPlannerConte
     if (!rebuilt.hasSolid) {
       return {
         input,
+        sourceFingerprint,
         status: 'blocked',
         summary: result.message,
         operations: [],
