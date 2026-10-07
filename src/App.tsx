@@ -1,4 +1,4 @@
-import { FormEvent, useMemo, useRef, useState } from 'react';
+import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import {
   createDefaultProject,
   createFeature,
@@ -33,6 +33,7 @@ import { downloadProjectThreeMf, type ThreeMfExportReport } from './manufacturin
 import { Sketcher } from './components/Sketcher';
 import { Viewport } from './components/Viewport';
 import { defaultManagementPolicy, managementIdentity } from './management/policy';
+import { newestRecoverySnapshot, restoreRecoverySnapshot, saveRecoverySnapshot, type RecoverySnapshot } from './persistence/local-recovery';
 
 const featureLabels: Record<FeatureKind, string> = {
   sketch: 'Sketch', 'datum-axis': 'Datum Axis', extrude: 'Extrude', pad: 'Pad', pocket: 'Pocket', revolve: 'Revolve', cut: 'Cut', hole: 'Hole', fillet: 'Fillet', chamfer: 'Chamfer', shell: 'Shell', 'linear-pattern': 'Linear Pattern', mirror: 'Mirror',
@@ -51,12 +52,22 @@ function lastEnabledFeatureId(features: CadFeature[]) {
   return [...features].reverse().find((feature) => feature.enabled)?.id ?? null;
 }
 
+function initialRecoveryCandidate(): RecoverySnapshot | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    return newestRecoverySnapshot(window.localStorage);
+  } catch {
+    return null;
+  }
+}
+
 export default function App() {
   const [project, setProject] = useState<CadProject>(() => createDefaultProject());
   const [selectedFeatureId, setSelectedFeatureId] = useState<string | null>(() => project.features[1]?.id ?? project.features[0]?.id ?? null);
   const [topologySelection, setTopologySelection] = useState<TopologySelection | null>(null);
   const [command, setCommand] = useState('');
   const [status, setStatus] = useState('General CAD foundation ready.');
+  const [recoveryCandidate, setRecoveryCandidate] = useState<RecoverySnapshot | null>(() => initialRecoveryCandidate());
   const [lastExport, setLastExport] = useState<StlExportReport | null>(null);
   const [lastStepExport, setLastStepExport] = useState<StepExportReport | null>(null);
   const [lastThreeMfExport, setLastThreeMfExport] = useState<ThreeMfExportReport | null>(null);
@@ -74,6 +85,19 @@ export default function App() {
     () => selectedFeature?.kind === 'sketch' ? solveSketch(project, selectedFeature) : null,
     [project, selectedFeature],
   );
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+    const timer = window.setTimeout(() => {
+      try {
+        saveRecoverySnapshot(project, window.localStorage);
+      } catch {
+        // Recovery storage is best-effort. A quota/privacy-mode failure must not
+        // make the local CAD core unusable or overwrite the user's status.
+      }
+    }, 1200);
+    return () => window.clearTimeout(timer);
+  }, [project]);
 
   const setDimension = (key: keyof CadProject['dimensions'], raw: string) => {
     const value = clampDimension(Number(raw));
@@ -442,13 +466,31 @@ export default function App() {
     }
   };
 
+  const restoreRecovery = () => {
+    if (!recoveryCandidate) return;
+    try {
+      const restored = restoreRecoverySnapshot(recoveryCandidate);
+      setProject(restored.project);
+      setSelectedFeatureId(restored.project.features[1]?.id ?? restored.project.features[0]?.id ?? null);
+      setTopologySelection(null);
+      setLastExport(null);
+      setLastStepExport(null);
+      setLastThreeMfExport(null);
+      setManufacturingReport(null);
+      setRecoveryCandidate(null);
+      setStatus(`Recovered local autosave · ${recoveryCandidate.projectName} · ${new Date(recoveryCandidate.savedAt).toLocaleString()}.`);
+    } catch (error) {
+      setStatus(error instanceof Error ? `Recovery blocked: ${error.message}` : 'Recovery failed.');
+    }
+  };
+
   const openProject = async (file: File | undefined) => {
     if (!file) return;
     try {
       const loaded = await loadProjectFile(file);
       setProject(loaded.project);
       setSelectedFeatureId(loaded.project.features[1]?.id ?? loaded.project.features[0]?.id ?? null);
-      setTopologySelection(null); setLastExport(null); setLastStepExport(null); setLastThreeMfExport(null); setManufacturingReport(null);
+      setTopologySelection(null); setLastExport(null); setLastStepExport(null); setLastThreeMfExport(null); setManufacturingReport(null); setRecoveryCandidate(null);
       const migration = loaded.report.migrated ? ` · migrated schema v${loaded.report.sourceSchemaVersion} → v${loaded.report.schemaVersion}` : ` · schema v${loaded.report.schemaVersion}`;
       setStatus(`Project opened${migration} · ${loaded.report.fileName}.`);
     } catch (error) {
@@ -513,7 +555,7 @@ export default function App() {
 
   const reset = () => {
     const next = createDefaultProject();
-    setProject(next); setSelectedFeatureId(next.features[1]?.id ?? next.features[0]?.id ?? null); setTopologySelection(null); setLastExport(null); setLastStepExport(null); setLastThreeMfExport(null); setManufacturingReport(null); setStatus('Workspace reset.');
+    setProject(next); setSelectedFeatureId(next.features[1]?.id ?? next.features[0]?.id ?? null); setTopologySelection(null); setLastExport(null); setLastStepExport(null); setLastThreeMfExport(null); setManufacturingReport(null); setRecoveryCandidate(null); setStatus('Workspace reset.');
   };
 
   const handleTopologySelection = (selection: TopologySelection | null) => {
@@ -744,6 +786,7 @@ export default function App() {
           <span className="managed-badge" title={`${managementIdentity.appName} được quản lý dưới ${managementIdentity.controlPlane}`}>Managed · Quản trị Ứng dụng</span>
           <span className="kernel-badge" title={`Kernel id: ${activeCadKernel.id}`}>{activeCadKernel.label}</span>
           <button type="button" onClick={saveProject}>Save Project</button>
+          {recoveryCandidate ? <button type="button" onClick={restoreRecovery} title={`Local autosave from ${new Date(recoveryCandidate.savedAt).toLocaleString()}`}>Recover</button> : null}
           <button type="button" onClick={() => projectInputRef.current?.click()}>Open Project</button>
           <button type="button" onClick={() => void analyzePrint()} disabled={!rebuilt.hasSolid || manufacturingBusy}>{manufacturingBusy ? 'Analyzing…' : 'Analyze Print'}</button>
           <button type="button" onClick={() => void exportStl()} disabled={!rebuilt.hasSolid || stlBusy}>{stlBusy ? 'Building STL…' : 'Export STL'}</button>
