@@ -34,6 +34,19 @@ describe('registration fit policy', () => {
     expect(policy?.source).toBe('uncalibrated-default');
   });
 
+  it('uses persisted project calibration without changing the pin diameter heuristic', () => {
+    const project = createDefaultProject();
+    project.printProfile.nozzleMm = 0.4;
+    project.printProfile.fitCalibration.registrationClearancePerSideMm = 0.3;
+
+    const policy = deriveRegistrationFitPolicy(project.printProfile);
+
+    expect(policy?.source).toBe('project-calibrated');
+    expect(policy?.pinDiameterMm).toBe(2);
+    expect(policy?.clearancePerSideMm).toBe(0.3);
+    expect(policy?.pocketDiameterMm).toBe(2.6);
+  });
+
   it('fails closed for invalid nozzle data', () => {
     const project = createDefaultProject();
     project.printProfile.nozzleMm = 0;
