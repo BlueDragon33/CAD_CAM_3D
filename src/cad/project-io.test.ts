@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createDefaultProject, type DatumAxisFeature, type HoleFeature, type LinearPatternFeature, type MirrorFeature, type PadFeature, type ShellFeature, type SketchFeature } from './model';
+import { createDefaultProject, type DatumAxisFeature, type HoleFeature, type LinearPatternFeature, type MirrorFeature, type PadFeature, type RevolveFeature, type ShellFeature, type SketchFeature } from './model';
 import { parseProjectDocument, serializeProject } from './project-io';
 
 function baseDocument() {
@@ -12,7 +12,7 @@ function baseDocument() {
 }
 
 describe('project schema migration', () => {
-  for (const version of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]) {
+  for (const version of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]) {
     it(`loads schema v${version} into the current base-XZ sketch contract`, () => {
       const doc = baseDocument();
       doc.schemaVersion = version;
@@ -25,22 +25,22 @@ describe('project schema migration', () => {
       const parsed = parseProjectDocument(JSON.stringify(doc));
       const migratedSketch = parsed.project.features.find((feature): feature is SketchFeature => feature.kind === 'sketch')!;
       expect(parsed.sourceSchemaVersion).toBe(version);
-      expect(parsed.schemaVersion).toBe(11);
+      expect(parsed.schemaVersion).toBe(12);
       expect(parsed.migrated).toBe(true);
       expect(migratedSketch.params.plane).toEqual({ kind: 'base-xz' });
     });
   }
 
-  it('round-trips schema v11', () => {
+  it('round-trips schema v12', () => {
     const project = createDefaultProject();
     const parsed = parseProjectDocument(serializeProject(project));
-    expect(parsed.schemaVersion).toBe(11);
-    expect(parsed.sourceSchemaVersion).toBe(11);
+    expect(parsed.schemaVersion).toBe(12);
+    expect(parsed.sourceSchemaVersion).toBe(12);
     expect(parsed.migrated).toBe(false);
     expect(parsed.project.id).toBe(project.id);
   });
 
-  it('round-trips schema v11 Shell intent with durable opening references', () => {
+  it('round-trips schema v12 Shell intent with durable opening references', () => {
     const project = createDefaultProject();
     const shell: ShellFeature = {
       id: 'shell-1',
@@ -78,7 +78,7 @@ describe('project schema migration', () => {
     expect(() => parseProjectDocument(JSON.stringify(doc))).toThrow(/at least one face reference/i);
   });
 
-  it('round-trips schema v11 Datum Axis with durable source semantics', () => {
+  it('round-trips schema v12 Datum Axis with durable source semantics', () => {
     const project = createDefaultProject();
     const sketch = project.features.find((feature): feature is SketchFeature => feature.kind === 'sketch')!;
     const datum: DatumAxisFeature = {
@@ -106,7 +106,92 @@ describe('project schema migration', () => {
     expect(() => parseProjectDocument(JSON.stringify(doc))).toThrow(/earlier Sketch/i);
   });
 
-  it('round-trips schema v11 Linear Pattern without copying its source feature', () => {
+  it('round-trips schema v12 Revolve with one attached Sketch and local Datum Axis', () => {
+    const project = createDefaultProject();
+    const baseExtrude = project.features.find((feature) => feature.kind === 'extrude')!;
+    const attached: SketchFeature = {
+      id: 'sketch-revolve',
+      kind: 'sketch',
+      name: 'Sketch Revolve',
+      enabled: true,
+      params: {
+        plane: {
+          kind: 'face',
+          ref: {
+            kind: 'face',
+            lineageIds: [`${baseExtrude.id}:top`],
+            capturedAfterFeatureId: baseExtrude.id,
+            signature: { centroid: [0, 12, 0], normal: [0, 1, 0], areaMm2: 2400 },
+          },
+          originUMm: 0,
+          originVMm: 0,
+        },
+        profile: 'rectangle',
+        entities: [
+          { id: 'r1', kind: 'line', construction: false, start: { x: 8, z: 0 }, end: { x: 12, z: 0 } },
+          { id: 'r2', kind: 'line', construction: false, start: { x: 12, z: 0 }, end: { x: 12, z: 4 } },
+          { id: 'r3', kind: 'line', construction: false, start: { x: 12, z: 4 }, end: { x: 8, z: 4 } },
+          { id: 'r4', kind: 'line', construction: false, start: { x: 8, z: 4 }, end: { x: 8, z: 0 } },
+        ],
+        constraints: [],
+      },
+    };
+    const axis: DatumAxisFeature = {
+      id: 'axis-revolve',
+      kind: 'datum-axis',
+      name: 'Axis Revolve',
+      enabled: true,
+      params: { source: { kind: 'sketch-local', sketchId: attached.id, axis: 'u', offsetMm: 0 } },
+    };
+    const revolve: RevolveFeature = {
+      id: 'revolve-1',
+      kind: 'revolve',
+      name: 'Revolve 1',
+      enabled: true,
+      params: { sketchId: attached.id, axisId: axis.id, angleDeg: 270, operation: 'add' },
+    };
+    project.features.push(attached, axis, revolve);
+    const parsed = parseProjectDocument(serializeProject(project));
+    const loaded = parsed.project.features.find((feature): feature is RevolveFeature => feature.kind === 'revolve');
+    expect(loaded?.params).toEqual(revolve.params);
+  });
+
+  it('rejects Revolve when Datum Axis is missing or incompatible', () => {
+    const project = createDefaultProject();
+    const baseExtrude = project.features.find((feature) => feature.kind === 'extrude')!;
+    const attached: SketchFeature = {
+      id: 'sketch-revolve-invalid',
+      kind: 'sketch',
+      name: 'Sketch Revolve Invalid',
+      enabled: true,
+      params: {
+        plane: {
+          kind: 'face',
+          ref: {
+            kind: 'face',
+            lineageIds: [`${baseExtrude.id}:top`],
+            capturedAfterFeatureId: baseExtrude.id,
+            signature: { centroid: [0, 12, 0], normal: [0, 1, 0], areaMm2: 2400 },
+          },
+          originUMm: 0,
+          originVMm: 0,
+        },
+        profile: 'rectangle',
+        entities: [],
+        constraints: [],
+      },
+    };
+    project.features.push(attached, {
+      id: 'revolve-invalid',
+      kind: 'revolve',
+      name: 'Invalid Revolve',
+      enabled: true,
+      params: { sketchId: attached.id, axisId: 'missing-axis', angleDeg: 360, operation: 'add' },
+    } as RevolveFeature);
+    expect(() => parseProjectDocument(serializeProject(project))).toThrow(/Datum Axis/i);
+  });
+
+  it('round-trips schema v12 Linear Pattern without copying its source feature', () => {
     const project = createDefaultProject();
     const source: HoleFeature = {
       id: 'hole-source',
@@ -142,7 +227,7 @@ describe('project schema migration', () => {
     expect(() => parseProjectDocument(JSON.stringify(doc))).toThrow(/earlier Hole or Cut/i);
   });
 
-  it('round-trips schema v11 Mirror with an explicit symmetry plane', () => {
+  it('round-trips schema v12 Mirror with an explicit symmetry plane', () => {
     const project = createDefaultProject();
     const source: HoleFeature = {
       id: 'mirror-hole',
