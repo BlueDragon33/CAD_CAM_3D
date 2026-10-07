@@ -3,9 +3,10 @@ import { rebuildProject, type RebuiltPart } from '../cad/rebuild';
 import { activeCadKernel } from '../cad/kernel';
 import { buildExactKernelSnapshot } from '../cad/exact-kernel';
 import { projectRequiresExactGeometry } from '../cad/project-analysis';
+import { analyzeDownwardOverhang } from './geometry-analysis';
 
 export type ManufacturingFindingLevel = 'ok' | 'warning' | 'blocker';
-export type ManufacturingFindingCategory = 'geometry' | 'build-volume' | 'orientation' | 'feature-size' | 'wall' | 'design-intent' | 'kernel';
+export type ManufacturingFindingCategory = 'geometry' | 'build-volume' | 'orientation' | 'overhang' | 'feature-size' | 'wall' | 'design-intent' | 'kernel';
 
 export type ManufacturingFinding = {
   id: string;
@@ -237,6 +238,27 @@ export function evaluateManufacturingReadiness(
   return { kernelId, exact, dimensionsMm, recommendedOrientation, findings, exportBlocked, selectedPrinterReady };
 }
 
+function appendOverhangFinding(
+  report: ManufacturingReadinessReport,
+  geometry: import('three').BufferGeometry,
+) {
+  const overhang = analyzeDownwardOverhang(geometry, 45);
+  const meaningfulArea = Math.max(5, overhang.totalSurfaceAreaMm2 * 0.01);
+  if (overhang.downwardOverhangAreaMm2 >= meaningfulArea) {
+    report.findings.push(finding(
+      'overhang:downward-area',
+      'warning',
+      'overhang',
+      'Current orientation has approximately ' + overhang.downwardOverhangAreaMm2.toFixed(1)
+        + ' mm² of strongly downward-facing surface away from the build plane (45° heuristic).',
+      {
+        remedy: 'Review orientation and support strategy in the slicer. This CAD heuristic does not replace slicer-specific support analysis.',
+        blocksExport: false,
+      },
+    ));
+  }
+}
+
 export async function analyzeManufacturingReadiness(project: CadProject): Promise<ManufacturingReadinessReport> {
   const rebuilt = rebuildProject(project);
   if (!rebuilt.hasSolid) {
@@ -260,6 +282,7 @@ export async function analyzeManufacturingReadiness(project: CadProject): Promis
         true,
         snapshot.report.warnings,
       );
+      appendOverhangFinding(report, snapshot.geometry);
       if (!snapshot.report.valid) {
         report.findings.unshift(finding(
           'geometry:invalid-exact-brep',
@@ -293,13 +316,15 @@ export async function analyzeManufacturingReadiness(project: CadProject): Promis
     const dimensionsMm = box
       ? { width: box.max.x - box.min.x, depth: box.max.z - box.min.z, height: box.max.y - box.min.y }
       : { width: build.rebuilt.width, depth: build.rebuilt.depth, height: build.rebuilt.height };
-    return evaluateManufacturingReadiness(
+    const report = evaluateManufacturingReadiness(
       project,
       build.rebuilt,
       dimensionsMm,
       activeCadKernel.id,
       false,
     );
+    appendOverhangFinding(report, build.geometry);
+    return report;
   } finally {
     build.geometry?.dispose();
   }
