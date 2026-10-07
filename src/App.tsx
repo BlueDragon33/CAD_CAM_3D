@@ -33,7 +33,7 @@ import { Viewport } from './components/Viewport';
 import { defaultManagementPolicy, managementIdentity } from './management/policy';
 
 const featureLabels: Record<FeatureKind, string> = {
-  sketch: 'Sketch', extrude: 'Extrude', pad: 'Pad', pocket: 'Pocket', cut: 'Cut', hole: 'Hole', fillet: 'Fillet', chamfer: 'Chamfer', shell: 'Shell', 'linear-pattern': 'Linear Pattern',
+  sketch: 'Sketch', extrude: 'Extrude', pad: 'Pad', pocket: 'Pocket', cut: 'Cut', hole: 'Hole', fillet: 'Fillet', chamfer: 'Chamfer', shell: 'Shell', 'linear-pattern': 'Linear Pattern', mirror: 'Mirror',
 };
 
 function clampDimension(value: number, minimum = 0.1) {
@@ -167,6 +167,26 @@ export default function App() {
       );
       return;
     }
+    if (feature.kind === 'mirror') {
+      if (!selectedFeature || (selectedFeature.kind !== 'hole' && selectedFeature.kind !== 'cut')) {
+        setStatus('Mirror creation blocked: select an earlier Hole or Cut feature first.');
+        return;
+      }
+      const faceBound = selectedFeature.params.placement.mode === 'face';
+      feature = {
+        ...feature,
+        params: {
+          ...feature.params,
+          sourceFeatureId: selectedFeature.id,
+          plane: faceBound
+            ? { kind: 'face-local', axis: 'u', offsetMm: 0 }
+            : { kind: 'global', axis: 'x', offsetMm: 0 },
+        },
+      };
+      appendFeature(feature, `Mirror added from ${selectedFeature.name}. The source stays canonical; one exact reflected instance is derived.`);
+      return;
+    }
+
     if (feature.kind === 'linear-pattern') {
       if (!selectedFeature || (selectedFeature.kind !== 'hole' && selectedFeature.kind !== 'cut')) {
         setStatus('Linear Pattern creation blocked: select an earlier Hole or Cut feature first.');
@@ -525,6 +545,32 @@ export default function App() {
         <div className="topology-bind-actions"><button type="button" onClick={bindSelectedFeatureToFace} disabled={topologySelection?.kind !== 'face'}>Bind selected face</button><button type="button" onClick={useGlobalPlacement} disabled={!faceBound}>Use global X/Z</button></div>
       </div>;
     }
+    if (selectedFeature.kind === 'mirror') {
+      const source = project.features.find((feature) => feature.id === selectedFeature.params.sourceFeatureId);
+      const faceBound = source && (source.kind === 'hole' || source.kind === 'cut') && source.params.placement.mode === 'face';
+      return <div className="inspector-grid">
+        <div className="constraint-state" data-ready={Boolean(source)}>
+          <strong>{source ? `Source · ${source.name}` : 'Source missing'}</strong>
+          <small>Mirror derives one reflected instance; the source feature is not copied.</small>
+        </div>
+        <label><span>Plane</span><select value={selectedFeature.params.plane.axis} onChange={(e) => updateFeature(selectedFeature.id, (feature) => {
+          if (feature.kind !== 'mirror') return feature;
+          return { ...feature, params: { ...feature.params, plane: faceBound
+            ? { kind: 'face-local', axis: e.target.value as 'u' | 'v', offsetMm: feature.params.plane.offsetMm }
+            : { kind: 'global', axis: e.target.value as 'x' | 'z', offsetMm: feature.params.plane.offsetMm } } };
+        })}>
+          {faceBound ? <><option value="u">Local U</option><option value="v">Local V</option></> : <><option value="x">Global X</option><option value="z">Global Z</option></>}
+        </select></label>
+        <label><span>Offset</span><div><input type="number" step="0.1" value={selectedFeature.params.plane.offsetMm} onChange={(e) => updateFeature(selectedFeature.id, (feature) => feature.kind === 'mirror'
+          ? { ...feature, params: { ...feature.params, plane: { ...feature.params.plane, offsetMm: Number(e.target.value) || 0 } } }
+          : feature)} /><b>mm</b></div></label>
+        <div className="constraint-state" data-ready={exactKernelDescriptor.capabilities.mirror}>
+          <strong>Exact deterministic Mirror</strong>
+          <small>{faceBound ? 'Source-face-local plane' : 'Global symmetry plane'} · exact-kernel-only foundation.</small>
+        </div>
+      </div>;
+    }
+
     if (selectedFeature.kind === 'linear-pattern') {
       const source = project.features.find((feature) => feature.id === selectedFeature.params.sourceFeatureId);
       const faceBound = source && (source.kind === 'hole' || source.kind === 'cut') && source.params.placement.mode === 'face';
@@ -580,7 +626,7 @@ export default function App() {
       <section className="workspace">
         <aside className="panel tools-panel">
           <h2>Build</h2>
-          {(['sketch', 'extrude', 'pad', 'pocket', 'hole', 'cut', 'linear-pattern', 'fillet', 'chamfer', 'shell'] as FeatureKind[]).map((kind) => (
+          {(['sketch', 'extrude', 'pad', 'pocket', 'hole', 'cut', 'linear-pattern', 'mirror', 'fillet', 'chamfer', 'shell'] as FeatureKind[]).map((kind) => (
             <button key={kind} type="button" className="tool-button" onClick={() => addFeature(kind)}>
               <span>{featureLabels[kind]}</span>
               <small>{kind === 'sketch' && topologySelection?.kind === 'face'
@@ -589,7 +635,9 @@ export default function App() {
     ? 'Use selected Sketch'
     : (kind === 'fillet' || kind === 'chamfer') && topologySelection?.kind === 'edge'
       ? 'Use selected edge'
-      : kind === 'linear-pattern' && (selectedFeature?.kind === 'hole' || selectedFeature?.kind === 'cut')
+      : kind === 'mirror' && (selectedFeature?.kind === 'hole' || selectedFeature?.kind === 'cut')
+        ? 'Mirror selected feature'
+        : kind === 'linear-pattern' && (selectedFeature?.kind === 'hole' || selectedFeature?.kind === 'cut')
         ? 'Repeat selected feature'
         : kind === 'shell' && topologySelection?.kind === 'face'
         ? 'Open selected face'
@@ -636,7 +684,7 @@ export default function App() {
           {lastStepExport ? <div className="profile-card"><strong>Last STEP · {lastStepExport.valid ? 'PASS' : 'WARN'}</strong><span>{lastStepExport.faceCount} faces · {lastStepExport.edgeCount} edges · {(lastStepExport.byteLength / 1024).toFixed(1)} KB</span><small>Volume {lastStepExport.volumeMm3.toFixed(1)} mm³ · Surface {lastStepExport.surfaceAreaMm2.toFixed(1)} mm²</small><small>Kernel: {lastStepExport.kernelId}{lastStepExport.filletApplied ? ' · fillet' : ''}{lastStepExport.chamferApplied ? ' · chamfer' : ''}</small>{lastStepExport.warnings.length > 0 ? <small>{lastStepExport.warnings.join(' ')}</small> : null}</div> : null}
           <h2>Kernel</h2>
           <div className="profile-card"><strong>{activeCadKernel.label}</strong><span>{activeCadKernel.capabilities.exactBrep ? 'Exact B-Rep' : 'Fast deterministic mesh'} · STL {activeCadKernel.capabilities.stlExport ? 'ready' : 'off'}</span><small>Simple vertical features stay lightweight. Exact edge/face features promote preview/STL automatically.</small></div>
-          <div className="profile-card"><strong>{exactKernelDescriptor.label}</strong><span>Exact B-Rep · STEP/STL · Pad/Pocket · Fillet/Chamfer/Shell · Linear Pattern · face tools</span><small>Attached Sketches drive exact Pad/Pocket; durable edge refs drive Fillet/Chamfer; durable face refs drive Shell openings and oriented Hole/Cut; Linear Pattern derives repeated Hole/Cut instances without copying canonical source features.</small></div>
+          <div className="profile-card"><strong>{exactKernelDescriptor.label}</strong><span>Exact B-Rep · STEP/STL · Pad/Pocket · Fillet/Chamfer/Shell · Linear Pattern / Mirror · face tools</span><small>Attached Sketches drive exact Pad/Pocket; durable edge refs drive Fillet/Chamfer; durable face refs drive Shell openings and oriented Hole/Cut; Linear Pattern and Mirror derive repeated/symmetric Hole/Cut instances without copying canonical source features.</small></div>
           <h2>Management</h2>
           <div className="management-card"><strong>{managementIdentity.controlPlane}</strong><span>UI policy · feature flags · print policy</span><small>Project geometry and export files remain inside CAD_CAM_3D.</small></div>
         </aside>
