@@ -28,7 +28,7 @@ Exit gate: create, edit, save, reload and export a real parametric bracket/enclo
 
 ## Printable-part intelligence
 
-- Fillet, chamfer and exact inward Shell are implemented foundations; Pattern/Mirror is the next repeat/symmetry slice.
+- Fillet, chamfer, exact inward Shell, Linear Pattern and Mirror are implemented foundations; durable Datum Axis is the current axis-driven modeling foundation.
 - Printer and material profiles.
 - Minimum-wall and clearance checks.
 - Build-volume and orientation analysis.
@@ -63,8 +63,9 @@ Exit gate: domain templates create editable feature trees rather than fixed mesh
 ## Parametric breadth — active after Shell stabilization
 
 - Linear Pattern with deterministic source-feature reference and spacing/count.
-- Mirror with an explicit datum/plane contract rather than UI-only axis assumptions.
-- Revolve after durable datum axis semantics exist.
+- Mirror with an explicit datum/plane contract rather than UI-only axis assumptions — implemented foundation.
+- Durable Datum Axis tied to base-XZ or attached-sketch local coordinates — current foundation.
+- Revolve after Datum Axis persistence/rebuild evidence is accepted.
 - Sweep/Loft only after profile/plane/axis contracts are mature.
 
 Exit gate: repeated/symmetric geometry survives upstream edits, save/open and exact export without duplicating canonical feature intent.
