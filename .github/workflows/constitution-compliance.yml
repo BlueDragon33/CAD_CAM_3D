@@ -12,3 +12,27 @@ permissions:
 jobs:
   constitution:
     uses: BlueDragon33/Software-Blueprint-Hub/.github/workflows/constitution-compliance.yml@main
+
+  dependency-sovereignty:
+    name: Constitution 1.2 dependency sovereignty
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate portable CAD authority
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          a=json.loads(Path(".blueprint/constitution-adoption.json").read_text())
+          b=json.loads(Path(".blueprint/dependency-budget.json").read_text())
+          assert a["policyVersion"]=="1.2.0"
+          assert "operational-sovereignty-dependency-minimization" in a["inheritedPillars"]
+          assert b["policyVersion"]=="1.2.0"
+          assert b["projectId"]==a["projectId"]
+          assert b["posture"]=="LOCAL_CORE"
+          forbidden=set(b.get("forbidden",[]))
+          assert {"ai-owned-cad-model-truth","drive-as-parametric-model-authority","mandatory-paid-cloud-for-core-model-editing"} <= forbidden
+          print("CAD/CAM Constitution 1.2 portability sovereignty: PASS")
+          PY
