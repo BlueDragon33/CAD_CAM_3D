@@ -16,10 +16,10 @@ import type {
 import type { SketchEntity, SketchPoint2D } from './sketch';
 
 const PROJECT_FORMAT = 'cad-cam-3d-project';
-const PROJECT_SCHEMA_VERSION = 10;
+const PROJECT_SCHEMA_VERSION = 11;
 const materials = new Set<PrintProfile['material']>(['PLA', 'PETG', 'ABS', 'ASA', 'PA-CF', 'Other']);
 
-export type ProjectDocumentV10 = {
+export type ProjectDocumentV11 = {
   format: typeof PROJECT_FORMAT;
   schemaVersion: typeof PROJECT_SCHEMA_VERSION;
   savedAt: string;
@@ -335,6 +335,23 @@ function readFeature(value: unknown, index: number, sourceSchemaVersion: number)
       join: 'arc',
     } };
   }
+  if (kind === 'datum-axis') {
+    if (sourceSchemaVersion < 11) throw new Error(`${label} contains Datum Axis but schema ${sourceSchemaVersion} predates Datum Axis support.`);
+    if (!isRecord(params.source)) throw new Error(`${label}.params.source must be an object.`);
+    const sourceKind = readString(params.source, 'kind', `${label}.params.source.kind`);
+    const sketchId = readString(params.source, 'sketchId', `${label}.params.source.sketchId`);
+    const axis = readString(params.source, 'axis', `${label}.params.source.axis`);
+    const offsetMm = readNumber(params.source, 'offsetMm', `${label}.params.source.offsetMm`);
+    if (sourceKind === 'base-xz') {
+      if (axis !== 'x' && axis !== 'z') throw new Error(`${label}.params.source.axis must be x or z for base-xz Datum Axis.`);
+      return { id, kind, name, enabled, params: { source: { kind: 'base-xz', sketchId, axis, offsetMm } } };
+    }
+    if (sourceKind === 'sketch-local') {
+      if (axis !== 'u' && axis !== 'v') throw new Error(`${label}.params.source.axis must be u or v for sketch-local Datum Axis.`);
+      return { id, kind, name, enabled, params: { source: { kind: 'sketch-local', sketchId, axis, offsetMm } } };
+    }
+    throw new Error(`${label}.params.source.kind must be base-xz or sketch-local.`);
+  }
   if (kind === 'linear-pattern') {
     if (sourceSchemaVersion < 9) throw new Error(`${label} contains Linear Pattern but schema ${sourceSchemaVersion} predates Linear Pattern support.`);
     const axis = readString(params, 'axis', `${label}.params.axis`);
@@ -398,6 +415,18 @@ function validateFeatureReferences(features: CadFeature[]) {
         throw new Error(`${feature.name} must reference a face-attached sketch.`);
       }
     }
+    if (feature.kind === 'datum-axis') {
+      const source = seen.get(feature.params.source.sketchId);
+      if (!source || source.kind !== 'sketch') {
+        throw new Error(`${feature.name} must reference an earlier Sketch feature.`);
+      }
+      if (feature.params.source.kind === 'base-xz' && source.params.plane.kind !== 'base-xz') {
+        throw new Error(`${feature.name} base-xz axis must reference a base-XZ Sketch.`);
+      }
+      if (feature.params.source.kind === 'sketch-local' && source.params.plane.kind !== 'face') {
+        throw new Error(`${feature.name} sketch-local axis must reference a face-attached Sketch.`);
+      }
+    }
     if (feature.kind === 'linear-pattern') {
       const source = seen.get(feature.params.sourceFeatureId);
       if (!source || (source.kind !== 'hole' && source.kind !== 'cut')) {
@@ -447,7 +476,7 @@ function safeFileName(name: string) {
 }
 
 export function serializeProject(project: CadProject): string {
-  const document: ProjectDocumentV10 = { format: PROJECT_FORMAT, schemaVersion: PROJECT_SCHEMA_VERSION, savedAt: new Date().toISOString(), project };
+  const document: ProjectDocumentV11 = { format: PROJECT_FORMAT, schemaVersion: PROJECT_SCHEMA_VERSION, savedAt: new Date().toISOString(), project };
   return JSON.stringify(document, null, 2);
 }
 
@@ -457,7 +486,7 @@ export function parseProjectDocument(text: string): { project: CadProject; schem
   if (!isRecord(raw)) throw new Error('Project document must be an object.');
   if (raw.format !== PROJECT_FORMAT) throw new Error('This file is not a CAD_CAM_3D project document.');
   const sourceSchemaVersion = raw.schemaVersion;
-  if (![1, 2, 3, 4, 5, 6, 7, 8, 9, PROJECT_SCHEMA_VERSION].includes(sourceSchemaVersion as number)) {
+  if (![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, PROJECT_SCHEMA_VERSION].includes(sourceSchemaVersion as number)) {
     throw new Error(`Unsupported project schema version ${String(sourceSchemaVersion)}. Supported versions are 1 through ${PROJECT_SCHEMA_VERSION}.`);
   }
   return {
