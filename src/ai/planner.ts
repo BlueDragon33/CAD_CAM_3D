@@ -66,6 +66,7 @@ export function planDesignInstruction(input: string, context: DesignPlannerConte
       return {
         input,
         sourceFingerprint,
+        selectionFingerprint,
         status: 'blocked',
         summary: 'Dimension update is invalid.',
         operations: [],
@@ -89,6 +90,7 @@ export function planDesignInstruction(input: string, context: DesignPlannerConte
       return {
         input,
         sourceFingerprint,
+        selectionFingerprint,
         status: 'blocked',
         summary: result.message,
         operations: [],
