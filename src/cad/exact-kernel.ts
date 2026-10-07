@@ -27,7 +27,7 @@ import {
   placeCanonicalShapeOnFace,
   throughToolLength,
 } from './oriented-tool';
-import { makeExactBaseSolid, makeExactProfilePrism } from './exact-profile';
+import { makeExactBaseSolid, makeExactProfileFace, makeExactProfilePrism } from './exact-profile';
 import { resolveManufacturingProfileWithRegions } from './profile-region';
 
 const HASH_UPPER_BOUND = 2_147_483_647;
@@ -497,6 +497,49 @@ function buildExactShape(kernel: OcctKernel, project: CadProject, rebuilt: Rebui
       continue;
     }
 
+    if (feature.kind === 'revolve') {
+      const input = resolveAttachedSketchInput(
+        kernel,
+        shape,
+        tracker,
+        project,
+        rebuilt,
+        feature.name,
+        feature.params.sketchId,
+        warnings,
+      );
+      if (!input) continue;
+      if (input.profile.kind === 'region') {
+        throw new Error(`${feature.name}: exact Revolve foundation does not yet accept inner-hole regions.`);
+      }
+      const datum = project.features.find((candidate) => candidate.id === feature.params.axisId);
+      if (!datum || datum.kind !== 'datum-axis' || datum.params.source.kind !== 'sketch-local' || datum.params.source.sketchId !== feature.params.sketchId) {
+        throw new Error(`${feature.name}: referenced Datum Axis is missing or incompatible.`);
+      }
+
+      const face = makeExactProfileFace(kernel, input.profile);
+      const offset = datum.params.source.offsetMm;
+      const axis = datum.params.source.axis === 'u'
+        ? { point: { x: 0, y: offset, z: 0 }, direction: { x: 1, y: 0, z: 0 } }
+        : { point: { x: offset, y: 0, z: 0 }, direction: { x: 0, y: 1, z: 0 } };
+      let tool = kernel.revolve(face, axis, feature.params.angleDeg * Math.PI / 180);
+      tool = placeCanonicalShapeOnFace(kernel, tool, input.origin, input.frame);
+
+      const before = currentFaceHashes(kernel, shape);
+      try {
+        const evolution = kernel.fuseWithHistory(shape, tool, before, HASH_UPPER_BOUND);
+        shape = evolution.result;
+        if (!kernel.isValid(shape)) throw new Error('OpenCascade produced an invalid Revolve fusion.');
+        const after = currentFaceHashes(kernel, shape);
+        tracker.record(feature.id, 'revolve', before, after, evolution);
+      } catch (error) {
+        throw new Error(error instanceof Error
+          ? `${feature.name}: exact Revolve failed: ${error.message}`
+          : `${feature.name}: exact Revolve failed.`);
+      }
+      continue;
+    }
+
     if (feature.kind === 'shell') {
       const solid = singleSolid(kernel, shape);
       const openings = resolveShellOpeningHandles(
@@ -814,5 +857,6 @@ export const exactKernelDescriptor = {
     shell: true,
     linearPattern: true,
     mirror: true,
+    revolve: true,
   },
 };
