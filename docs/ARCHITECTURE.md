@@ -57,9 +57,9 @@ simple preview/STL       exact preview / STEP / STL
 
 ## Dual-kernel strategy
 
-`mesh-mvp-v1` handles direct base-profile extrusion and lightweight STL quickly. `occt-wasm-v5` is lazy-loaded for exact topology, exact edge treatments, oriented face features, attached planar Pad/Pocket, exact Shell, STEP, adaptive STL and promoted-profile Boolean operations.
+`mesh-mvp-v1` handles direct base-profile extrusion and lightweight STL quickly. `occt-wasm-v5` is lazy-loaded for exact topology, exact edge treatments, oriented face features, attached planar Pad/Pocket, exact Shell, deterministic Linear Pattern, STEP, adaptive STL and promoted-profile Boolean operations.
 
-`src/cad/project-analysis.ts` promotes models automatically when the fast kernel would be incomplete. Current exact triggers include Pad, Pocket, Shell, Fillet, Chamfer, non-horizontal face-bound Hole/Cut, and Hole/Cut on a promoted sketch profile.
+`src/cad/project-analysis.ts` promotes models automatically when the fast kernel would be incomplete. Current exact triggers include Pad, Pocket, Shell, Linear Pattern, Fillet, Chamfer, non-horizontal face-bound Hole/Cut, and Hole/Cut on a promoted sketch profile.
 
 ### Lightweight path
 
@@ -83,7 +83,8 @@ simple preview/STL       exact preview / STEP / STL
 - selected-edge and four-edge-preset Chamfer;
 - attached planar Sketch → Pad/Pocket using resolved local U/V/normal frames;
 - exact inward Shell from durable opening-face references;
-- topology evolution through Pad/Pocket/Hole/Cut/Fillet/Chamfer/Shell;
+- deterministic Linear Pattern deriving repeated Hole/Cut instances from one canonical source feature;
+- topology evolution through Pad/Pocket/Hole/Cut/Fillet/Chamfer/Shell/Linear Pattern;
 - exact face/edge picking and durable reference resolution;
 - exact preview tessellation;
 - adaptive STL + preflight;
@@ -165,7 +166,7 @@ For the named rectangle, manufacturing binding accepts descendants of the six pl
 
 ## Project persistence
 
-Current editable project schema is v8.
+Current editable project schema is v9.
 
 Migration chain:
 - v1: legacy Fillet selection + global Hole/Cut;
@@ -175,9 +176,10 @@ Migration chain:
 - v5: persisted Line/Circle/Arc entities, entity constraints and durable construction/manufacturing membership;
 - v6: durable sketch-plane references — legacy XZ sketches migrate to `{ kind: 'base-xz' }`, while new attached sketches persist a planar `FaceTopologyRef` plus local U/V origin;
 - v7: attached `Pad` and `Pocket` features persist a durable source Sketch ID and exact material-operation parameters;
-- v8: `Shell` persists wall thickness plus one or more durable opening-face references.
+- v8: `Shell` persists wall thickness plus one or more durable opening-face references;
+- v9: `Linear Pattern` persists an earlier Hole/Cut source feature ID, count, spacing and valid global/local axis.
 
-The loader accepts v1-v8 and validates supported fields before a project enters the workspace. Multi-loop region membership and side-face semantic lineage reuse stable entity IDs/flags; schema bumps are reserved for changes to durable project meaning such as SketchPlaneRef and Pad/Pocket.
+The loader accepts v1-v9 and validates supported fields before a project enters the workspace. Multi-loop region membership and side-face semantic lineage reuse stable entity IDs/flags; schema bumps are reserved for changes to durable project meaning such as SketchPlaneRef and Pad/Pocket.
 
 Project JSON, B-Rep and manufacturing files remain owned by CAD_CAM_3D and are not mirrored into Quản trị Ứng dụng.
 
@@ -197,6 +199,6 @@ Project JSON, B-Rep and manufacturing files remain owned by CAD_CAM_3D and are n
 
 ## Current foundation
 
-The project now supports deterministic feature history, schema-v8 persistence with v1-v7 migration, explicit five-state sketch constraint diagnostics, constrained interactive Line/Circle/Arc entities, closed-loop validation, explicit Line/Line+Arc/Circle region promotion, direct inner-hole classification, durable planar Sketch attachment, exact attached Pad/Pocket, exact Shell, mesh/OpenCascade parity gating, sketch-entity semantic side-face lineage, planar promoted-side Hole/Cut binding, lightweight and exact preview/STL paths, STEP, topology evolution, durable face/edge references, oriented planar-face Hole/Cut, exact Fillet, exact Chamfer and exact inward Shell.
+The project now supports deterministic feature history, schema-v9 persistence with v1-v8 migration, explicit five-state sketch constraint diagnostics, constrained interactive Line/Circle/Arc entities, closed-loop validation, explicit Line/Line+Arc/Circle region promotion, direct inner-hole classification, durable planar Sketch attachment, exact attached Pad/Pocket, exact Shell, deterministic Hole/Cut Linear Pattern, mesh/OpenCascade parity gating, sketch-entity semantic side-face lineage, planar promoted-side Hole/Cut binding, lightweight and exact preview/STL paths, STEP, topology evolution, durable face/edge references, oriented planar-face Hole/Cut, exact Fillet, exact Chamfer and exact inward Shell.
 
-The next modeling milestone after Shell stabilization is a high-value repeat/symmetry feature slice (Pattern/Mirror) behind explicit parametric contracts; solver maturity continues behind the same persisted sketch semantic model. Nested islands should only be enabled together with explicit island/multi-body semantics.
+The next modeling milestone after Linear Pattern is Mirror behind an explicit datum-plane contract; solver maturity continues behind the same persisted sketch semantic model. Nested islands should only be enabled together with explicit island/multi-body semantics.
