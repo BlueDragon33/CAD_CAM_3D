@@ -1,6 +1,6 @@
 # CAD_CAM_3D Human UX Acceptance Runbook
 
-Status: **CONTINUATION AUTHORIZED; SPLIT-3MF HUMAN GATE ACCEPTED 2026-10-07**
+Status: **CONTINUATION AUTHORIZED; ALIGNED-SPLIT HUMAN GATE OPEN**
 Scope: current foundation branch `foundation/general-system`
 Purpose: verify premium usability and real-browser/slicer behavior that CI cannot prove.
 
@@ -90,6 +90,52 @@ Fail closed expectations:
 Recorded result: **ACCEPT SPLIT 3MF** — Product Owner, 2026-10-07.
 
 This targeted decision authorizes further work built on split-export UX. It does not authorize PR merge or Production.
+
+### 4B. Verified registration pins → Aligned Split 3MF — CURRENT HUMAN GATE
+
+This gate covers the new optional registration-only alignment path. It does **not** reopen or replace the already accepted flat Split 3MF path.
+
+Use the same simple rectangular acceptance case first:
+
+1. Printer build volume: 256 × 256 × 256 mm.
+2. Part: approximately `300 × 40 × 12 mm`.
+3. Nozzle: `0.4 mm`.
+4. Click **Analyze Print**.
+5. Confirm the split card still offers **Export Split 3MF**.
+6. Confirm it also offers **Export Aligned Split 3MF** and explicitly says registration-only / no structural-strength claim.
+7. The current heuristic should show approximately:
+   - 2 registration pins;
+   - 2.00 mm pin diameter;
+   - 0.20 mm per-side clearance;
+   - 2.40 mm pocket diameter;
+   - 4.00 mm engagement.
+8. Click **Export Aligned Split 3MF**.
+9. The app must first verify full-material corridors. If verification fails, export must block rather than create floating/partial pins.
+10. Open the generated `*-split-aligned.3mf` in Bambu Studio or OrcaSlicer.
+11. Confirm there are still **two separately selectable objects**.
+12. Inspect the mating seam:
+    - one piece has two cylindrical male registration pins;
+    - the matching piece has two corresponding female pockets;
+    - pins/pockets are visibly aligned;
+    - geometry does not appear detached, self-intersecting, or broken.
+13. Use section/layer preview if needed to inspect the pockets.
+14. Confirm scale remains millimeters and CAD height remains slicer Z.
+15. Confirm the UI/file does not claim the pins are load-bearing, structural, waterproof, press-fit-certified, or a replacement for fasteners.
+
+Expected fail-closed behavior:
+
+- multi-axis grid split: no automatic registration-pin export;
+- seam envelope too small: no automatic registration-pin export;
+- a proposed pin crossing a hole/cut/void: corridor verification must block aligned export;
+- any invalid/disconnected post-Boolean piece: aligned export must block.
+
+For this targeted gate, report one of:
+
+- **ACCEPT ALIGNED SPLIT 3MF**
+- **ACCEPT ALIGNED SPLIT 3MF WITH FINDINGS** + concrete issue(s)
+- **REJECT ALIGNED SPLIT 3MF** + screenshot/error where practical
+
+This gate authorizes or blocks further work built on automatic registration geometry. It still does not authorize PR merge or Production.
 
 ## 5. Recovery
 
