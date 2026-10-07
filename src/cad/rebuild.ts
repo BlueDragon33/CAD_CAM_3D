@@ -6,6 +6,7 @@ import type {
   FilletFeature,
   HoleFeature,
   LinearPatternFeature,
+  MirrorFeature,
   PadFeature,
   PocketFeature,
   ShellFeature,
@@ -23,7 +24,7 @@ export type RebuildDiagnostic = {
   message: string;
 };
 
-export type SolidOperationFeature = PadFeature | PocketFeature | HoleFeature | CutFeature | FilletFeature | ChamferFeature | ShellFeature | LinearPatternFeature;
+export type SolidOperationFeature = PadFeature | PocketFeature | HoleFeature | CutFeature | FilletFeature | ChamferFeature | ShellFeature | LinearPatternFeature | MirrorFeature;
 
 export type RebuiltPart = {
   width: number;
@@ -276,6 +277,41 @@ export function rebuildProject(project: CadProject): RebuiltPart {
         level: 'info',
         featureId: feature.id,
         message: `Linear Pattern will derive ${feature.params.count - 1} additional ${source.kind} instance(s) from ${source.name} at ${feature.params.spacingMm.toFixed(2)} mm spacing on ${feature.params.axis.toUpperCase()}.`,
+      });
+      continue;
+    }
+
+    if (feature.kind === 'mirror') {
+      if (!hasSolid) {
+        diagnostics.push({ level: 'error', featureId: feature.id, message: 'Mirror requires an existing solid.' });
+        continue;
+      }
+      const source = repeatableFeaturesById.get(feature.params.sourceFeatureId);
+      if (!source) {
+        diagnostics.push({ level: 'error', featureId: feature.id, message: 'Mirror requires an enabled earlier Hole or Cut source feature.' });
+        continue;
+      }
+      const faceBound = source.params.placement.mode === 'face';
+      const planeMatches = faceBound
+        ? feature.params.plane.kind === 'face-local'
+        : feature.params.plane.kind === 'global';
+      if (!planeMatches) {
+        diagnostics.push({
+          level: 'error',
+          featureId: feature.id,
+          message: faceBound
+            ? 'Face-bound Mirror must use a source-face-local U/V plane.'
+            : 'Global Mirror must use a global X/Z plane.',
+        });
+        continue;
+      }
+      operationSequence.push(feature);
+      diagnostics.push({
+        level: 'info',
+        featureId: feature.id,
+        message: feature.params.plane.kind === 'global'
+          ? `Mirror will derive one ${source.kind} instance across ${feature.params.plane.axis.toUpperCase()}=${feature.params.plane.offsetMm.toFixed(2)} mm.`
+          : `Mirror will derive one ${source.kind} instance across local ${feature.params.plane.axis.toUpperCase()}=${feature.params.plane.offsetMm.toFixed(2)} mm on the source face.`,
       });
       continue;
     }
