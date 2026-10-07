@@ -41,6 +41,29 @@ function circleFace(kernel: OcctKernel, center: { x: number; z: number }, radius
   return kernel.makeFace(wire);
 }
 
+
+function rectangleFace(kernel: OcctKernel, width: number, depth: number) {
+  const halfWidth = width / 2;
+  const halfDepth = depth / 2;
+  return pathFace(kernel, [
+    { kind: 'line', entityId: 'rectangle:0', start: { x: -halfWidth, z: -halfDepth }, end: { x: halfWidth, z: -halfDepth } },
+    { kind: 'line', entityId: 'rectangle:1', start: { x: halfWidth, z: -halfDepth }, end: { x: halfWidth, z: halfDepth } },
+    { kind: 'line', entityId: 'rectangle:2', start: { x: halfWidth, z: halfDepth }, end: { x: -halfWidth, z: halfDepth } },
+    { kind: 'line', entityId: 'rectangle:3', start: { x: -halfWidth, z: halfDepth }, end: { x: -halfWidth, z: -halfDepth } },
+  ]);
+}
+
+/** Build one simple canonical profile face in local XY for axis-driven features. */
+export function makeExactProfileFace(kernel: OcctKernel, profile: ResolvedManufacturingProfile) {
+  if (profile.kind === 'region') {
+    throw new Error('Axis-driven simple profile face does not yet accept inner-hole regions.');
+  }
+  if (profile.kind === 'rectangle') return rectangleFace(kernel, profile.width, profile.depth);
+  return profile.kind === 'circle'
+    ? circleFace(kernel, profile.center, profile.radiusMm)
+    : pathFace(kernel, profile.segments);
+}
+
 function loopFace(kernel: OcctKernel, loop: ManufacturingLoop) {
   return loop.kind === 'circle'
     ? circleFace(kernel, loop.center, loop.radiusMm)
