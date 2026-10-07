@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
-import { createThreeMfModelXml, createThreeMfPackageFromGeometry } from './three-mf';
+import { createThreeMfModelXml, createThreeMfModelXmlFromObjects, createThreeMfPackageFromGeometries, createThreeMfPackageFromGeometry } from './three-mf';
 
 function storedZipEntryNames(bytes: Uint8Array) {
   const names: string[] = [];
@@ -35,6 +35,37 @@ describe('portable 3MF export', () => {
     expect(xml).toContain('<vertex x="1" y="-3" z="2"/>');
     expect(xml).toContain('<triangle v1="0" v2="1" v3="2"/>');
     geometry.dispose();
+  });
+
+  it('writes multiple Core 3MF objects and build items without merging piece geometry', () => {
+    const left = new THREE.BoxGeometry(10, 8, 6);
+    const right = new THREE.BoxGeometry(12, 8, 6);
+    right.translate(20, 0, 0);
+
+    const xml = createThreeMfModelXmlFromObjects('split-part', [
+      { name: 'piece-x1-y1-z1', geometry: left },
+      { name: 'piece-x2-y1-z1', geometry: right },
+    ]);
+
+    expect(xml).toContain('<object id="1" type="model" name="piece-x1-y1-z1">');
+    expect(xml).toContain('<object id="2" type="model" name="piece-x2-y1-z1">');
+    expect(xml).toContain('<item objectid="1"/>');
+    expect(xml).toContain('<item objectid="2"/>');
+
+    const { report } = createThreeMfPackageFromGeometries(
+      'split-part',
+      [
+        { name: 'piece-x1-y1-z1', geometry: left },
+        { name: 'piece-x2-y1-z1', geometry: right },
+      ],
+      'occt-wasm-v5',
+    );
+    expect(report.objectCount).toBe(2);
+    expect(report.valid).toBe(true);
+    expect(report.triangleCount).toBeGreaterThan(0);
+
+    left.dispose();
+    right.dispose();
   });
 
   it('packages the required OPC/3MF entries without an external ZIP dependency', async () => {

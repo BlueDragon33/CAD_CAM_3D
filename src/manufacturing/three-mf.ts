@@ -11,7 +11,7 @@ export type ThreeMfExportReport = StlInspection & {
   byteLength: number;
   kernelId: string;
   warnings: string[];
-  objectCount: 1;
+  objectCount: number;
   unit: 'millimeter';
 };
 
@@ -48,13 +48,18 @@ function numberText(value: number) {
   return Number(normalized.toFixed(9)).toString();
 }
 
-export function createThreeMfModelXml(projectName: string, geometry: THREE.BufferGeometry) {
-  const position = geometry.getAttribute('position');
-  if (!position) throw new Error('3MF export requires a position attribute.');
-  const index = geometry.getIndex();
+export type ThreeMfMeshObject = {
+  name: string;
+  geometry: THREE.BufferGeometry;
+};
+
+function meshObjectXml(object: ThreeMfMeshObject, objectId: number) {
+  const position = object.geometry.getAttribute('position');
+  if (!position) throw new Error(`3MF object "${object.name}" requires a position attribute.`);
+  const index = object.geometry.getIndex();
   const triangleVertexCount = index?.count ?? position.count;
   if (triangleVertexCount === 0 || triangleVertexCount % 3 !== 0) {
-    throw new Error('3MF export requires a non-empty triangle mesh.');
+    throw new Error(`3MF object "${object.name}" requires a non-empty triangle mesh.`);
   }
 
   const vertices: string[] = [];
@@ -75,25 +80,80 @@ export function createThreeMfModelXml(projectName: string, geometry: THREE.Buffe
     );
   }
 
+  return '<object id="' + objectId + '" type="model" name="' + escapeXml(object.name) + '"><mesh><vertices>'
+    + vertices.join('')
+    + '</vertices><triangles>'
+    + triangles.join('')
+    + '</triangles></mesh></object>';
+}
+
+export function createThreeMfModelXmlFromObjects(
+  projectName: string,
+  objects: readonly ThreeMfMeshObject[],
+) {
+  if (objects.length === 0) throw new Error('3MF export requires at least one object.');
+  const resources = objects.map((object, index) => meshObjectXml(object, index + 1)).join('');
+  const build = objects.map((_, index) => '<item objectid="' + (index + 1) + '"/>').join('');
+
   return '<?xml version="1.0" encoding="UTF-8"?>'
     + '<model unit="millimeter" xml:lang="en-US" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">'
     + '<metadata name="Title">' + escapeXml(projectName) + '</metadata>'
     + '<metadata name="Application">CAD_CAM_3D</metadata>'
-    + '<resources><object id="1" type="model"><mesh><vertices>'
-    + vertices.join('')
-    + '</vertices><triangles>'
-    + triangles.join('')
-    + '</triangles></mesh></object></resources>'
-    + '<build><item objectid="1"/></build></model>';
+    + '<resources>' + resources + '</resources>'
+    + '<build>' + build + '</build></model>';
 }
 
-export function createThreeMfPackageFromGeometry(
+export function createThreeMfModelXml(projectName: string, geometry: THREE.BufferGeometry) {
+  return createThreeMfModelXmlFromObjects(projectName, [{ name: projectName, geometry }]);
+}
+
+function inspectGeometryObjects(objects: readonly ThreeMfMeshObject[]): StlInspection {
+  const inspections = objects.map((object) => ({ object, inspection: inspectGeometry(object.geometry) }));
+  const bounds = new THREE.Box3();
+  let hasBounds = false;
+  for (const { object } of inspections) {
+    object.geometry.computeBoundingBox();
+    if (object.geometry.boundingBox) {
+      if (!hasBounds) {
+        bounds.copy(object.geometry.boundingBox);
+        hasBounds = true;
+      } else {
+        bounds.union(object.geometry.boundingBox);
+      }
+    }
+  }
+  const size = new THREE.Vector3();
+  if (hasBounds) bounds.getSize(size);
+
+  const messages: string[] = [];
+  for (const { object, inspection } of inspections) {
+    for (const message of inspection.messages) {
+      if (!inspection.valid || !message.startsWith('Closed triangle mesh passed')) {
+        messages.push(`${object.name}: ${message}`);
+      }
+    }
+  }
+  if (messages.length === 0) messages.push(`${objects.length} closed object mesh(es) passed the 3MF preflight checks.`);
+
+  return {
+    triangleCount: inspections.reduce((sum, entry) => sum + entry.inspection.triangleCount, 0),
+    degenerateTriangles: inspections.reduce((sum, entry) => sum + entry.inspection.degenerateTriangles, 0),
+    nonManifoldEdges: inspections.reduce((sum, entry) => sum + entry.inspection.nonManifoldEdges, 0),
+    finiteCoordinates: inspections.every((entry) => entry.inspection.finiteCoordinates),
+    dimensionsMm: { width: size.x, depth: size.z, height: size.y },
+    valid: inspections.every((entry) => entry.inspection.valid),
+    messages,
+  };
+}
+
+export function createThreeMfPackageFromGeometries(
   projectName: string,
-  geometry: THREE.BufferGeometry,
+  objects: readonly ThreeMfMeshObject[],
   kernelId: string,
   warnings: string[] = [],
 ) {
-  const inspection = inspectGeometry(geometry);
+  if (objects.length === 0) throw new Error('3MF export requires at least one object.');
+  const inspection = inspectGeometryObjects(objects);
   if (!inspection.finiteCoordinates || inspection.triangleCount === 0) {
     throw new Error(inspection.messages.join(' '));
   }
@@ -109,7 +169,7 @@ export function createThreeMfPackageFromGeometry(
     + '<Relationship Target="/3D/3dmodel.model" Id="rel0" Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/>'
     + '</Relationships>';
 
-  const model = createThreeMfModelXml(projectName, geometry);
+  const model = createThreeMfModelXmlFromObjects(projectName, objects);
   const zip = createStoredZip([
     { name: '[Content_Types].xml', data: utf8(contentTypes) },
     { name: '_rels/.rels', data: utf8(relationships) },
@@ -125,11 +185,25 @@ export function createThreeMfPackageFromGeometry(
     fileName,
     byteLength: blob.size,
     kernelId,
-    warnings: [...inspection.messages.filter((message) => !message.startsWith('Closed triangle mesh passed')), ...warnings],
-    objectCount: 1,
+    warnings: [...inspection.messages.filter((message) => !message.includes('passed the 3MF preflight checks')), ...warnings],
+    objectCount: objects.length,
     unit: 'millimeter',
   };
   return { blob, report };
+}
+
+export function createThreeMfPackageFromGeometry(
+  projectName: string,
+  geometry: THREE.BufferGeometry,
+  kernelId: string,
+  warnings: string[] = [],
+) {
+  return createThreeMfPackageFromGeometries(
+    projectName,
+    [{ name: projectName, geometry }],
+    kernelId,
+    warnings,
+  );
 }
 
 async function adaptiveGeometry(project: CadProject) {
