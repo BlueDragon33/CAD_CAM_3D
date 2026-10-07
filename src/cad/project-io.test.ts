@@ -35,7 +35,7 @@ describe('project schema migration', () => {
     const project = createDefaultProject();
     const parsed = parseProjectDocument(serializeProject(project));
     expect(parsed.schemaVersion).toBe(11);
-    expect(parsed.sourceSchemaVersion).toBe(10);
+    expect(parsed.sourceSchemaVersion).toBe(11);
     expect(parsed.migrated).toBe(false);
     expect(parsed.project.id).toBe(project.id);
   });
