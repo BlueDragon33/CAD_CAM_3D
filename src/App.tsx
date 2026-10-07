@@ -33,7 +33,7 @@ import { Viewport } from './components/Viewport';
 import { defaultManagementPolicy, managementIdentity } from './management/policy';
 
 const featureLabels: Record<FeatureKind, string> = {
-  sketch: 'Sketch', extrude: 'Extrude', pad: 'Pad', pocket: 'Pocket', cut: 'Cut', hole: 'Hole', fillet: 'Fillet', chamfer: 'Chamfer', shell: 'Shell',
+  sketch: 'Sketch', extrude: 'Extrude', pad: 'Pad', pocket: 'Pocket', cut: 'Cut', hole: 'Hole', fillet: 'Fillet', chamfer: 'Chamfer', shell: 'Shell', 'linear-pattern': 'Linear Pattern',
 };
 
 function clampDimension(value: number, minimum = 0.1) {
@@ -164,6 +164,26 @@ export default function App() {
         feature.kind === 'pad'
           ? 'Pad added from the selected attached Sketch. Exact preview/STL/STEP will fuse the promoted profile along the resolved face normal.'
           : 'Pocket added from the selected attached Sketch. Exact preview/STL/STEP will remove the promoted profile inward from the resolved face.',
+      );
+      return;
+    }
+    if (feature.kind === 'linear-pattern') {
+      if (!selectedFeature || (selectedFeature.kind !== 'hole' && selectedFeature.kind !== 'cut')) {
+        setStatus('Linear Pattern creation blocked: select an earlier Hole or Cut feature first.');
+        return;
+      }
+      const faceBound = selectedFeature.params.placement.mode === 'face';
+      feature = {
+        ...feature,
+        params: {
+          ...feature.params,
+          sourceFeatureId: selectedFeature.id,
+          axis: faceBound ? 'u' : 'x',
+        },
+      };
+      appendFeature(
+        feature,
+        `Linear Pattern added from ${selectedFeature.name}. Count includes the original source; exact rebuild creates the remaining instances.`,
       );
       return;
     }
@@ -505,6 +525,25 @@ export default function App() {
         <div className="topology-bind-actions"><button type="button" onClick={bindSelectedFeatureToFace} disabled={topologySelection?.kind !== 'face'}>Bind selected face</button><button type="button" onClick={useGlobalPlacement} disabled={!faceBound}>Use global X/Z</button></div>
       </div>;
     }
+    if (selectedFeature.kind === 'linear-pattern') {
+      const source = project.features.find((feature) => feature.id === selectedFeature.params.sourceFeatureId);
+      const faceBound = source && (source.kind === 'hole' || source.kind === 'cut') && source.params.placement.mode === 'face';
+      return <div className="inspector-grid">
+        <div className="constraint-state" data-ready={Boolean(source)}>
+          <strong>{source ? `Source · ${source.name}` : 'Source missing'}</strong>
+          <small>Derived instances are not copied into CadProject.</small>
+        </div>
+        <label><span>Count</span><div><input type="number" min="2" max="64" step="1" value={selectedFeature.params.count} onChange={(e) => updateFeature(selectedFeature.id, (feature) => feature.kind === 'linear-pattern' ? { ...feature, params: { ...feature.params, count: Math.min(64, Math.max(2, Math.round(Number(e.target.value) || 2))) } } : feature)} /><b>×</b></div></label>
+        <label><span>Spacing</span><div><input type="number" min="0.1" step="0.1" value={selectedFeature.params.spacingMm} onChange={(e) => updateFeature(selectedFeature.id, (feature) => feature.kind === 'linear-pattern' ? { ...feature, params: { ...feature.params, spacingMm: numberValue(e.target.value, 0.1) } } : feature)} /><b>mm</b></div></label>
+        <label><span>Axis</span><select value={selectedFeature.params.axis} onChange={(e) => updateFeature(selectedFeature.id, (feature) => feature.kind === 'linear-pattern' ? { ...feature, params: { ...feature.params, axis: e.target.value as 'x' | 'z' | 'u' | 'v' } } : feature)}>
+          {faceBound ? <><option value="u">Local U</option><option value="v">Local V</option></> : <><option value="x">Global X</option><option value="z">Global Z</option></>}
+        </select></label>
+        <div className="constraint-state" data-ready={exactKernelDescriptor.capabilities.linearPattern}>
+          <strong>Exact deterministic pattern</strong>
+          <small>{selectedFeature.params.count - 1} derived instance(s) · exact-kernel-only foundation.</small>
+        </div>
+      </div>;
+    }
     if (selectedFeature.kind === 'shell') return <div className="inspector-grid">
       <label><span>Thickness</span><div><input type="number" min="0.1" step="0.1" value={selectedFeature.params.thicknessMm} onChange={(e) => updateFeature(selectedFeature.id, (feature) => feature.kind === 'shell' ? { ...feature, params: { ...feature.params, thicknessMm: numberValue(e.target.value, 0.1) } } : feature)} /><b>mm</b></div></label>
       <div className="constraint-state" data-ready={exactKernelDescriptor.capabilities.shell}>
@@ -541,7 +580,7 @@ export default function App() {
       <section className="workspace">
         <aside className="panel tools-panel">
           <h2>Build</h2>
-          {(['sketch', 'extrude', 'pad', 'pocket', 'hole', 'cut', 'fillet', 'chamfer', 'shell'] as FeatureKind[]).map((kind) => (
+          {(['sketch', 'extrude', 'pad', 'pocket', 'hole', 'cut', 'linear-pattern', 'fillet', 'chamfer', 'shell'] as FeatureKind[]).map((kind) => (
             <button key={kind} type="button" className="tool-button" onClick={() => addFeature(kind)}>
               <span>{featureLabels[kind]}</span>
               <small>{kind === 'sketch' && topologySelection?.kind === 'face'
@@ -550,7 +589,9 @@ export default function App() {
     ? 'Use selected Sketch'
     : (kind === 'fillet' || kind === 'chamfer') && topologySelection?.kind === 'edge'
       ? 'Use selected edge'
-      : kind === 'shell' && topologySelection?.kind === 'face'
+      : kind === 'linear-pattern' && (selectedFeature?.kind === 'hole' || selectedFeature?.kind === 'cut')
+        ? 'Repeat selected feature'
+        : kind === 'shell' && topologySelection?.kind === 'face'
         ? 'Open selected face'
         : (kind === 'hole' || kind === 'cut') && topologySelection?.kind === 'face'
           ? 'Use selected face'
@@ -595,7 +636,7 @@ export default function App() {
           {lastStepExport ? <div className="profile-card"><strong>Last STEP · {lastStepExport.valid ? 'PASS' : 'WARN'}</strong><span>{lastStepExport.faceCount} faces · {lastStepExport.edgeCount} edges · {(lastStepExport.byteLength / 1024).toFixed(1)} KB</span><small>Volume {lastStepExport.volumeMm3.toFixed(1)} mm³ · Surface {lastStepExport.surfaceAreaMm2.toFixed(1)} mm²</small><small>Kernel: {lastStepExport.kernelId}{lastStepExport.filletApplied ? ' · fillet' : ''}{lastStepExport.chamferApplied ? ' · chamfer' : ''}</small>{lastStepExport.warnings.length > 0 ? <small>{lastStepExport.warnings.join(' ')}</small> : null}</div> : null}
           <h2>Kernel</h2>
           <div className="profile-card"><strong>{activeCadKernel.label}</strong><span>{activeCadKernel.capabilities.exactBrep ? 'Exact B-Rep' : 'Fast deterministic mesh'} · STL {activeCadKernel.capabilities.stlExport ? 'ready' : 'off'}</span><small>Simple vertical features stay lightweight. Exact edge/face features promote preview/STL automatically.</small></div>
-          <div className="profile-card"><strong>{exactKernelDescriptor.label}</strong><span>Exact B-Rep · STEP/STL · Pad/Pocket · Fillet/Chamfer/Shell · face tools</span><small>Attached Sketches drive exact Pad/Pocket; durable edge refs drive Fillet/Chamfer; durable face refs drive Shell openings and oriented Hole/Cut.</small></div>
+          <div className="profile-card"><strong>{exactKernelDescriptor.label}</strong><span>Exact B-Rep · STEP/STL · Pad/Pocket · Fillet/Chamfer/Shell · Linear Pattern · face tools</span><small>Attached Sketches drive exact Pad/Pocket; durable edge refs drive Fillet/Chamfer; durable face refs drive Shell openings and oriented Hole/Cut; Linear Pattern derives repeated Hole/Cut instances without copying canonical source features.</small></div>
           <h2>Management</h2>
           <div className="management-card"><strong>{managementIdentity.controlPlane}</strong><span>UI policy · feature flags · print policy</span><small>Project geometry and export files remain inside CAD_CAM_3D.</small></div>
         </aside>
