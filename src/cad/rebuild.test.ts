@@ -3,6 +3,7 @@ import {
   createDefaultProject,
   type HoleFeature,
   type LinearPatternFeature,
+  type MirrorFeature,
 } from './model';
 import { rebuildProject } from './rebuild';
 
@@ -94,5 +95,39 @@ describe('semantic rebuild Linear Pattern', () => {
     const rebuilt = rebuildProject(project);
     expect(rebuilt.operationSequence.at(-1)?.kind).toBe('linear-pattern');
     expect(rebuilt.diagnostics.some((item) => item.level === 'error' && item.featureId === pattern.id)).toBe(false);
+  });  it('accepts a global Mirror only when the source placement uses global coordinates', () => {
+    const project = createDefaultProject();
+    const source = globalHole();
+    const mirror: MirrorFeature = {
+      id: 'mirror-1',
+      kind: 'mirror',
+      name: 'Mirror 1',
+      enabled: true,
+      params: { sourceFeatureId: source.id, plane: { kind: 'global', axis: 'x', offsetMm: 0 } },
+    };
+    project.features.push(source, mirror);
+
+    const rebuilt = rebuildProject(project);
+    expect(rebuilt.operationSequence.map((feature) => feature.kind)).toEqual(['hole', 'mirror']);
+    expect(rebuilt.diagnostics.some((item) => item.level === 'error' && item.featureId === mirror.id)).toBe(false);
   });
+
+  it('rejects face-local Mirror plane for a global source', () => {
+    const project = createDefaultProject();
+    const source = globalHole();
+    const mirror: MirrorFeature = {
+      id: 'mirror-invalid',
+      kind: 'mirror',
+      name: 'Invalid Mirror',
+      enabled: true,
+      params: { sourceFeatureId: source.id, plane: { kind: 'face-local', axis: 'u', offsetMm: 0 } },
+    };
+    project.features.push(source, mirror);
+
+    const rebuilt = rebuildProject(project);
+    expect(rebuilt.operationSequence.map((feature) => feature.kind)).toEqual(['hole']);
+    expect(rebuilt.diagnostics.some((item) => item.level === 'error' && item.featureId === mirror.id)).toBe(true);
+  });
+
+
 });
