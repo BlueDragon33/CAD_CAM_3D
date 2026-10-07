@@ -1,6 +1,6 @@
 # WP-D1 — Deterministic Linear Pattern Foundation
 
-Status: **ACTIVE**
+Status: **FOUNDATION ACCEPTED**
 Blueprint zone: Floors 41–50 — Parametric Modeling
 Constitution: `blueprint-os:universal-century-grade@1.2.0`
 
@@ -69,3 +69,21 @@ Axis validity is checked against source placement.
 - topology history includes all derived instances;
 - STEP/STL/preview exact routing;
 - production build PASS.
+
+
+## Acceptance evidence
+
+Accepted on branch `foundation/general-system` at commit `64fb4647067bc8c1b9e32c1aeeb8e46ada9dc7be`.
+
+GitHub Actions run `37573729773` / #381:
+
+- TypeScript: PASS.
+- Unit regression: PASS — 28 tests.
+- Exact smoke suite: PASS.
+- Linear Pattern global Hole smoke: PASS — 4×, final volume 14497.345 mm³.
+- Linear Pattern face-local Hole analogue: PASS — 3×, final volume 13115.044 mm³.
+- Production build: PASS.
+- Schema v9 round-trip/migration and invalid-source checks: PASS.
+- Semantic rebuild checks global/local axis rules and preserves one canonical source feature.
+
+Known limits remain explicit: Hole/Cut source only, one direction, equal spacing, count 2–64, exact-kernel-only, no circular/bidirectional/skipped/group pattern.
