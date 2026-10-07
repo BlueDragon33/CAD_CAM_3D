@@ -4,9 +4,10 @@ import { activeCadKernel } from '../cad/kernel';
 import { buildExactKernelSnapshot } from '../cad/exact-kernel';
 import { projectRequiresExactGeometry } from '../cad/project-analysis';
 import { analyzeDownwardOverhang } from './geometry-analysis';
+import { planBuildVolumeSplit, type ManufacturingSplitPlan } from './split-plan';
 
 export type ManufacturingFindingLevel = 'ok' | 'warning' | 'blocker';
-export type ManufacturingFindingCategory = 'geometry' | 'build-volume' | 'orientation' | 'overhang' | 'feature-size' | 'wall' | 'design-intent' | 'kernel';
+export type ManufacturingFindingCategory = 'geometry' | 'build-volume' | 'orientation' | 'split' | 'overhang' | 'feature-size' | 'wall' | 'design-intent' | 'kernel';
 
 export type ManufacturingFinding = {
   id: string;
@@ -30,6 +31,7 @@ export type ManufacturingReadinessReport = {
   exact: boolean;
   dimensionsMm: { width: number; depth: number; height: number };
   recommendedOrientation: AxisAlignedOrientation | null;
+  splitPlan: ManufacturingSplitPlan | null;
   findings: ManufacturingFinding[];
   exportBlocked: boolean;
   selectedPrinterReady: boolean;
@@ -122,6 +124,9 @@ export function evaluateManufacturingReadiness(
   const recommendedOrientation = rebuilt.hasSolid
     ? findAxisAlignedPrinterOrientation(dimensionsMm, project)
     : null;
+  const splitPlan = rebuilt.hasSolid && !recommendedOrientation && !fitsBuildVolume(dimensionsMm, project)
+    ? planBuildVolumeSplit(dimensionsMm, project)
+    : null;
 
   if (rebuilt.hasSolid) {
     if (fitsBuildVolume(dimensionsMm, project)) {
@@ -160,6 +165,21 @@ export function evaluateManufacturingReadiness(
           blocksExport: false,
         },
       ));
+      if (splitPlan) {
+        const splitSummary = splitPlan.splitAxes
+          .map((axis) => axis.sourceAxis + '→' + axis.printerAxis + ': ' + axis.segmentCount + ' segment(s)')
+          .join(' · ');
+        findings.push(finding(
+          'split:envelope-plan-available',
+          'warning',
+          'split',
+          'A deterministic envelope split plan is available: ' + splitPlan.pieceCount + ' piece(s) · ' + splitSummary + '.',
+          {
+            remedy: 'Review seam locations and engineering loads before accepting a split. Exact cutting and alignment joints are not generated yet.',
+            blocksExport: false,
+          },
+        ));
+      }
     }
   }
 
@@ -235,7 +255,7 @@ export function evaluateManufacturingReadiness(
   const exportBlocked = findings.some((entry) => entry.level === 'blocker' && entry.blocksExport);
   const selectedPrinterReady = !findings.some((entry) => entry.level === 'blocker');
 
-  return { kernelId, exact, dimensionsMm, recommendedOrientation, findings, exportBlocked, selectedPrinterReady };
+  return { kernelId, exact, dimensionsMm, recommendedOrientation, splitPlan, findings, exportBlocked, selectedPrinterReady };
 }
 
 function appendOverhangFinding(
