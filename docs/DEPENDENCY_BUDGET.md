@@ -13,6 +13,10 @@ This file records non-trivial external dependencies under the Blueprint OS opera
 | GitHub | source, review, CI evidence | OPTIONAL_PUBLISH | free/external | source/review metadata | source/version history only | local built application does not depend on GitHub | Git-compatible hosting / other CI | governance/availability/cost change |
 | Application Management | optional app/device/policy coordination | OPTIONAL_SYNC | project-controlled external | safe operational metadata only | CAD engineering data remains CAD_CAM_3D | standalone/local-first mode | disable/replace control-plane adapter | management contract changes |
 | AI provider(s) | optional engineering intelligence | OPTIONAL_INTELLIGENCE | provider-dependent | only data explicitly required by invoked AI capability | validated feature tree remains CAD_CAM_3D | manual CAD workflows continue | AI port/provider replacement | cost/privacy/capability change |
+| Browser localStorage | best-effort local recovery snapshots | LOCAL_CORE | local/free | none | normal versioned project document | recovery may be unavailable on quota/privacy failure; explicit Save remains usable | IndexedDB/filesystem recovery provider | size/quota/reliability evidence |
+| Future identity/auth provider | account identity/session only | OPTIONAL_SYNC until commercial cloud is explicitly adopted | TBD | account/session metadata only | identity service, never CAD geometry | local project path requires an explicit degraded contract | standards/provider adapter migration | first commercial account rollout |
+| Future billing provider | payment references feeding normalized entitlements | OPTIONAL_SYNC | paid/transactional | billing/customer references only | entitlement layer owns normalized grants | billing outage must not corrupt or seize local project files | replace billing adapter | first paid plan |
+| Future sync/collaboration backend | optional cross-device/team state | OPTIONAL_SYNC | TBD | only explicitly synchronized project/revision data | local project + explicit sync contract | unsynced local state remains visible and recoverable | export/restore/provider migration | collaboration rollout |
 
 ## Development-only dependencies
 
@@ -31,3 +35,13 @@ This file records non-trivial external dependencies under the Blueprint OS opera
 - removal/review trigger: test-stack consolidation, incompatibility with TypeScript/Vite, security issue, or materially better lower-dependency alternative.
 
 Adding a development test runner does not grant any product/runtime/network authority.
+
+## Constitutional dependency prohibitions
+
+- No mandatory paid runtime is currently required for the core CAD workflow.
+- GitHub is not an end-user mutable project database.
+- Application Management is not a project/B-Rep/mesh/export store.
+- AI is not the sole editor or canonical state owner.
+- Provider SDK identifiers may not become feature/project identity.
+- A dependency may not be promoted to `EXTERNAL_ESSENTIAL` without an explicit Product Authority decision, documented capability gap, cost owner, degraded behavior and exit path.
+- Third-party license obligations remain governed by `THIRD_PARTY_NOTICES.md`; dependency sovereignty never bypasses license compliance.
