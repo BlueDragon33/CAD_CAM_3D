@@ -1,8 +1,25 @@
-import { defineConfig } from 'vite';
+import { defineConfig, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
 
+function offlineAssetManifest(): Plugin {
+  return {
+    name: 'cad-cam-3d-offline-asset-manifest',
+    generateBundle(_options, bundle) {
+      const assets = Object.values(bundle)
+        .map((entry) => entry.fileName)
+        .filter((fileName) => !fileName.endsWith('.map'))
+        .sort();
+      this.emitFile({
+        type: 'asset',
+        fileName: 'offline-assets.json',
+        source: JSON.stringify({ assets }, null, 2),
+      });
+    },
+  };
+}
+
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), offlineAssetManifest()],
   server: { port: 5173 },
   optimizeDeps: {
     // occt-wasm ships its own Emscripten glue + WASM asset. Pre-bundling it
