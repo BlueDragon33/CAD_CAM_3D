@@ -1234,5 +1234,6 @@ export const exactKernelDescriptor = {
     mirror: true,
     revolve: true,
     exactSplit: true,
+    exactSplitAlignment: true,
   },
 };
