@@ -447,6 +447,7 @@ function buildExactShape(kernel: OcctKernel, project: CadProject, rebuilt: Rebui
   const warnings: string[] = [];
   let filletApplied = false;
   let chamferApplied = false;
+  let shellApplied = false;
   let shape = makeExactBaseSolid(kernel, rebuilt);
 
   const baseFeatureId = project.features.find((feature) => feature.enabled && feature.kind === 'extrude')?.id ?? 'base-extrude';
@@ -492,6 +493,48 @@ function buildExactShape(kernel: OcctKernel, project: CadProject, rebuilt: Rebui
         warnings.push(error instanceof Error
           ? `${feature.name}: exact ${feature.kind} failed: ${error.message}`
           : `${feature.name}: exact ${feature.kind} failed.`);
+      }
+      continue;
+    }
+
+    if (feature.kind === 'shell') {
+      const solid = singleSolid(kernel, shape);
+      const openings = resolveShellOpeningHandles(
+        kernel,
+        solid,
+        feature.params.openings,
+        rebuilt,
+        tracker,
+        feature.name,
+        warnings,
+      );
+      if (openings.length === 0) {
+        throw new Error(`${feature.name}: Shell execution blocked because one or more opening faces could not be resolved safely.`);
+      }
+
+      const before = currentFaceHashes(kernel, solid);
+      const dims = currentShapeDimensions(kernel, solid);
+      const tolerance = Math.max(1e-6, Math.max(dims.width, dims.depth, dims.height) * 1e-8);
+      try {
+        const evolution = kernel.shellWithHistory(
+          solid,
+          openings,
+          Math.max(0.1, feature.params.thicknessMm),
+          tolerance,
+          before,
+          HASH_UPPER_BOUND,
+        );
+        shape = evolution.result;
+        if (!kernel.isValid(shape)) throw new Error('OpenCascade produced an invalid Shell body.');
+        const after = currentFaceHashes(kernel, shape);
+        tracker.record(feature.id, 'shell', before, after, evolution);
+        shellApplied = true;
+      } catch (error) {
+        throw new Error(error instanceof Error
+          ? `${feature.name}: exact Shell failed: ${error.message}`
+          : `${feature.name}: exact Shell failed.`);
+      } finally {
+        for (const face of openings) kernel.release(face);
       }
       continue;
     }
