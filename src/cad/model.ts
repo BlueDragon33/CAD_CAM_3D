@@ -1,6 +1,6 @@
 import type { SketchEntity } from './sketch';
 
-export type FeatureKind = 'sketch' | 'datum-axis' | 'extrude' | 'pad' | 'pocket' | 'cut' | 'hole' | 'fillet' | 'chamfer' | 'shell' | 'linear-pattern' | 'mirror';
+export type FeatureKind = 'sketch' | 'datum-axis' | 'extrude' | 'pad' | 'pocket' | 'revolve' | 'cut' | 'hole' | 'fillet' | 'chamfer' | 'shell' | 'linear-pattern' | 'mirror';
 
 export type Dimensions = {
   width: number;
@@ -153,6 +153,13 @@ export type DatumAxisFeature = FeatureBase<'datum-axis', {
     | { kind: 'sketch-local'; sketchId: string; axis: 'u' | 'v'; offsetMm: number };
 }>;
 
+export type RevolveFeature = FeatureBase<'revolve', {
+  sketchId: string;
+  axisId: string;
+  angleDeg: number;
+  operation: 'add';
+}>;
+
 export type LinearPatternFeature = FeatureBase<'linear-pattern', {
   sourceFeatureId: string;
   count: number;
@@ -167,7 +174,7 @@ export type MirrorFeature = FeatureBase<'mirror', {
     | { kind: 'face-local'; axis: 'u' | 'v'; offsetMm: number };
 }>;
 
-export type CadFeature = SketchFeature | DatumAxisFeature | ExtrudeFeature | PadFeature | PocketFeature | CutFeature | HoleFeature | FilletFeature | ChamferFeature | ShellFeature | LinearPatternFeature | MirrorFeature;
+export type CadFeature = SketchFeature | DatumAxisFeature | ExtrudeFeature | PadFeature | PocketFeature | RevolveFeature | CutFeature | HoleFeature | FilletFeature | ChamferFeature | ShellFeature | LinearPatternFeature | MirrorFeature;
 
 export type PrintProfile = {
   name: string;
@@ -193,6 +200,7 @@ function featureName(kind: FeatureKind, project: CadProject) {
     extrude: 'Extrude',
     pad: 'Pad',
     pocket: 'Pocket',
+    revolve: 'Revolve',
     cut: 'Cut',
     hole: 'Hole',
     fillet: 'Fillet',
@@ -248,6 +256,16 @@ export function createFeature(kind: FeatureKind, project: CadProject): CadFeatur
   if (kind === 'pocket') {
     const sourceSketch = [...project.features].reverse().find((feature) => feature.kind === 'sketch');
     return { ...base, kind, params: { sketchId: sourceSketch?.id ?? '', extent: 'distance', distanceMm: 5, direction: 'inward' } };
+  }
+
+  if (kind === 'revolve') {
+    const sourceSketch = [...project.features].reverse().find((feature) => feature.kind === 'sketch' && feature.params.plane.kind === 'face');
+    const sourceAxis = [...project.features].reverse().find((feature) => (
+      feature.kind === 'datum-axis'
+      && feature.params.source.kind === 'sketch-local'
+      && feature.params.source.sketchId === sourceSketch?.id
+    ));
+    return { ...base, kind, params: { sketchId: sourceSketch?.id ?? '', axisId: sourceAxis?.id ?? '', angleDeg: 360, operation: 'add' } };
   }
 
   if (kind === 'hole') {
