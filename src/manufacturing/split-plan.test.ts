@@ -16,6 +16,22 @@ describe('build-volume split planning', () => {
     expect(plan?.splitAxes[0].sourceAxis).toBe('X');
     expect(plan?.splitAxes[0].segmentCount).toBe(2);
     expect(plan?.splitAxes[0].cutPositionsFromEnvelopeMinMm).toEqual([150]);
+    expect(plan?.pieces).toHaveLength(2);
+    expect(plan?.pieces[0]).toMatchObject({
+      id: 'piece-x1-y1-z1',
+      ordinal: 1,
+      gridIndex: { X: 0, Y: 0, Z: 0 },
+      rangesFromEnvelopeMinMm: {
+        X: { startFromEnvelopeMinMm: 0, endFromEnvelopeMinMm: 150, lengthMm: 150 },
+        Y: { startFromEnvelopeMinMm: 0, endFromEnvelopeMinMm: 12, lengthMm: 12 },
+        Z: { startFromEnvelopeMinMm: 0, endFromEnvelopeMinMm: 40, lengthMm: 40 },
+      },
+    });
+    expect(plan?.pieces[1].rangesFromEnvelopeMinMm.X).toEqual({
+      startFromEnvelopeMinMm: 150,
+      endFromEnvelopeMinMm: 300,
+      lengthMm: 150,
+    });
     expect(plan?.geometryGenerationReady).toBe(false);
   });
 
@@ -28,6 +44,8 @@ describe('build-volume split planning', () => {
     expect(plan?.strategy).toBe('grid');
     expect(plan?.pieceCount).toBe(4);
     expect(plan?.splitAxes.map((axis) => axis.segmentCount).sort()).toEqual([2, 2]);
+    expect(plan?.pieces).toHaveLength(4);
+    expect(new Set(plan?.pieces.map((piece) => piece.id)).size).toBe(4);
   });
 
   it('selects the orientation that minimizes total piece count for a non-cubic printer', () => {
@@ -38,6 +56,15 @@ describe('build-volume split planning', () => {
 
     expect(plan?.pieceCount).toBe(2);
     expect(plan?.strategy).toBe('single-axis');
+    expect(plan?.pieces).toHaveLength(plan?.pieceCount ?? 0);
+  });
+
+  it('is deterministic for identical dimensions and printer profile', () => {
+    const project = createDefaultProject();
+    project.printProfile.buildVolume = { width: 180, depth: 120, height: 100 };
+    const dimensions = { width: 350, depth: 210, height: 90 };
+
+    expect(planBuildVolumeSplit(dimensions, project)).toEqual(planBuildVolumeSplit(dimensions, project));
   });
 
   it('returns null when the part already fits without splitting', () => {

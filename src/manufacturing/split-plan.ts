@@ -13,6 +13,19 @@ export type SplitAxisPlan = {
   cutPositionsFromEnvelopeMinMm: number[];
 };
 
+export type SplitPieceRange = {
+  startFromEnvelopeMinMm: number;
+  endFromEnvelopeMinMm: number;
+  lengthMm: number;
+};
+
+export type SplitPiecePlan = {
+  id: string;
+  ordinal: number;
+  gridIndex: Record<SourceAxis, number>;
+  rangesFromEnvelopeMinMm: Record<SourceAxis, SplitPieceRange>;
+};
+
 export type ManufacturingSplitPlan = {
   strategy: 'single-axis' | 'grid';
   pieceCount: number;
@@ -22,6 +35,7 @@ export type ManufacturingSplitPlan = {
     printerHeightFrom: SourceAxis;
   };
   splitAxes: SplitAxisPlan[];
+  pieces: SplitPiecePlan[];
   seamStrategy: 'flat-seam';
   geometryGenerationReady: false;
   note: string;
@@ -81,6 +95,49 @@ function axisPlan(
   };
 }
 
+function pieceRange(axis: SplitAxisPlan, index: number): SplitPieceRange {
+  const startFromEnvelopeMinMm = index * axis.nominalSegmentLengthMm;
+  const endFromEnvelopeMinMm = index === axis.segmentCount - 1
+    ? axis.sourceLengthMm
+    : (index + 1) * axis.nominalSegmentLengthMm;
+
+  return {
+    startFromEnvelopeMinMm,
+    endFromEnvelopeMinMm,
+    lengthMm: endFromEnvelopeMinMm - startFromEnvelopeMinMm,
+  };
+}
+
+function buildPiecePlans(axes: SplitAxisPlan[]): SplitPiecePlan[] {
+  const x = axes.find((axis) => axis.sourceAxis === 'X');
+  const y = axes.find((axis) => axis.sourceAxis === 'Y');
+  const z = axes.find((axis) => axis.sourceAxis === 'Z');
+  if (!x || !y || !z) return [];
+
+  const pieces: SplitPiecePlan[] = [];
+  let ordinal = 1;
+
+  for (let xIndex = 0; xIndex < x.segmentCount; xIndex += 1) {
+    for (let yIndex = 0; yIndex < y.segmentCount; yIndex += 1) {
+      for (let zIndex = 0; zIndex < z.segmentCount; zIndex += 1) {
+        pieces.push({
+          id: `piece-x${xIndex + 1}-y${yIndex + 1}-z${zIndex + 1}`,
+          ordinal,
+          gridIndex: { X: xIndex, Y: yIndex, Z: zIndex },
+          rangesFromEnvelopeMinMm: {
+            X: pieceRange(x, xIndex),
+            Y: pieceRange(y, yIndex),
+            Z: pieceRange(z, zIndex),
+          },
+        });
+        ordinal += 1;
+      }
+    }
+  }
+
+  return pieces;
+}
+
 function candidateFor(
   orientation: ManufacturingSplitPlan['orientation'],
   dimensions: Dimensions,
@@ -99,14 +156,18 @@ function candidateFor(
   if (splitAxes.length === 0) return null;
 
   const pieceCount = axes.reduce((product, axis) => product * axis.segmentCount, 1);
+  const pieces = buildPiecePlans(axes);
+  if (pieces.length !== pieceCount) return null;
+
   return {
     strategy: splitAxes.length === 1 ? 'single-axis' : 'grid',
     pieceCount,
     orientation,
     splitAxes,
+    pieces,
     seamStrategy: 'flat-seam',
     geometryGenerationReady: false,
-    note: 'Envelope split plan only. Exact cutting, alignment joints and multi-part export are not generated yet.',
+    note: 'Envelope split plan only. Piece envelopes are deterministic, but exact cutting, alignment joints and multi-part export are not generated yet.',
   };
 }
 
