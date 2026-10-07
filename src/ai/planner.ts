@@ -12,6 +12,7 @@ export type DesignProposalStatus = 'ready' | 'blocked' | 'unsupported';
 
 export type DesignProposal = {
   input: string;
+  sourceFingerprint: string;
   status: DesignProposalStatus;
   summary: string;
   operations: DesignOperation[];
@@ -23,6 +24,15 @@ export type DesignPlannerContext = {
   selectedTopology: 'face' | 'edge' | null;
 };
 
+export function projectProposalFingerprint(project: CadProject) {
+  return JSON.stringify({
+    id: project.id,
+    dimensions: project.dimensions,
+    features: project.features,
+    printProfile: project.printProfile,
+  });
+}
+
 function featureTarget(feature: FeatureCommand, selectedTopology: DesignPlannerContext['selectedTopology']): DesignCommandTarget {
   if ((feature.kind === 'hole' || feature.kind === 'cut') && selectedTopology === 'face') return 'selected-face';
   if ((feature.kind === 'fillet' || feature.kind === 'chamfer') && selectedTopology === 'edge') return 'selected-edge';
@@ -33,10 +43,12 @@ function featureTarget(feature: FeatureCommand, selectedTopology: DesignPlannerC
 export function planDesignInstruction(input: string, context: DesignPlannerContext): DesignProposal {
   const result = interpretCommand(input);
   const trimmed = input.trim();
+  const sourceFingerprint = projectProposalFingerprint(context.project);
 
   if (!trimmed) {
     return {
       input,
+      sourceFingerprint,
       status: 'unsupported',
       summary: result.message,
       operations: [],
@@ -57,6 +69,7 @@ export function planDesignInstruction(input: string, context: DesignPlannerConte
     }
     return {
       input,
+      sourceFingerprint,
       status: 'ready',
       summary: result.message,
       operations: [{ kind: 'set-dimensions', dimensions: result.dimensions }],
@@ -85,6 +98,7 @@ export function planDesignInstruction(input: string, context: DesignPlannerConte
           : 'Feature will use global placement.';
     return {
       input,
+      sourceFingerprint,
       status: 'ready',
       summary: result.message,
       operations: [{ kind: 'add-feature', feature: result.feature, target }],
@@ -97,6 +111,7 @@ export function planDesignInstruction(input: string, context: DesignPlannerConte
 
   return {
     input,
+    sourceFingerprint,
     status: 'unsupported',
     summary: result.message,
     operations: [],
