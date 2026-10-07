@@ -1,6 +1,6 @@
 # WP-E4 — Split Seam / Joining Strategy Foundation
 
-Status: **ACTIVE**
+Status: **COMPLETED — REGISTRATION PATH HUMAN ACCEPTED 2026-10-08**
 Parent: `WP-E3-EXACT-BREP-SPLIT-GEOMETRY`
 Blueprint zone: Floors 51–60 — Manufacturing Intelligence
 
@@ -61,3 +61,12 @@ For a fixed split plan:
 ## Next contract
 
 Use exact clipped-piece evidence to validate which planned seams have real contact. Only then may a bounded alignment-feature planner propose non-structural registration geometry. Automatic structural-joint claims remain prohibited without a separate engineering evidence model.
+
+## Completion evidence
+
+- deterministic seam graph: PASS;
+- exact zero-thickness shared-face probe limitation documented rather than hidden;
+- positive-volume corridor strategy proven;
+- bounded single-axis registration pins implemented downstream in WP-E4A;
+- Product Owner accepted Aligned Split 3MF on 2026-10-08;
+- no structural joint claim is made.
