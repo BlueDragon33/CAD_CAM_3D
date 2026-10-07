@@ -15,11 +15,11 @@ describe('downward overhang heuristic', () => {
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.Float32BufferAttribute([
       -5, 10, -5,
-       5, 10,  5,
        5, 10, -5,
-      -5, 10, -5,
-      -5, 10,  5,
        5, 10,  5,
+      -5, 10, -5,
+       5, 10,  5,
+      -5, 10,  5,
       -1, 0, -1,
        1, 0,  1,
        1, 0, -1,
