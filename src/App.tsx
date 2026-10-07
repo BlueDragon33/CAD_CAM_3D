@@ -167,6 +167,16 @@ export default function App() {
       );
       return;
     }
+    if (feature.kind === 'shell') {
+      if (!rebuilt.hasSolid || topologySelection?.kind !== 'face') {
+        setStatus('Shell creation blocked: select the exact face that should become the first opening on an existing solid.');
+        return;
+      }
+      const ref = createFaceTopologyRef(topologySelection, lastEnabledFeatureId(project.features));
+      feature = { ...feature, params: { ...feature.params, openings: [ref] } };
+      appendFeature(feature, 'Shell added with the selected face as a durable opening reference. Exact OpenCascade rebuild will hollow inward.');
+      return;
+    }
     if (feature.kind === 'fillet' || feature.kind === 'chamfer') {
       feature = bindEdgeTreatmentToCurrentEdge(feature, project.features);
       const boundToEdge = feature.params.selection.mode === 'topology';
@@ -261,6 +271,42 @@ export default function App() {
       return { ...feature, params: { ...feature.params, placement: { mode: 'global-xz' } } } as CadFeature;
     });
     setStatus(`${selectedFeature.name} now uses global X/Z placement.`);
+  };
+
+  const addSelectedShellOpening = () => {
+    if (!selectedFeature || selectedFeature.kind !== 'shell' || topologySelection?.kind !== 'face') return;
+    const featureIndex = project.features.findIndex((feature) => feature.id === selectedFeature.id);
+    const before = featureIndex > 0 ? project.features.slice(0, featureIndex) : [];
+    const ref = createFaceTopologyRef(topologySelection, lastEnabledFeatureId(before));
+    updateFeature(selectedFeature.id, (feature) => {
+      if (feature.kind !== 'shell') return feature;
+      const duplicate = feature.params.openings.some((opening) => (
+        opening.lineageIds.join('|') === ref.lineageIds.join('|')
+        && Math.abs(opening.signature.areaMm2 - ref.signature.areaMm2) < 1e-6
+      ));
+      if (duplicate) return feature;
+      return { ...feature, params: { ...feature.params, openings: [...feature.params.openings, ref] } };
+    });
+    setStatus(`${selectedFeature.name}: selected exact face added as another Shell opening.`);
+  };
+
+  const replaceShellOpeningWithSelectedFace = () => {
+    if (!selectedFeature || selectedFeature.kind !== 'shell' || topologySelection?.kind !== 'face') return;
+    const featureIndex = project.features.findIndex((feature) => feature.id === selectedFeature.id);
+    const before = featureIndex > 0 ? project.features.slice(0, featureIndex) : [];
+    const ref = createFaceTopologyRef(topologySelection, lastEnabledFeatureId(before));
+    updateFeature(selectedFeature.id, (feature) => feature.kind === 'shell'
+      ? { ...feature, params: { ...feature.params, openings: [ref] } }
+      : feature);
+    setStatus(`${selectedFeature.name}: Shell openings replaced with the selected exact face.`);
+  };
+
+  const removeLastShellOpening = () => {
+    if (!selectedFeature || selectedFeature.kind !== 'shell' || selectedFeature.params.openings.length <= 1) return;
+    updateFeature(selectedFeature.id, (feature) => feature.kind === 'shell'
+      ? { ...feature, params: { ...feature.params, openings: feature.params.openings.slice(0, -1) } }
+      : feature);
+    setStatus(`${selectedFeature.name}: last Shell opening removed.`);
   };
 
   const runCommand = (event: FormEvent) => {
@@ -460,10 +506,15 @@ export default function App() {
       </div>;
     }
     if (selectedFeature.kind === 'shell') return <div className="inspector-grid">
-      <label><span>Thickness</span><div><input type="number" min="0.1" step="0.1" value={selectedFeature.params.thicknessMm} disabled /><b>mm</b></div></label>
-      <div className="constraint-state" data-ready={false}>
-        <strong>Shell staged · exact execution pending</strong>
-        <small>Schema v8 preserves Shell intent, but rebuild/export stays blocked until exact B-Rep execution and topology-remap tests pass.</small>
+      <label><span>Thickness</span><div><input type="number" min="0.1" step="0.1" value={selectedFeature.params.thicknessMm} onChange={(e) => updateFeature(selectedFeature.id, (feature) => feature.kind === 'shell' ? { ...feature, params: { ...feature.params, thicknessMm: numberValue(e.target.value, 0.1) } } : feature)} /><b>mm</b></div></label>
+      <div className="constraint-state" data-ready={exactKernelDescriptor.capabilities.shell}>
+        <strong>Exact inward Shell</strong>
+        <small>{selectedFeature.params.openings.length} durable opening face(s) · OpenCascade topology history enabled.</small>
+      </div>
+      <div className="topology-bind-actions">
+        <button type="button" onClick={addSelectedShellOpening} disabled={topologySelection?.kind !== 'face'}>Add selected opening</button>
+        <button type="button" onClick={replaceShellOpeningWithSelectedFace} disabled={topologySelection?.kind !== 'face'}>Use selected only</button>
+        <button type="button" onClick={removeLastShellOpening} disabled={selectedFeature.params.openings.length <= 1}>Remove last</button>
       </div>
     </div>;
     return renderEdgeTreatmentInspector(selectedFeature);
@@ -490,7 +541,7 @@ export default function App() {
       <section className="workspace">
         <aside className="panel tools-panel">
           <h2>Build</h2>
-          {(['sketch', 'extrude', 'pad', 'pocket', 'hole', 'cut', 'fillet', 'chamfer'] as FeatureKind[]).map((kind) => (
+          {(['sketch', 'extrude', 'pad', 'pocket', 'hole', 'cut', 'fillet', 'chamfer', 'shell'] as FeatureKind[]).map((kind) => (
             <button key={kind} type="button" className="tool-button" onClick={() => addFeature(kind)}>
               <span>{featureLabels[kind]}</span>
               <small>{kind === 'sketch' && topologySelection?.kind === 'face'
@@ -499,16 +550,18 @@ export default function App() {
     ? 'Use selected Sketch'
     : (kind === 'fillet' || kind === 'chamfer') && topologySelection?.kind === 'edge'
       ? 'Use selected edge'
-      : (kind === 'hole' || kind === 'cut') && topologySelection?.kind === 'face'
-        ? 'Use selected face'
-        : 'Add feature'}</small>
+      : kind === 'shell' && topologySelection?.kind === 'face'
+        ? 'Open selected face'
+        : (kind === 'hole' || kind === 'cut') && topologySelection?.kind === 'face'
+          ? 'Use selected face'
+          : 'Add feature'}</small>
             </button>
           ))}
           <h2>Exact topology</h2>
           <div className="profile-card">
             <strong>{topologySelection ? `${topologySelection.kind} selected` : 'No topology selected'}</strong>
             <span>{topologySelection?.kind === 'edge' ? `${topologySelection.signature.curveKind} · ${topologySelection.signature.lengthMm.toFixed(2)} mm` : topologySelection?.kind === 'face' ? `${topologySelection.signature.areaMm2.toFixed(2)} mm²` : 'Use Face / Edge controls in the viewport.'}</span>
-            <small>{topologySelection?.kind === 'edge' ? 'Adding Fillet/Chamfer stores a durable edge reference.' : topologySelection?.kind === 'face' ? 'Adding Sketch/Hole/Cut stores durable face-local intent; unsupported curved faces remain inspection-only.' : 'Exact selection is lazy-loaded only when requested or required.'}</small>
+            <small>{topologySelection?.kind === 'edge' ? 'Adding Fillet/Chamfer stores a durable edge reference.' : topologySelection?.kind === 'face' ? 'Adding Sketch/Hole/Cut stores durable face-local intent; Shell can persist the selected exact face as an opening.' : 'Exact selection is lazy-loaded only when requested or required.'}</small>
           </div>
           <h2>Master parameters</h2>
           <div className="dimension-grid">{(['width', 'depth', 'height'] as const).map((key) => <label key={key}><span>{key}</span><div><input type="number" min="0.1" max="1000" step="0.1" value={project.dimensions[key]} onChange={(e) => setDimension(key, e.target.value)} /><b>mm</b></div></label>)}</div>
@@ -542,7 +595,7 @@ export default function App() {
           {lastStepExport ? <div className="profile-card"><strong>Last STEP · {lastStepExport.valid ? 'PASS' : 'WARN'}</strong><span>{lastStepExport.faceCount} faces · {lastStepExport.edgeCount} edges · {(lastStepExport.byteLength / 1024).toFixed(1)} KB</span><small>Volume {lastStepExport.volumeMm3.toFixed(1)} mm³ · Surface {lastStepExport.surfaceAreaMm2.toFixed(1)} mm²</small><small>Kernel: {lastStepExport.kernelId}{lastStepExport.filletApplied ? ' · fillet' : ''}{lastStepExport.chamferApplied ? ' · chamfer' : ''}</small>{lastStepExport.warnings.length > 0 ? <small>{lastStepExport.warnings.join(' ')}</small> : null}</div> : null}
           <h2>Kernel</h2>
           <div className="profile-card"><strong>{activeCadKernel.label}</strong><span>{activeCadKernel.capabilities.exactBrep ? 'Exact B-Rep' : 'Fast deterministic mesh'} · STL {activeCadKernel.capabilities.stlExport ? 'ready' : 'off'}</span><small>Simple vertical features stay lightweight. Exact edge/face features promote preview/STL automatically.</small></div>
-          <div className="profile-card"><strong>{exactKernelDescriptor.label}</strong><span>Exact B-Rep · STEP/STL · Pad/Pocket · Fillet/Chamfer · face tools</span><small>Attached Sketches drive exact Pad/Pocket; durable edge refs drive Fillet/Chamfer; supported planar face refs drive oriented Hole/Cut.</small></div>
+          <div className="profile-card"><strong>{exactKernelDescriptor.label}</strong><span>Exact B-Rep · STEP/STL · Pad/Pocket · Fillet/Chamfer/Shell · face tools</span><small>Attached Sketches drive exact Pad/Pocket; durable edge refs drive Fillet/Chamfer; durable face refs drive Shell openings and oriented Hole/Cut.</small></div>
           <h2>Management</h2>
           <div className="management-card"><strong>{managementIdentity.controlPlane}</strong><span>UI policy · feature flags · print policy</span><small>Project geometry and export files remain inside CAD_CAM_3D.</small></div>
         </aside>
