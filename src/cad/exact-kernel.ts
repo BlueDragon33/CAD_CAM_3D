@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import type { Mesh, OcctKernel, ShapeHandle } from 'occt-wasm';
-import type { CadProject, EdgeTreatmentSelection, FeaturePlacement } from './model';
+import type { CadProject, EdgeTreatmentSelection, FaceTopologyRef, FeaturePlacement } from './model';
 import { rebuildProject, type RebuiltPart } from './rebuild';
 import { solveSketch } from './constraints';
 import {
@@ -55,6 +55,7 @@ export type ExactKernelReport = {
   dimensionsMm: { width: number; depth: number; height: number };
   filletApplied: boolean;
   chamferApplied: boolean;
+  shellApplied: boolean;
   evolutionStepCount: number;
   warnings: string[];
 };
