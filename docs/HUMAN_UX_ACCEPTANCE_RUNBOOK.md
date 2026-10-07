@@ -1,10 +1,10 @@
 # CAD_CAM_3D Human UX Acceptance Runbook
 
-Status: **CONTINUATION AUTHORIZED; CURRENT SPLIT-3MF HUMAN GATE OPEN**
+Status: **CONTINUATION AUTHORIZED; SPLIT-3MF HUMAN GATE ACCEPTED 2026-10-07**
 Scope: current foundation branch `foundation/general-system`
 Purpose: verify premium usability and real-browser/slicer behavior that CI cannot prove.
 
-On 2026-10-07 the Product Owner explicitly authorized automated implementation to continue beyond the earlier interaction checkpoint. That authorization is **not** recorded as evidence that every browser journey below was manually tested, and it does not authorize merge or Production. The current stop condition is the new exact split / multi-object 3MF handoff added after that authorization.
+On 2026-10-07 the Product Owner explicitly authorized automated implementation to continue beyond the earlier interaction checkpoint. That authorization is **not** recorded as evidence that every browser journey below was manually tested, and it does not authorize merge or Production. The exact split / multi-object 3MF handoff added after that authorization was explicitly accepted by the Product Owner on 2026-10-07. This acceptance authorizes continued foundation work only; merge and Production remain separate gates.
 
 ## 1. Run the production-like app
 
@@ -65,7 +65,7 @@ Acceptance questions:
 
 Important boundary: this test does not claim Bambu project-file feature parity. Current 3MF is portable 3MF Core geometry.
 
-### 4A. Exact split → multi-object Core 3MF — CURRENT CONTINUATION GATE
+### 4A. Exact split → multi-object Core 3MF — ACCEPTED 2026-10-07
 
 This is the targeted human gate for the new build-volume split path.
 
@@ -87,12 +87,9 @@ Fail closed expectations:
 - an empty planned envelope cell must not be presented as a printable object;
 - editing the CAD project after analysis must invalidate the old manufacturing/split report and require Analyze Print again.
 
-For this targeted gate, report one of:
-- **ACCEPT SPLIT 3MF**
-- **ACCEPT SPLIT 3MF WITH FINDINGS** + the concrete issue(s)
-- **REJECT SPLIT 3MF** + screenshot/error where practical
+Recorded result: **ACCEPT SPLIT 3MF** — Product Owner, 2026-10-07.
 
-This targeted decision authorizes or blocks further work built on split-export UX. It still does not authorize PR merge or Production.
+This targeted decision authorizes further work built on split-export UX. It does not authorize PR merge or Production.
 
 ## 5. Recovery
 
