@@ -5,7 +5,7 @@ import { buildExactKernelSnapshot } from '../cad/exact-kernel';
 import { projectRequiresExactGeometry } from '../cad/project-analysis';
 
 export type ManufacturingFindingLevel = 'ok' | 'warning' | 'blocker';
-export type ManufacturingFindingCategory = 'geometry' | 'build-volume' | 'feature-size' | 'wall' | 'design-intent' | 'kernel';
+export type ManufacturingFindingCategory = 'geometry' | 'build-volume' | 'orientation' | 'feature-size' | 'wall' | 'design-intent' | 'kernel';
 
 export type ManufacturingFinding = {
   id: string;
@@ -17,10 +17,18 @@ export type ManufacturingFinding = {
   blocksExport: boolean;
 };
 
+export type AxisAlignedOrientation = {
+  width: number;
+  depth: number;
+  height: number;
+  sourceAxes: [string, string, string];
+};
+
 export type ManufacturingReadinessReport = {
   kernelId: string;
   exact: boolean;
   dimensionsMm: { width: number; depth: number; height: number };
+  recommendedOrientation: AxisAlignedOrientation | null;
   findings: ManufacturingFinding[];
   exportBlocked: boolean;
   selectedPrinterReady: boolean;
@@ -36,14 +44,44 @@ function finding(
   return { id, level, category, message, ...options };
 }
 
-function exceedsBuildVolume(
-  dimensions: ManufacturingReadinessReport['dimensionsMm'],
+function fitsBuildVolume(
+  dimensions: { width: number; depth: number; height: number },
   project: CadProject,
 ) {
   const volume = project.printProfile.buildVolume;
-  return dimensions.width > volume.width
-    || dimensions.depth > volume.depth
-    || dimensions.height > volume.height;
+  return dimensions.width <= volume.width
+    && dimensions.depth <= volume.depth
+    && dimensions.height <= volume.height;
+}
+
+export function findAxisAlignedPrinterOrientation(
+  dimensions: ManufacturingReadinessReport['dimensionsMm'],
+  project: CadProject,
+): AxisAlignedOrientation | null {
+  const axes = [
+    { label: 'X', value: dimensions.width },
+    { label: 'Y', value: dimensions.height },
+    { label: 'Z', value: dimensions.depth },
+  ] as const;
+  const permutations = [
+    [0, 2, 1],
+    [2, 0, 1],
+    [0, 1, 2],
+    [1, 0, 2],
+    [2, 1, 0],
+    [1, 2, 0],
+  ] as const;
+
+  for (const [widthAxis, depthAxis, heightAxis] of permutations) {
+    const candidate: AxisAlignedOrientation = {
+      width: axes[widthAxis].value,
+      depth: axes[depthAxis].value,
+      height: axes[heightAxis].value,
+      sourceAxes: [axes[widthAxis].label, axes[depthAxis].label, axes[heightAxis].label],
+    };
+    if (fitsBuildVolume(candidate, project)) return candidate;
+  }
+  return null;
 }
 
 export function evaluateManufacturingReadiness(
@@ -80,27 +118,46 @@ export function evaluateManufacturingReadiness(
     ));
   }
 
+  const recommendedOrientation = rebuilt.hasSolid
+    ? findAxisAlignedPrinterOrientation(dimensionsMm, project)
+    : null;
+
   if (rebuilt.hasSolid) {
-    if (exceedsBuildVolume(dimensionsMm, project)) {
-      const v = project.printProfile.buildVolume;
-      findings.push(finding(
-        'build-volume:exceeded',
-        'blocker',
-        'build-volume',
-        'Final part envelope ' + dimensionsMm.width.toFixed(2) + ' × ' + dimensionsMm.depth.toFixed(2) + ' × ' + dimensionsMm.height.toFixed(2)
-          + ' mm exceeds selected printer volume ' + v.width + ' × ' + v.depth + ' × ' + v.height + ' mm.',
-        {
-          remedy: 'Choose a larger printer profile, re-orient/split the part in a later manufacturing step, or reduce the design envelope.',
-          blocksExport: false,
-        },
-      ));
-    } else {
+    if (fitsBuildVolume(dimensionsMm, project)) {
       findings.push(finding(
         'build-volume:fit',
         'ok',
         'build-volume',
-        'Final ' + (exact ? 'exact ' : '') + 'part envelope fits the selected printer build volume.',
+        'Final ' + (exact ? 'exact ' : '') + 'part envelope fits the selected printer build volume in its current orientation.',
         { blocksExport: false },
+      ));
+    } else if (recommendedOrientation) {
+      const v = project.printProfile.buildVolume;
+      findings.push(finding(
+        'orientation:axis-aligned-fit',
+        'warning',
+        'orientation',
+        'Current envelope ' + dimensionsMm.width.toFixed(2) + ' × ' + dimensionsMm.depth.toFixed(2) + ' × ' + dimensionsMm.height.toFixed(2)
+          + ' mm exceeds selected printer volume ' + v.width + ' × ' + v.depth + ' × ' + v.height
+          + ' mm, but an axis-aligned orientation fits as ' + recommendedOrientation.width.toFixed(2) + ' × '
+          + recommendedOrientation.depth.toFixed(2) + ' × ' + recommendedOrientation.height.toFixed(2) + ' mm.',
+        {
+          remedy: 'Rotate the part in the slicer so source axes ' + recommendedOrientation.sourceAxes.join('/') + ' map to printer width/depth/height, then re-check supports and surface quality.',
+          blocksExport: false,
+        },
+      ));
+    } else {
+      const v = project.printProfile.buildVolume;
+      findings.push(finding(
+        'build-volume:no-axis-aligned-fit',
+        'blocker',
+        'build-volume',
+        'Final part envelope ' + dimensionsMm.width.toFixed(2) + ' × ' + dimensionsMm.depth.toFixed(2) + ' × ' + dimensionsMm.height.toFixed(2)
+          + ' mm does not fit selected printer volume ' + v.width + ' × ' + v.depth + ' × ' + v.height + ' mm in any 90° axis-aligned orientation.',
+        {
+          remedy: 'Choose a larger printer, reduce the part, or use an explicit split-and-join workflow when split planning is enabled.',
+          blocksExport: false,
+        },
       ));
     }
   }
@@ -177,7 +234,7 @@ export function evaluateManufacturingReadiness(
   const exportBlocked = findings.some((entry) => entry.level === 'blocker' && entry.blocksExport);
   const selectedPrinterReady = !findings.some((entry) => entry.level === 'blocker');
 
-  return { kernelId, exact, dimensionsMm, findings, exportBlocked, selectedPrinterReady };
+  return { kernelId, exact, dimensionsMm, recommendedOrientation, findings, exportBlocked, selectedPrinterReady };
 }
 
 export async function analyzeManufacturingReadiness(project: CadProject): Promise<ManufacturingReadinessReport> {
