@@ -5,6 +5,7 @@ import type {
   CutFeature,
   FilletFeature,
   HoleFeature,
+  LinearPatternFeature,
   PadFeature,
   PocketFeature,
   ShellFeature,
@@ -22,7 +23,7 @@ export type RebuildDiagnostic = {
   message: string;
 };
 
-export type SolidOperationFeature = PadFeature | PocketFeature | HoleFeature | CutFeature | FilletFeature | ChamferFeature | ShellFeature;
+export type SolidOperationFeature = PadFeature | PocketFeature | HoleFeature | CutFeature | FilletFeature | ChamferFeature | ShellFeature | LinearPatternFeature;
 
 export type RebuiltPart = {
   width: number;
@@ -60,6 +61,7 @@ export function rebuildProject(project: CadProject): RebuiltPart {
   const operationSequence: SolidOperationFeature[] = [];
   const diagnostics: RebuildDiagnostic[] = [];
   const sketchesById = new Map<string, SketchFeature>();
+  const repeatableFeaturesById = new Map<string, HoleFeature | CutFeature>();
 
   for (const feature of project.features) {
     if (!feature.enabled) continue;
@@ -214,6 +216,7 @@ export function rebuildProject(project: CadProject): RebuiltPart {
       }
       holes.push(feature);
       operationSequence.push(feature);
+      repeatableFeaturesById.set(feature.id, feature);
       continue;
     }
 
@@ -232,6 +235,48 @@ export function rebuildProject(project: CadProject): RebuiltPart {
       }
       cuts.push(feature);
       operationSequence.push(feature);
+      repeatableFeaturesById.set(feature.id, feature);
+      continue;
+    }
+
+    if (feature.kind === 'linear-pattern') {
+      if (!hasSolid) {
+        diagnostics.push({ level: 'error', featureId: feature.id, message: 'Linear Pattern requires an existing solid.' });
+        continue;
+      }
+      const source = repeatableFeaturesById.get(feature.params.sourceFeatureId);
+      if (!source) {
+        diagnostics.push({ level: 'error', featureId: feature.id, message: 'Linear Pattern requires an enabled earlier Hole or Cut source feature.' });
+        continue;
+      }
+      const faceBound = source.params.placement.mode === 'face';
+      const validAxis = faceBound
+        ? feature.params.axis === 'u' || feature.params.axis === 'v'
+        : feature.params.axis === 'x' || feature.params.axis === 'z';
+      if (!validAxis) {
+        diagnostics.push({
+          level: 'error',
+          featureId: feature.id,
+          message: faceBound
+            ? 'Face-bound Linear Pattern must use local U or V.'
+            : 'Global Linear Pattern must use global X or Z.',
+        });
+        continue;
+      }
+      if (!Number.isInteger(feature.params.count) || feature.params.count < 2 || feature.params.count > 64) {
+        diagnostics.push({ level: 'error', featureId: feature.id, message: 'Linear Pattern count must be an integer from 2 through 64.' });
+        continue;
+      }
+      if (!Number.isFinite(feature.params.spacingMm) || feature.params.spacingMm < 0.1) {
+        diagnostics.push({ level: 'error', featureId: feature.id, message: 'Linear Pattern spacing must be at least 0.1 mm.' });
+        continue;
+      }
+      operationSequence.push(feature);
+      diagnostics.push({
+        level: 'info',
+        featureId: feature.id,
+        message: `Linear Pattern will derive ${feature.params.count - 1} additional ${source.kind} instance(s) from ${source.name} at ${feature.params.spacingMm.toFixed(2)} mm spacing on ${feature.params.axis.toUpperCase()}.`,
+      });
       continue;
     }
 
