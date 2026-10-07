@@ -13,6 +13,7 @@ export type DesignProposalStatus = 'ready' | 'blocked' | 'unsupported';
 export type DesignProposal = {
   input: string;
   sourceFingerprint: string;
+  selectionFingerprint: string | null;
   status: DesignProposalStatus;
   summary: string;
   operations: DesignOperation[];
@@ -22,6 +23,7 @@ export type DesignProposal = {
 export type DesignPlannerContext = {
   project: CadProject;
   selectedTopology: 'face' | 'edge' | null;
+  selectionFingerprint?: string | null;
 };
 
 export function projectProposalFingerprint(project: CadProject) {
@@ -44,11 +46,13 @@ export function planDesignInstruction(input: string, context: DesignPlannerConte
   const result = interpretCommand(input);
   const trimmed = input.trim();
   const sourceFingerprint = projectProposalFingerprint(context.project);
+  const selectionFingerprint = context.selectionFingerprint ?? null;
 
   if (!trimmed) {
     return {
       input,
       sourceFingerprint,
+      selectionFingerprint,
       status: 'unsupported',
       summary: result.message,
       operations: [],
@@ -71,6 +75,7 @@ export function planDesignInstruction(input: string, context: DesignPlannerConte
     return {
       input,
       sourceFingerprint,
+      selectionFingerprint,
       status: 'ready',
       summary: result.message,
       operations: [{ kind: 'set-dimensions', dimensions: result.dimensions }],
@@ -101,6 +106,7 @@ export function planDesignInstruction(input: string, context: DesignPlannerConte
     return {
       input,
       sourceFingerprint,
+      selectionFingerprint,
       status: 'ready',
       summary: result.message,
       operations: [{ kind: 'add-feature', feature: result.feature, target }],
@@ -114,6 +120,7 @@ export function planDesignInstruction(input: string, context: DesignPlannerConte
   return {
     input,
     sourceFingerprint,
+    selectionFingerprint,
     status: 'unsupported',
     summary: result.message,
     operations: [],
