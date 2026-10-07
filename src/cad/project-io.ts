@@ -16,10 +16,10 @@ import type {
 import type { SketchEntity, SketchPoint2D } from './sketch';
 
 const PROJECT_FORMAT = 'cad-cam-3d-project';
-const PROJECT_SCHEMA_VERSION = 9;
+const PROJECT_SCHEMA_VERSION = 10;
 const materials = new Set<PrintProfile['material']>(['PLA', 'PETG', 'ABS', 'ASA', 'PA-CF', 'Other']);
 
-export type ProjectDocumentV9 = {
+export type ProjectDocumentV10 = {
   format: typeof PROJECT_FORMAT;
   schemaVersion: typeof PROJECT_SCHEMA_VERSION;
   savedAt: string;
@@ -348,6 +348,28 @@ function readFeature(value: unknown, index: number, sourceSchemaVersion: number)
       axis,
     } };
   }
+  if (kind === 'mirror') {
+    if (sourceSchemaVersion < 10) throw new Error(`${label} contains Mirror but schema ${sourceSchemaVersion} predates Mirror support.`);
+    if (!isRecord(params.plane)) throw new Error(`${label}.params.plane must be an object.`);
+    const planeKind = readString(params.plane, 'kind', `${label}.params.plane.kind`);
+    const axis = readString(params.plane, 'axis', `${label}.params.plane.axis`);
+    const offsetMm = readNumber(params.plane, 'offsetMm', `${label}.params.plane.offsetMm`);
+    const plane = planeKind === 'global'
+      ? (() => {
+          if (axis !== 'x' && axis !== 'z') throw new Error(`${label}.params.plane.axis must be x or z for global Mirror.`);
+          return { kind: 'global' as const, axis, offsetMm };
+        })()
+      : planeKind === 'face-local'
+        ? (() => {
+            if (axis !== 'u' && axis !== 'v') throw new Error(`${label}.params.plane.axis must be u or v for face-local Mirror.`);
+            return { kind: 'face-local' as const, axis, offsetMm };
+          })()
+        : (() => { throw new Error(`${label}.params.plane.kind must be global or face-local.`); })();
+    return { id, kind, name, enabled, params: {
+      sourceFeatureId: readString(params, 'sourceFeatureId', `${label}.params.sourceFeatureId`),
+      plane,
+    } };
+  }
   throw new Error(`${label} has unsupported feature kind ${kind}.`);
 }
 
@@ -389,6 +411,19 @@ function validateFeatureReferences(features: CadFeature[]) {
         throw new Error(`${feature.name} must use global X/Z axis for a global source.`);
       }
     }
+    if (feature.kind === 'mirror') {
+      const source = seen.get(feature.params.sourceFeatureId);
+      if (!source || (source.kind !== 'hole' && source.kind !== 'cut')) {
+        throw new Error(`${feature.name} must reference an earlier Hole or Cut feature.`);
+      }
+      const faceBound = source.params.placement.mode === 'face';
+      if (faceBound && feature.params.plane.kind !== 'face-local') {
+        throw new Error(`${feature.name} must use a face-local mirror plane for a face-bound source.`);
+      }
+      if (!faceBound && feature.params.plane.kind !== 'global') {
+        throw new Error(`${feature.name} must use a global mirror plane for a global source.`);
+      }
+    }
     seen.set(feature.id, feature);
   }
 }
@@ -412,7 +447,7 @@ function safeFileName(name: string) {
 }
 
 export function serializeProject(project: CadProject): string {
-  const document: ProjectDocumentV9 = { format: PROJECT_FORMAT, schemaVersion: PROJECT_SCHEMA_VERSION, savedAt: new Date().toISOString(), project };
+  const document: ProjectDocumentV10 = { format: PROJECT_FORMAT, schemaVersion: PROJECT_SCHEMA_VERSION, savedAt: new Date().toISOString(), project };
   return JSON.stringify(document, null, 2);
 }
 
@@ -422,7 +457,7 @@ export function parseProjectDocument(text: string): { project: CadProject; schem
   if (!isRecord(raw)) throw new Error('Project document must be an object.');
   if (raw.format !== PROJECT_FORMAT) throw new Error('This file is not a CAD_CAM_3D project document.');
   const sourceSchemaVersion = raw.schemaVersion;
-  if (![1, 2, 3, 4, 5, 6, 7, 8, PROJECT_SCHEMA_VERSION].includes(sourceSchemaVersion as number)) {
+  if (![1, 2, 3, 4, 5, 6, 7, 8, 9, PROJECT_SCHEMA_VERSION].includes(sourceSchemaVersion as number)) {
     throw new Error(`Unsupported project schema version ${String(sourceSchemaVersion)}. Supported versions are 1 through ${PROJECT_SCHEMA_VERSION}.`);
   }
   return {
