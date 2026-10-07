@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createDefaultProject, type HoleFeature, type LinearPatternFeature, type MirrorFeature, type PadFeature, type ShellFeature, type SketchFeature } from './model';
+import { createDefaultProject, type DatumAxisFeature, type HoleFeature, type LinearPatternFeature, type MirrorFeature, type PadFeature, type ShellFeature, type SketchFeature } from './model';
 import { parseProjectDocument, serializeProject } from './project-io';
 
 function baseDocument() {
@@ -12,7 +12,7 @@ function baseDocument() {
 }
 
 describe('project schema migration', () => {
-  for (const version of [1, 2, 3, 4, 5, 6, 7, 8, 9]) {
+  for (const version of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]) {
     it(`loads schema v${version} into the current base-XZ sketch contract`, () => {
       const doc = baseDocument();
       doc.schemaVersion = version;
@@ -25,22 +25,22 @@ describe('project schema migration', () => {
       const parsed = parseProjectDocument(JSON.stringify(doc));
       const migratedSketch = parsed.project.features.find((feature): feature is SketchFeature => feature.kind === 'sketch')!;
       expect(parsed.sourceSchemaVersion).toBe(version);
-      expect(parsed.schemaVersion).toBe(10);
+      expect(parsed.schemaVersion).toBe(11);
       expect(parsed.migrated).toBe(true);
       expect(migratedSketch.params.plane).toEqual({ kind: 'base-xz' });
     });
   }
 
-  it('round-trips schema v10', () => {
+  it('round-trips schema v11', () => {
     const project = createDefaultProject();
     const parsed = parseProjectDocument(serializeProject(project));
-    expect(parsed.schemaVersion).toBe(10);
+    expect(parsed.schemaVersion).toBe(11);
     expect(parsed.sourceSchemaVersion).toBe(10);
     expect(parsed.migrated).toBe(false);
     expect(parsed.project.id).toBe(project.id);
   });
 
-  it('round-trips schema v10 Shell intent with durable opening references', () => {
+  it('round-trips schema v11 Shell intent with durable opening references', () => {
     const project = createDefaultProject();
     const shell: ShellFeature = {
       id: 'shell-1',
@@ -78,7 +78,35 @@ describe('project schema migration', () => {
     expect(() => parseProjectDocument(JSON.stringify(doc))).toThrow(/at least one face reference/i);
   });
 
-  it('round-trips schema v10 Linear Pattern without copying its source feature', () => {
+  it('round-trips schema v11 Datum Axis with durable source semantics', () => {
+    const project = createDefaultProject();
+    const sketch = project.features.find((feature): feature is SketchFeature => feature.kind === 'sketch')!;
+    const datum: DatumAxisFeature = {
+      id: 'datum-axis-1',
+      kind: 'datum-axis',
+      name: 'Datum Axis 1',
+      enabled: true,
+      params: { source: { kind: 'base-xz', sketchId: sketch.id, axis: 'x', offsetMm: 3 } },
+    };
+    project.features.push(datum);
+    const parsed = parseProjectDocument(serializeProject(project));
+    const loaded = parsed.project.features.find((feature): feature is DatumAxisFeature => feature.kind === 'datum-axis');
+    expect(loaded?.params).toEqual(datum.params);
+  });
+
+  it('rejects Datum Axis when its source Sketch is missing', () => {
+    const doc = baseDocument();
+    doc.project.features.push({
+      id: 'datum-invalid',
+      kind: 'datum-axis',
+      name: 'Invalid Datum',
+      enabled: true,
+      params: { source: { kind: 'base-xz', sketchId: 'missing-sketch', axis: 'x', offsetMm: 0 } },
+    } as DatumAxisFeature);
+    expect(() => parseProjectDocument(JSON.stringify(doc))).toThrow(/earlier Sketch/i);
+  });
+
+  it('round-trips schema v11 Linear Pattern without copying its source feature', () => {
     const project = createDefaultProject();
     const source: HoleFeature = {
       id: 'hole-source',
@@ -114,7 +142,7 @@ describe('project schema migration', () => {
     expect(() => parseProjectDocument(JSON.stringify(doc))).toThrow(/earlier Hole or Cut/i);
   });
 
-  it('round-trips schema v10 Mirror with an explicit symmetry plane', () => {
+  it('round-trips schema v11 Mirror with an explicit symmetry plane', () => {
     const project = createDefaultProject();
     const source: HoleFeature = {
       id: 'mirror-hole',
