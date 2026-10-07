@@ -30,16 +30,17 @@ Current exact coverage includes:
 - selected-edge and rectangle-preset Fillet;
 - selected-edge and rectangle-preset Chamfer;
 - exact inward Shell with one or more durable opening-face references;
+- deterministic Linear Pattern for earlier Hole/Cut sources using global X/Z or face-local U/V spacing;
 - attached planar Sketch → Pad;
 - attached planar Sketch → finite Pocket;
 - attached planar Sketch → through-all Pocket;
-- ordered topology evolution through Pad/Pocket/Hole/Cut/Fillet/Chamfer/Shell;
+- ordered topology evolution through Pad/Pocket/Hole/Cut/Fillet/Chamfer/Shell/Linear Pattern;
 - exact validity/bounds/volume/surface-area queries;
 - exact face/edge picking;
 - adaptive STL;
 - STEP.
 
-Projects with enabled Pad/Pocket/Shell always route preview/STL through the exact path.
+Projects with enabled Pad/Pocket/Shell/Linear Pattern always route preview/STL through the exact path.
 
 ## Attached sketch material path
 
@@ -141,7 +142,7 @@ simple supported project
     → mesh-mvp-v1
     → fast preview / STL
 
-Pad / Pocket / Shell / Fillet / Chamfer /
+Pad / Pocket / Shell / Linear Pattern / Fillet / Chamfer /
 oriented face feature / promoted-profile Boolean
     → occt-wasm-v5
     → exact preview / exact STL
@@ -154,7 +155,7 @@ The exact viewport frames from final B-Rep bounds rather than the pre-operation 
 
 ## Project schema migration
 
-Current editable schema: **v8**.
+Current editable schema: **v9**.
 
 - v1: legacy Fillet selection + global Hole/Cut;
 - v2: durable edge references for Fillet;
@@ -163,9 +164,10 @@ Current editable schema: **v8**.
 - v5: persisted Line/Circle/Arc entities, constraints and construction/profile membership;
 - v6: durable SketchPlaneRef for base-XZ or attached planar face;
 - v7: Pad/Pocket features referencing an earlier face-attached Sketch;
-- v8: Shell thickness + durable opening-face references.
+- v8: Shell thickness + durable opening-face references;
+- v9: Linear Pattern source feature ID + count + spacing + global/local axis.
 
-The loader accepts v1-v8, validates Pad/Pocket source-Sketch ordering/type, and rejects Shell without a durable opening face before runtime entry.
+The loader accepts v1-v9, validates Pad/Pocket source-Sketch ordering/type, and rejects Shell without a durable opening face before runtime entry.
 
 ## Coordinate convention
 
@@ -193,7 +195,8 @@ The exact smoke suite currently includes:
 - finite Pocket;
 - through-all Pocket;
 - side-oriented Pad;
-- inward Shell validity/bounds/volume plus opening geometry and history.
+- inward Shell validity/bounds/volume plus opening geometry and history;
+- global and face-local Linear Pattern Boolean/history smoke.
 
 A green smoke suite is engineering evidence, not Production authority.
 
@@ -206,7 +209,8 @@ Not yet claimed:
 - symmetric/mid-plane Pad/Pocket;
 - termination-to-face/up-to-next;
 - draft angle;
-- general multi-body Boolean semantics.
+- general multi-body Boolean semantics;
+- patterned Pad/Pocket/Shell/edge-treatment groups and circular/bidirectional patterns.
 
 These require explicit contracts and tests before capability flags may be enabled. Shell capability is enabled only on the exact path; the lightweight kernel does not claim Shell parity.
 
