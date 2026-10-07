@@ -12,7 +12,7 @@ function baseDocument() {
 }
 
 describe('project schema migration', () => {
-  for (const version of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]) {
+  for (const version of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]) {
     it(`loads schema v${version} into the current base-XZ sketch contract`, () => {
       const doc = baseDocument();
       doc.schemaVersion = version;
@@ -25,17 +25,48 @@ describe('project schema migration', () => {
       const parsed = parseProjectDocument(JSON.stringify(doc));
       const migratedSketch = parsed.project.features.find((feature): feature is SketchFeature => feature.kind === 'sketch')!;
       expect(parsed.sourceSchemaVersion).toBe(version);
-      expect(parsed.schemaVersion).toBe(12);
+      expect(parsed.schemaVersion).toBe(13);
       expect(parsed.migrated).toBe(true);
       expect(migratedSketch.params.plane).toEqual({ kind: 'base-xz' });
     });
   }
 
-  it('round-trips schema v12', () => {
+  it('migrates schema v12 print profiles to explicit uncalibrated fit intent', () => {
+    const doc = baseDocument();
+    doc.schemaVersion = 12;
+    delete (doc.project.printProfile as unknown as { fitCalibration?: unknown }).fitCalibration;
+
+    const parsed = parseProjectDocument(JSON.stringify(doc));
+
+    expect(parsed.sourceSchemaVersion).toBe(12);
+    expect(parsed.schemaVersion).toBe(13);
+    expect(parsed.project.printProfile.fitCalibration).toEqual({
+      registrationClearancePerSideMm: null,
+    });
+  });
+
+  it('round-trips calibrated registration clearance in schema v13', () => {
+    const project = createDefaultProject();
+    project.printProfile.fitCalibration.registrationClearancePerSideMm = 0.28;
+
+    const parsed = parseProjectDocument(serializeProject(project));
+
+    expect(parsed.project.printProfile.fitCalibration.registrationClearancePerSideMm).toBe(0.28);
+    expect(parsed.migrated).toBe(false);
+  });
+
+  it('rejects out-of-range registration calibration in schema v13', () => {
+    const doc = baseDocument();
+    doc.project.printProfile.fitCalibration.registrationClearancePerSideMm = 3;
+
+    expect(() => parseProjectDocument(JSON.stringify(doc))).toThrow(/0.05 to 2 mm/i);
+  });
+
+  it('round-trips schema v13', () => {
     const project = createDefaultProject();
     const parsed = parseProjectDocument(serializeProject(project));
-    expect(parsed.schemaVersion).toBe(12);
-    expect(parsed.sourceSchemaVersion).toBe(12);
+    expect(parsed.schemaVersion).toBe(13);
+    expect(parsed.sourceSchemaVersion).toBe(13);
     expect(parsed.migrated).toBe(false);
     expect(parsed.project.id).toBe(project.id);
   });
