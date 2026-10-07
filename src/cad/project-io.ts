@@ -357,12 +357,12 @@ function readFeature(value: unknown, index: number, sourceSchemaVersion: number)
     const plane = planeKind === 'global'
       ? (() => {
           if (axis !== 'x' && axis !== 'z') throw new Error(`${label}.params.plane.axis must be x or z for global Mirror.`);
-          return { kind: 'global' as const, axis, offsetMm };
+          return { kind: 'global' as const, axis: axis as 'x' | 'z', offsetMm };
         })()
       : planeKind === 'face-local'
         ? (() => {
             if (axis !== 'u' && axis !== 'v') throw new Error(`${label}.params.plane.axis must be u or v for face-local Mirror.`);
-            return { kind: 'face-local' as const, axis, offsetMm };
+            return { kind: 'face-local' as const, axis: axis as 'u' | 'v', offsetMm };
           })()
         : (() => { throw new Error(`${label}.params.plane.kind must be global or face-local.`); })();
     return { id, kind, name, enabled, params: {
