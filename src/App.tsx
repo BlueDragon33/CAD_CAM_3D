@@ -30,6 +30,8 @@ import { downloadProjectStlAdaptive, type StlExportReport } from './manufacturin
 import { downloadProjectStep, type StepExportReport } from './manufacturing/step-export';
 import { downloadProjectThreeMf, type ThreeMfExportReport } from './manufacturing/three-mf';
 import { downloadProjectSplitThreeMf, type SplitThreeMfExportReport } from './manufacturing/split-export';
+import { planSplitAlignment } from './manufacturing/alignment-plan';
+import { downloadProjectAlignedSplitThreeMf, type AlignedSplitThreeMfExportReport } from './manufacturing/aligned-split-export';
 import { Sketcher } from './components/Sketcher';
 import { Viewport } from './components/Viewport';
 import { defaultManagementPolicy, managementIdentity } from './management/policy';
@@ -74,11 +76,13 @@ export default function App() {
   const [lastStepExport, setLastStepExport] = useState<StepExportReport | null>(null);
   const [lastThreeMfExport, setLastThreeMfExport] = useState<ThreeMfExportReport | null>(null);
   const [lastSplitThreeMfExport, setLastSplitThreeMfExport] = useState<SplitThreeMfExportReport | null>(null);
+  const [lastAlignedSplitThreeMfExport, setLastAlignedSplitThreeMfExport] = useState<AlignedSplitThreeMfExportReport | null>(null);
   const [manufacturingReport, setManufacturingReport] = useState<ManufacturingReadinessReport | null>(null);
   const [manufacturingBusy, setManufacturingBusy] = useState(false);
   const [stlBusy, setStlBusy] = useState(false);
   const [threeMfBusy, setThreeMfBusy] = useState(false);
   const [splitThreeMfBusy, setSplitThreeMfBusy] = useState(false);
+  const [alignedSplitThreeMfBusy, setAlignedSplitThreeMfBusy] = useState(false);
   const [exactBusy, setExactBusy] = useState(false);
   const projectInputRef = useRef<HTMLInputElement>(null);
   const policy = defaultManagementPolicy;
@@ -88,6 +92,12 @@ export default function App() {
   const selectedSketchSolution = useMemo(
     () => selectedFeature?.kind === 'sketch' ? solveSketch(project, selectedFeature) : null,
     [project, selectedFeature],
+  );
+  const splitAlignmentPlan = useMemo(
+    () => manufacturingReport?.splitPlan
+      ? planSplitAlignment(project, manufacturingReport.splitPlan)
+      : null,
+    [project, manufacturingReport],
   );
 
   useEffect(() => {
@@ -108,6 +118,7 @@ export default function App() {
     // edit invalidates the prior analysis and any split-export result.
     setManufacturingReport(null);
     setLastSplitThreeMfExport(null);
+    setLastAlignedSplitThreeMfExport(null);
   }, [project]);
 
   const setDimension = (key: keyof CadProject['dimensions'], raw: string) => {
@@ -612,6 +623,43 @@ export default function App() {
     }
   };
 
+  const exportAlignedSplitThreeMf = async () => {
+    const splitPlan = manufacturingReport?.splitPlan;
+    const alignmentPlan = splitAlignmentPlan;
+    if (!splitPlan || !alignmentPlan?.ready) {
+      setStatus('Aligned Split 3MF is unavailable: a current supported single-axis split plan is required.');
+      return;
+    }
+    if (manufacturingReport.exportBlocked) {
+      setStatus('Aligned Split 3MF blocked: resolve invalid geometry/project findings first.');
+      return;
+    }
+
+    setAlignedSplitThreeMfBusy(true);
+    setStatus(`Verifying ${alignmentPlan.pins.length} registration-pin corridor(s) and building exact aligned split geometry…`);
+    try {
+      const report = await downloadProjectAlignedSplitThreeMf(
+        project,
+        splitPlan,
+        alignmentPlan,
+      );
+      setLastAlignedSplitThreeMfExport(report);
+      const warningText = report.warnings.length > 0 ? ` · ${report.warnings.join(' ')}` : '';
+      setStatus(
+        `Aligned Split 3MF PASS · ${report.fileName} · ${report.objectCount} object(s) · `
+        + `${report.verifiedPinCount}/${report.plannedPinCount} registration pins verified · `
+        + `expected-volume delta ${report.expectedVolumeDeltaMm3.toFixed(6)} mm³${warningText}`,
+      );
+    } catch (error) {
+      setLastAlignedSplitThreeMfExport(null);
+      setStatus(error instanceof Error
+        ? `Aligned Split 3MF blocked: ${error.message}`
+        : 'Aligned Split 3MF failed.');
+    } finally {
+      setAlignedSplitThreeMfBusy(false);
+    }
+  };
+
   const exportStep = async () => {
     setExactBusy(true); setStatus('Loading OpenCascade WASM and rebuilding exact B-Rep…');
     try {
@@ -646,7 +694,7 @@ export default function App() {
 
   const reset = () => {
     const next = createDefaultProject();
-    setProject(next); setSelectedFeatureId(next.features[1]?.id ?? next.features[0]?.id ?? null); setTopologySelection(null); setLastExport(null); setLastStepExport(null); setLastThreeMfExport(null); setManufacturingReport(null); setRecoveryCandidate(null); setStatus('Workspace reset.');
+    setProject(next); setSelectedFeatureId(next.features[1]?.id ?? next.features[0]?.id ?? null); setTopologySelection(null); setLastExport(null); setLastStepExport(null); setLastThreeMfExport(null); setLastSplitThreeMfExport(null); setLastAlignedSplitThreeMfExport(null); setManufacturingReport(null); setRecoveryCandidate(null); setStatus('Workspace reset.');
   };
 
   const handleTopologySelection = (selection: TopologySelection | null) => {
@@ -960,22 +1008,38 @@ export default function App() {
             </li>)}</ul>
             {manufacturingReport.splitPlan ? <div className="profile-card">
               <strong>Exact split handoff · {manufacturingReport.splitPlan.pieceCount} planned piece(s)</strong>
-              <span>{manufacturingReport.splitPlan.strategy === 'single-axis' ? 'Single-axis' : 'Grid'} · flat seams · multi-object Core 3MF</span>
-              <small>OpenCascade intersects the final B-Rep with each planned envelope. Empty, invalid or disconnected cells fail closed; alignment joints are not generated yet.</small>
+              <span>{manufacturingReport.splitPlan.strategy === 'single-axis' ? 'Single-axis' : 'Grid'} · {manufacturingReport.splitPlan.seams.length} seam candidate(s) · multi-object Core 3MF</span>
+              <small>Flat split remains the accepted baseline. OpenCascade intersects the final B-Rep with each planned envelope; empty, invalid or disconnected cells fail closed.</small>
+              {splitAlignmentPlan?.ready ? <>
+                <small>
+                  Optional registration-only alignment · {splitAlignmentPlan.pins.length} cylindrical pin(s) ·
+                  {' '}{splitAlignmentPlan.pins[0]?.pinDiameterMm.toFixed(2)} mm pin ·
+                  {' '}{splitAlignmentPlan.pins[0]?.clearancePerSideMm.toFixed(2)} mm/side clearance.
+                  Exact full-material corridor verification runs before any pin/pocket geometry is exported. No structural strength is claimed.
+                </small>
+              </> : <small>Automatic registration pins are unavailable for this split geometry/profile. Flat Split 3MF remains available.</small>}
               <div className="topology-bind-actions">
                 <button
                   type="button"
                   onClick={() => void exportSplitThreeMf()}
-                  disabled={manufacturingReport.exportBlocked || splitThreeMfBusy}
+                  disabled={manufacturingReport.exportBlocked || splitThreeMfBusy || alignedSplitThreeMfBusy}
                 >
                   {splitThreeMfBusy ? 'Building split 3MF…' : 'Export Split 3MF'}
                 </button>
+                {splitAlignmentPlan?.ready ? <button
+                  type="button"
+                  onClick={() => void exportAlignedSplitThreeMf()}
+                  disabled={manufacturingReport.exportBlocked || splitThreeMfBusy || alignedSplitThreeMfBusy}
+                >
+                  {alignedSplitThreeMfBusy ? 'Verifying + building…' : 'Export Aligned Split 3MF'}
+                </button> : null}
               </div>
             </div> : null}
           </> : null}
           {lastExport ? <div className="profile-card"><strong>Last STL · {lastExport.valid ? 'PASS' : 'WARN'}</strong><span>{lastExport.triangleCount} triangles · {(lastExport.byteLength / 1024).toFixed(1)} KB</span><small>{lastExport.messages.join(' ')}</small><small>Kernel: {lastExport.kernelId}</small></div> : null}
           {lastThreeMfExport ? <div className="profile-card"><strong>Last 3MF · {lastThreeMfExport.valid ? 'PASS' : 'WARN'}</strong><span>{lastThreeMfExport.triangleCount} triangles · {(lastThreeMfExport.byteLength / 1024).toFixed(1)} KB · {lastThreeMfExport.unit}</span><small>Kernel: {lastThreeMfExport.kernelId} · Core 3MF single-object package</small>{lastThreeMfExport.warnings.length > 0 ? <small>{lastThreeMfExport.warnings.join(' ')}</small> : null}</div> : null}
           {lastSplitThreeMfExport ? <div className="profile-card"><strong>Last Split 3MF · {lastSplitThreeMfExport.valid && lastSplitThreeMfExport.volumeConserved ? 'PASS' : 'WARN'}</strong><span>{lastSplitThreeMfExport.objectCount} object(s) · {lastSplitThreeMfExport.triangleCount} triangles · {(lastSplitThreeMfExport.byteLength / 1024).toFixed(1)} KB</span><small>Exact B-Rep · volume delta {lastSplitThreeMfExport.volumeDeltaMm3.toFixed(6)} mm³ · flat seams only</small>{lastSplitThreeMfExport.warnings.length > 0 ? <small>{lastSplitThreeMfExport.warnings.join(' ')}</small> : null}</div> : null}
+          {lastAlignedSplitThreeMfExport ? <div className="profile-card"><strong>Last Aligned Split 3MF · {lastAlignedSplitThreeMfExport.valid ? 'PASS' : 'WARN'}</strong><span>{lastAlignedSplitThreeMfExport.objectCount} object(s) · {lastAlignedSplitThreeMfExport.verifiedPinCount}/{lastAlignedSplitThreeMfExport.plannedPinCount} registration pin(s) verified · {(lastAlignedSplitThreeMfExport.byteLength / 1024).toFixed(1)} KB</span><small>Registration only · no structural claim · expected-volume delta {lastAlignedSplitThreeMfExport.expectedVolumeDeltaMm3.toFixed(6)} mm³</small>{lastAlignedSplitThreeMfExport.warnings.length > 0 ? <small>{lastAlignedSplitThreeMfExport.warnings.join(' ')}</small> : null}</div> : null}
           {lastStepExport ? <div className="profile-card"><strong>Last STEP · {lastStepExport.valid ? 'PASS' : 'WARN'}</strong><span>{lastStepExport.faceCount} faces · {lastStepExport.edgeCount} edges · {(lastStepExport.byteLength / 1024).toFixed(1)} KB</span><small>Volume {lastStepExport.volumeMm3.toFixed(1)} mm³ · Surface {lastStepExport.surfaceAreaMm2.toFixed(1)} mm²</small><small>Kernel: {lastStepExport.kernelId}{lastStepExport.filletApplied ? ' · fillet' : ''}{lastStepExport.chamferApplied ? ' · chamfer' : ''}</small>{lastStepExport.warnings.length > 0 ? <small>{lastStepExport.warnings.join(' ')}</small> : null}</div> : null}
           <h2>Kernel</h2>
           <div className="profile-card"><strong>{activeCadKernel.label}</strong><span>{activeCadKernel.capabilities.exactBrep ? 'Exact B-Rep' : 'Fast deterministic mesh'} · STL {activeCadKernel.capabilities.stlExport ? 'ready' : 'off'}</span><small>Simple vertical features stay lightweight. Exact edge/face features promote preview/STL automatically.</small></div>
