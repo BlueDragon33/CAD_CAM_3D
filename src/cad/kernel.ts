@@ -11,6 +11,7 @@ export type CadKernelCapabilities = {
   exactChamfer: boolean;
   attachedPlanarMaterialFeatures: boolean;
   shell: boolean;
+  linearPattern: boolean;
 };
 
 export type CadKernel = {
@@ -43,6 +44,7 @@ export const meshMvpKernel: CadKernel = {
     exactChamfer: false,
     attachedPlanarMaterialFeatures: false,
     shell: false,
+    linearPattern: false,
   },
   buildMesh(project) {
     return buildPartGeometry(project);
