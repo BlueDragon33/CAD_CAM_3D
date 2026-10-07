@@ -405,6 +405,44 @@ function resolveEdgeTreatmentHandles(
   return [handle];
 }
 
+function resolveShellOpeningHandles(
+  kernel: OcctKernel,
+  solid: ShapeHandle,
+  openingRefs: FaceTopologyRef[],
+  rebuilt: RebuiltPart,
+  tracker: FaceLineageTracker,
+  featureName: string,
+  warnings: string[],
+) {
+  const candidates = currentExactFaces(kernel, solid, tracker);
+  const spanMm = Math.max(rebuilt.width, rebuilt.depth, rebuilt.height, 1);
+  const hashes: number[] = [];
+
+  for (const ref of openingRefs) {
+    const resolution = resolveFaceTopologyRef(ref, candidates, spanMm);
+    if (!resolution) {
+      warnings.push(`${featureName}: Shell opening face could not be resolved safely after rebuild.`);
+      return [];
+    }
+    if (resolution.confidence === 'medium') {
+      warnings.push(`${featureName}: Shell opening face resolved with medium confidence after upstream rebuild.`);
+    }
+    hashes.push(resolution.face.hash);
+  }
+
+  const handles: ShapeHandle[] = [];
+  for (const hash of [...new Set(hashes)]) {
+    const handle = findFaceHandleByHash(kernel, solid, hash);
+    if (!handle) {
+      for (const existing of handles) kernel.release(existing);
+      warnings.push(`${featureName}: resolved Shell opening disappeared before exact execution.`);
+      return [];
+    }
+    handles.push(handle);
+  }
+  return handles;
+}
+
 function buildExactShape(kernel: OcctKernel, project: CadProject, rebuilt: RebuiltPart) {
   const warnings: string[] = [];
   let filletApplied = false;
