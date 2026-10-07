@@ -24,3 +24,12 @@ The initial implementation lives on a development branch before being promoted t
 Repository này công bố metadata tại `control/application-management.contract.json` theo schema `application-management.contract/v1`.
 
 Contract hiện chỉ dùng để Application Management tự nhận diện ứng dụng và phân loại **Kỹ thuật**. Remote admin, device registry và production runtime vẫn **chưa sẵn sàng**; Trung tâm không được suy diễn hoặc bật thao tác giả trước khi backend thật được triển khai.
+
+
+## Operational sovereignty
+
+This repository adopts **Universal Constitution 1.2.0** at Blueprint Level **B2**.
+
+CAD/CAM project files and design truth remain local and portable. Cloud rendering, AI generation and Google Drive are optional adapters only. Basic modeling/edit/export must not require a paid provider, and canonical geometry must remain exportable in documented formats.
+
+Canonical dependency posture: `.blueprint/dependency-budget.json`.
