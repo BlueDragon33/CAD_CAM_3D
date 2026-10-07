@@ -1,6 +1,6 @@
 import type { SketchEntity } from './sketch';
 
-export type FeatureKind = 'sketch' | 'extrude' | 'pad' | 'pocket' | 'cut' | 'hole' | 'fillet' | 'chamfer' | 'shell';
+export type FeatureKind = 'sketch' | 'extrude' | 'pad' | 'pocket' | 'cut' | 'hole' | 'fillet' | 'chamfer' | 'shell' | 'linear-pattern';
 
 export type Dimensions = {
   width: number;
@@ -147,7 +147,14 @@ export type ShellFeature = FeatureBase<'shell', {
   join: 'arc';
 }>;
 
-export type CadFeature = SketchFeature | ExtrudeFeature | PadFeature | PocketFeature | CutFeature | HoleFeature | FilletFeature | ChamferFeature | ShellFeature;
+export type LinearPatternFeature = FeatureBase<'linear-pattern', {
+  sourceFeatureId: string;
+  count: number;
+  spacingMm: number;
+  axis: 'x' | 'z' | 'u' | 'v';
+}>;
+
+export type CadFeature = SketchFeature | ExtrudeFeature | PadFeature | PocketFeature | CutFeature | HoleFeature | FilletFeature | ChamferFeature | ShellFeature | LinearPatternFeature;
 
 export type PrintProfile = {
   name: string;
@@ -177,6 +184,7 @@ function featureName(kind: FeatureKind, project: CadProject) {
     fillet: 'Fillet',
     chamfer: 'Chamfer',
     shell: 'Shell',
+    'linear-pattern': 'Linear Pattern',
   };
   return `${label[kind]} ${count}`;
 }
@@ -249,13 +257,28 @@ export function createFeature(kind: FeatureKind, project: CadProject): CadFeatur
     };
   }
 
+  if (kind === 'shell') {
+    return {
+      ...base,
+      kind,
+      params: {
+        thicknessMm: 2,
+        openings: [],
+        join: 'arc',
+      },
+    };
+  }
+
+  const source = [...project.features].reverse().find((feature) => feature.kind === 'hole' || feature.kind === 'cut');
+  const faceBound = source && (source.kind === 'hole' || source.kind === 'cut') && source.params.placement.mode === 'face';
   return {
     ...base,
-    kind: 'shell',
+    kind: 'linear-pattern',
     params: {
-      thicknessMm: 2,
-      openings: [],
-      join: 'arc',
+      sourceFeatureId: source?.id ?? '',
+      count: 3,
+      spacingMm: 10,
+      axis: faceBound ? 'u' : 'x',
     },
   };
 }
