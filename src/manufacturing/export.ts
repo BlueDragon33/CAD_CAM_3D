@@ -123,6 +123,18 @@ function binaryOutputToBlob(output: string | DataView) {
   return new Blob([bytes.buffer], { type: 'model/stl' });
 }
 
+/**
+ * The interactive workspace is Y-up while slicers conventionally treat Z as
+ * build height. Rotate the exported mesh +90° around X so app (X,Y,Z) becomes
+ * manufacturing (X,-Z,Y) without a reflection/winding flip.
+ */
+export function createManufacturingExportMesh(geometry: THREE.BufferGeometry) {
+  const mesh = new THREE.Mesh(geometry);
+  mesh.rotation.x = Math.PI / 2;
+  mesh.updateMatrixWorld(true);
+  return mesh;
+}
+
 function createStlFromGeometry(
   project: CadProject,
   geometry: THREE.BufferGeometry,
@@ -135,8 +147,7 @@ function createStlFromGeometry(
     throw new Error(inspection.messages.join(' '));
   }
 
-  const mesh = new THREE.Mesh(geometry);
-  mesh.updateMatrixWorld(true);
+  const mesh = createManufacturingExportMesh(geometry);
   const exporter = new STLExporter();
   const output = exporter.parse(mesh, { binary: true });
   const blob = binaryOutputToBlob(output);
