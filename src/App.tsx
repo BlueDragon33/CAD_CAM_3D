@@ -33,7 +33,7 @@ import { Viewport } from './components/Viewport';
 import { defaultManagementPolicy, managementIdentity } from './management/policy';
 
 const featureLabels: Record<FeatureKind, string> = {
-  sketch: 'Sketch', extrude: 'Extrude', pad: 'Pad', pocket: 'Pocket', cut: 'Cut', hole: 'Hole', fillet: 'Fillet', chamfer: 'Chamfer', shell: 'Shell', 'linear-pattern': 'Linear Pattern', mirror: 'Mirror',
+  sketch: 'Sketch', 'datum-axis': 'Datum Axis', extrude: 'Extrude', pad: 'Pad', pocket: 'Pocket', cut: 'Cut', hole: 'Hole', fillet: 'Fillet', chamfer: 'Chamfer', shell: 'Shell', 'linear-pattern': 'Linear Pattern', mirror: 'Mirror',
 };
 
 function clampDimension(value: number, minimum = 0.1) {
@@ -129,6 +129,27 @@ export default function App() {
         },
       };
       appendFeature(feature, 'Attached Sketch added on the selected planar face with a durable FaceTopologyRef and local U/V origin.');
+      return;
+    }
+    if (feature.kind === 'datum-axis') {
+      if (!selectedFeature || selectedFeature.kind !== 'sketch') {
+        setStatus('Datum Axis creation blocked: select an earlier Sketch first.');
+        return;
+      }
+      feature = {
+        ...feature,
+        params: {
+          source: selectedFeature.params.plane.kind === 'face'
+            ? { kind: 'sketch-local', sketchId: selectedFeature.id, axis: 'u', offsetMm: 0 }
+            : { kind: 'base-xz', sketchId: selectedFeature.id, axis: 'x', offsetMm: 0 },
+        },
+      };
+      appendFeature(
+        feature,
+        selectedFeature.params.plane.kind === 'face'
+          ? 'Datum Axis added from the selected attached Sketch using durable local U/V semantics.'
+          : 'Datum Axis added from the selected base-XZ Sketch using durable X/Z semantics.',
+      );
       return;
     }
     if (feature.kind === 'pad' || feature.kind === 'pocket') {
@@ -495,6 +516,31 @@ export default function App() {
         </div>
       </div>;
     }
+    if (selectedFeature.kind === 'datum-axis') {
+      const source = project.features.find((feature) => feature.id === selectedFeature.params.source.sketchId);
+      const local = selectedFeature.params.source.kind === 'sketch-local';
+      return <div className="inspector-grid">
+        <div className="constraint-state" data-ready={source?.kind === 'sketch'}>
+          <strong>{source?.kind === 'sketch' ? `Source · ${source.name}` : 'Source missing'}</strong>
+          <small>{local ? 'Attached Sketch local datum' : 'Base-XZ datum'} · persisted engineering intent.</small>
+        </div>
+        <label><span>Axis</span><select value={selectedFeature.params.source.axis} onChange={(e) => updateFeature(selectedFeature.id, (feature) => {
+          if (feature.kind !== 'datum-axis') return feature;
+          return feature.params.source.kind === 'sketch-local'
+            ? { ...feature, params: { source: { ...feature.params.source, axis: e.target.value as 'u' | 'v' } } }
+            : { ...feature, params: { source: { ...feature.params.source, axis: e.target.value as 'x' | 'z' } } };
+        })}>
+          {local ? <><option value="u">Local U</option><option value="v">Local V</option></> : <><option value="x">Global X</option><option value="z">Global Z</option></>}
+        </select></label>
+        <label><span>Offset</span><div><input type="number" step="0.1" value={selectedFeature.params.source.offsetMm} onChange={(e) => updateFeature(selectedFeature.id, (feature) => feature.kind === 'datum-axis'
+          ? { ...feature, params: { source: { ...feature.params.source, offsetMm: Number(e.target.value) || 0 } } }
+          : feature)} /><b>mm</b></div></label>
+        <div className="constraint-state" data-ready>
+          <strong>Durable datum foundation</strong>
+          <small>Designed for Revolve and future axis-driven features; no runtime kernel handle is persisted.</small>
+        </div>
+      </div>;
+    }
     if (selectedFeature.kind === 'extrude') return <div className="inspector-grid">
       <label><span>Distance</span><div><input type="number" step="0.1" value={project.dimensions.height} onChange={(e) => setDimension('height', e.target.value)} /><b>mm</b></div></label>
       <div className="constraint-state" data-ready><strong>Parametric</strong><small>Extrude distance is linked to the named height parameter.</small></div>
@@ -626,11 +672,13 @@ export default function App() {
       <section className="workspace">
         <aside className="panel tools-panel">
           <h2>Build</h2>
-          {(['sketch', 'extrude', 'pad', 'pocket', 'hole', 'cut', 'linear-pattern', 'mirror', 'fillet', 'chamfer', 'shell'] as FeatureKind[]).map((kind) => (
+          {(['sketch', 'datum-axis', 'extrude', 'pad', 'pocket', 'hole', 'cut', 'linear-pattern', 'mirror', 'fillet', 'chamfer', 'shell'] as FeatureKind[]).map((kind) => (
             <button key={kind} type="button" className="tool-button" onClick={() => addFeature(kind)}>
               <span>{featureLabels[kind]}</span>
               <small>{kind === 'sketch' && topologySelection?.kind === 'face'
   ? 'Attach selected face'
+  : kind === 'datum-axis' && selectedFeature?.kind === 'sketch'
+    ? 'Use selected Sketch'
   : (kind === 'pad' || kind === 'pocket') && selectedFeature?.kind === 'sketch' && selectedFeature.params.plane.kind === 'face'
     ? 'Use selected Sketch'
     : (kind === 'fillet' || kind === 'chamfer') && topologySelection?.kind === 'edge'
@@ -672,7 +720,7 @@ export default function App() {
 
         <aside className="panel history-panel">
           <h2>Feature history</h2>
-          <ol className="feature-tree">{project.features.map((feature) => <li key={feature.id} data-selected={feature.id === selectedFeatureId} data-disabled={!feature.enabled}><button type="button" onClick={() => setSelectedFeatureId(feature.id)}><span className="feature-dot" /><div><strong>{feature.name}</strong><small>{feature.kind}{feature.kind === 'sketch' ? ` · ${feature.params.plane.kind === 'face' ? 'attached' : 'base XZ'}${feature.params.entities.length > 0 ? ` · ${feature.params.entities.length} primitive(s)` : ''}` : ''}{(feature.kind === 'fillet' || feature.kind === 'chamfer') && feature.params.selection.mode === 'topology' ? ' · topology-bound' : ''}{(feature.kind === 'hole' || feature.kind === 'cut') && feature.params.placement.mode === 'face' ? ' · face-bound' : ''}{(feature.kind === 'pad' || feature.kind === 'pocket') ? ` · sketch ${feature.params.sketchId.slice(0, 8)}` : ''}{feature.enabled ? '' : ' · suppressed'}</small></div></button></li>)}</ol>
+          <ol className="feature-tree">{project.features.map((feature) => <li key={feature.id} data-selected={feature.id === selectedFeatureId} data-disabled={!feature.enabled}><button type="button" onClick={() => setSelectedFeatureId(feature.id)}><span className="feature-dot" /><div><strong>{feature.name}</strong><small>{feature.kind}{feature.kind === 'sketch' ? ` · ${feature.params.plane.kind === 'face' ? 'attached' : 'base XZ'}${feature.params.entities.length > 0 ? ` · ${feature.params.entities.length} primitive(s)` : ''}` : ''}{(feature.kind === 'fillet' || feature.kind === 'chamfer') && feature.params.selection.mode === 'topology' ? ' · topology-bound' : ''}{(feature.kind === 'hole' || feature.kind === 'cut') && feature.params.placement.mode === 'face' ? ' · face-bound' : ''}{(feature.kind === 'pad' || feature.kind === 'pocket') ? ` · sketch ${feature.params.sketchId.slice(0, 8)}` : ''}{feature.kind === 'datum-axis' ? ` · ${feature.params.source.axis}` : ''}{feature.enabled ? '' : ' · suppressed'}</small></div></button></li>)}</ol>
           <h2>Feature inspector</h2>
           <div className="feature-inspector">{renderInspector()}{selectedFeature ? <div className="inspector-actions"><button type="button" onClick={toggleSelectedFeature}>{selectedFeature.enabled ? 'Suppress' : 'Enable'}</button><button type="button" className="danger" onClick={removeSelectedFeature}>Remove</button></div> : null}</div>
           <h2>Rebuild diagnostics</h2>
