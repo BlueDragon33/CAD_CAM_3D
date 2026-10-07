@@ -25,17 +25,17 @@ describe('project schema migration', () => {
       const parsed = parseProjectDocument(JSON.stringify(doc));
       const migratedSketch = parsed.project.features.find((feature): feature is SketchFeature => feature.kind === 'sketch')!;
       expect(parsed.sourceSchemaVersion).toBe(version);
-      expect(parsed.schemaVersion).toBe(7);
+      expect(parsed.schemaVersion).toBe(8);
       expect(parsed.migrated).toBe(true);
       expect(migratedSketch.params.plane).toEqual({ kind: 'base-xz' });
     });
   }
 
-  it('round-trips schema v7', () => {
+  it('round-trips schema v8', () => {
     const project = createDefaultProject();
     const parsed = parseProjectDocument(serializeProject(project));
-    expect(parsed.schemaVersion).toBe(7);
-    expect(parsed.sourceSchemaVersion).toBe(7);
+    expect(parsed.schemaVersion).toBe(8);
+    expect(parsed.sourceSchemaVersion).toBe(8);
     expect(parsed.migrated).toBe(false);
     expect(parsed.project.id).toBe(project.id);
   });
