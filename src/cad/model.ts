@@ -1,6 +1,6 @@
 import type { SketchEntity } from './sketch';
 
-export type FeatureKind = 'sketch' | 'extrude' | 'pad' | 'pocket' | 'cut' | 'hole' | 'fillet' | 'chamfer' | 'shell' | 'linear-pattern' | 'mirror';
+export type FeatureKind = 'sketch' | 'datum-axis' | 'extrude' | 'pad' | 'pocket' | 'cut' | 'hole' | 'fillet' | 'chamfer' | 'shell' | 'linear-pattern' | 'mirror';
 
 export type Dimensions = {
   width: number;
@@ -147,6 +147,12 @@ export type ShellFeature = FeatureBase<'shell', {
   join: 'arc';
 }>;
 
+export type DatumAxisFeature = FeatureBase<'datum-axis', {
+  source:
+    | { kind: 'base-xz'; sketchId: string; axis: 'x' | 'z'; offsetMm: number }
+    | { kind: 'sketch-local'; sketchId: string; axis: 'u' | 'v'; offsetMm: number };
+}>;
+
 export type LinearPatternFeature = FeatureBase<'linear-pattern', {
   sourceFeatureId: string;
   count: number;
@@ -161,7 +167,7 @@ export type MirrorFeature = FeatureBase<'mirror', {
     | { kind: 'face-local'; axis: 'u' | 'v'; offsetMm: number };
 }>;
 
-export type CadFeature = SketchFeature | ExtrudeFeature | PadFeature | PocketFeature | CutFeature | HoleFeature | FilletFeature | ChamferFeature | ShellFeature | LinearPatternFeature | MirrorFeature;
+export type CadFeature = SketchFeature | DatumAxisFeature | ExtrudeFeature | PadFeature | PocketFeature | CutFeature | HoleFeature | FilletFeature | ChamferFeature | ShellFeature | LinearPatternFeature | MirrorFeature;
 
 export type PrintProfile = {
   name: string;
@@ -183,6 +189,7 @@ function featureName(kind: FeatureKind, project: CadProject) {
   const count = project.features.filter((feature) => feature.kind === kind).length + 1;
   const label: Record<FeatureKind, string> = {
     sketch: 'Sketch',
+    'datum-axis': 'Datum Axis',
     extrude: 'Extrude',
     pad: 'Pad',
     pocket: 'Pocket',
@@ -219,6 +226,14 @@ export function createFeature(kind: FeatureKind, project: CadProject): CadFeatur
         ],
       },
     };
+  }
+
+  if (kind === 'datum-axis') {
+    const sourceSketch = [...project.features].reverse().find((feature) => feature.kind === 'sketch');
+    const source = sourceSketch?.params.plane.kind === 'face'
+      ? { kind: 'sketch-local' as const, sketchId: sourceSketch.id, axis: 'u' as const, offsetMm: 0 }
+      : { kind: 'base-xz' as const, sketchId: sourceSketch?.id ?? '', axis: 'x' as const, offsetMm: 0 };
+    return { ...base, kind, params: { source } };
   }
 
   if (kind === 'extrude') {
