@@ -126,6 +126,17 @@ export function planSplitAlignment(
   const unsupportedSeamIds: string[] = [];
   const warnings: string[] = [];
 
+  if (splitPlan.strategy !== 'single-axis') {
+    return {
+      strategy: 'dual-cylindrical-registration',
+      ready: false,
+      pins,
+      unsupportedSeamIds: splitPlan.seams.map((seam) => seam.id),
+      warnings: ['Automatic registration pins are intentionally limited to single-axis split plans until multi-axis joint collision rules are proven.'],
+      note: 'Registration-only proposal. Multi-axis grid alignment is fail-closed; no structural strength is assessed.',
+    };
+  }
+
   for (const seam of splitPlan.seams) {
     const negative = pieceById(splitPlan, seam.negativePieceId);
     const positive = pieceById(splitPlan, seam.positivePieceId);
