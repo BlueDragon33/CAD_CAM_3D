@@ -31,6 +31,7 @@ import { downloadProjectStep, type StepExportReport } from './manufacturing/step
 import { downloadProjectThreeMf, type ThreeMfExportReport } from './manufacturing/three-mf';
 import { downloadProjectSplitThreeMf, type SplitThreeMfExportReport } from './manufacturing/split-export';
 import { planSplitAlignment } from './manufacturing/alignment-plan';
+import { deriveRegistrationFitPolicy } from './manufacturing/fit-policy';
 import { downloadProjectAlignedSplitThreeMf, type AlignedSplitThreeMfExportReport } from './manufacturing/aligned-split-export';
 import { Sketcher } from './components/Sketcher';
 import { Viewport } from './components/Viewport';
@@ -99,6 +100,10 @@ export default function App() {
       : null,
     [project, manufacturingReport],
   );
+  const registrationFitPolicy = useMemo(
+    () => deriveRegistrationFitPolicy(project.printProfile),
+    [project.printProfile],
+  );
 
   useEffect(() => {
     if (typeof window === 'undefined') return undefined;
@@ -124,6 +129,31 @@ export default function App() {
   const setDimension = (key: keyof CadProject['dimensions'], raw: string) => {
     const value = clampDimension(Number(raw));
     setProject((current) => ({ ...current, dimensions: { ...current.dimensions, [key]: value } }));
+  };
+
+  const setRegistrationClearance = (raw: string) => {
+    if (raw.trim() === '') {
+      setProject((current) => ({
+        ...current,
+        printProfile: {
+          ...current.printProfile,
+          fitCalibration: { registrationClearancePerSideMm: null },
+        },
+      }));
+      setStatus('Registration clearance reset to the uncalibrated nozzle-relative default.');
+      return;
+    }
+    const parsed = Number(raw);
+    if (!Number.isFinite(parsed)) return;
+    const value = Math.min(2, Math.max(0.05, parsed));
+    setProject((current) => ({
+      ...current,
+      printProfile: {
+        ...current.printProfile,
+        fitCalibration: { registrationClearancePerSideMm: value },
+      },
+    }));
+    setStatus(`Registration clearance calibration set to ${value.toFixed(2)} mm per side. Re-run Analyze Print before exporting aligned split geometry.`);
   };
 
   const appendFeature = (feature: CadFeature, message?: string) => {
@@ -995,7 +1025,31 @@ export default function App() {
           <h2>Rebuild diagnostics</h2>
           <ul className="checks diagnostics">{rebuilt.diagnostics.length === 0 ? <li data-level="ok">Feature history rebuilt without semantic errors.</li> : rebuilt.diagnostics.map((diagnostic, index) => <li key={index} data-level={diagnostic.level}>{diagnostic.message}</li>)}</ul>
           <h2>Print readiness</h2>
-          <div className="profile-card"><strong>{project.printProfile.name}</strong><span>{project.printProfile.material} · {project.printProfile.nozzleMm} mm nozzle</span></div>
+          <div className="profile-card">
+            <strong>{project.printProfile.name}</strong>
+            <span>{project.printProfile.material} · {project.printProfile.nozzleMm} mm nozzle</span>
+            <label>
+              <span>Registration clearance / side</span>
+              <div>
+                <input
+                  type="number"
+                  min="0.05"
+                  max="2"
+                  step="0.01"
+                  placeholder={registrationFitPolicy ? registrationFitPolicy.clearancePerSideMm.toFixed(2) : ''}
+                  value={project.printProfile.fitCalibration.registrationClearancePerSideMm ?? ''}
+                  onChange={(event) => setRegistrationClearance(event.target.value)}
+                  aria-label="Registration clearance per side in millimeters"
+                />
+                <b>mm</b>
+              </div>
+            </label>
+            <small>
+              {registrationFitPolicy?.source === 'project-calibrated'
+                ? 'Project calibration saved with this CAD file. It controls registration pocket clearance but does not certify fit.'
+                : `Uncalibrated default: ${registrationFitPolicy?.clearancePerSideMm.toFixed(2) ?? '—'} mm/side. Enter a measured printer/material value to persist it with the project.`}
+            </small>
+          </div>
           <ul className="checks">{checks.map((check, index) => <li key={index} data-level={check.level}>{check.message}</li>)}</ul>
           {manufacturingReport ? <>
             <div className="profile-card">
