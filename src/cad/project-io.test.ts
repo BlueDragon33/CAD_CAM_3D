@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createDefaultProject, type PadFeature, type ShellFeature, type SketchFeature } from './model';
+import { createDefaultProject, type LinearPatternFeature, type PadFeature, type ShellFeature, type SketchFeature } from './model';
 import { parseProjectDocument, serializeProject } from './project-io';
 
 function baseDocument() {
@@ -12,7 +12,7 @@ function baseDocument() {
 }
 
 describe('project schema migration', () => {
-  for (const version of [1, 2, 3, 4, 5, 6, 7]) {
+  for (const version of [1, 2, 3, 4, 5, 6, 7, 8]) {
     it(`loads schema v${version} into the current base-XZ sketch contract`, () => {
       const doc = baseDocument();
       doc.schemaVersion = version;
@@ -25,22 +25,22 @@ describe('project schema migration', () => {
       const parsed = parseProjectDocument(JSON.stringify(doc));
       const migratedSketch = parsed.project.features.find((feature): feature is SketchFeature => feature.kind === 'sketch')!;
       expect(parsed.sourceSchemaVersion).toBe(version);
-      expect(parsed.schemaVersion).toBe(8);
+      expect(parsed.schemaVersion).toBe(9);
       expect(parsed.migrated).toBe(true);
       expect(migratedSketch.params.plane).toEqual({ kind: 'base-xz' });
     });
   }
 
-  it('round-trips schema v8', () => {
+  it('round-trips schema v9', () => {
     const project = createDefaultProject();
     const parsed = parseProjectDocument(serializeProject(project));
     expect(parsed.schemaVersion).toBe(8);
-    expect(parsed.sourceSchemaVersion).toBe(8);
+    expect(parsed.sourceSchemaVersion).toBe(9);
     expect(parsed.migrated).toBe(false);
     expect(parsed.project.id).toBe(project.id);
   });
 
-  it('round-trips schema v8 Shell intent with durable opening references', () => {
+  it('round-trips schema v9 Shell intent with durable opening references', () => {
     const project = createDefaultProject();
     const shell: ShellFeature = {
       id: 'shell-1',
@@ -76,6 +76,42 @@ describe('project schema migration', () => {
       params: { thicknessMm: 2, openings: [], join: 'arc' },
     } as unknown as ShellFeature);
     expect(() => parseProjectDocument(JSON.stringify(doc))).toThrow(/at least one face reference/i);
+  });
+
+  it('round-trips schema v9 Linear Pattern without copying its source feature', () => {
+    const project = createDefaultProject();
+    const source = {
+      id: 'hole-source',
+      kind: 'hole',
+      name: 'Hole Source',
+      enabled: true,
+      params: { diameter: 4, x: -10, z: 0, through: true, placement: { mode: 'global-xz' } },
+    } as const;
+    const pattern: LinearPatternFeature = {
+      id: 'pattern-1',
+      kind: 'linear-pattern',
+      name: 'Linear Pattern 1',
+      enabled: true,
+      params: { sourceFeatureId: source.id, count: 4, spacingMm: 8, axis: 'x' },
+    };
+    project.features.push(source, pattern);
+    const parsed = parseProjectDocument(serializeProject(project));
+    const loaded = parsed.project.features.find((feature): feature is LinearPatternFeature => feature.kind === 'linear-pattern');
+    expect(loaded?.params).toEqual(pattern.params);
+    expect(parsed.project.features.filter((feature) => feature.kind === 'hole')).toHaveLength(1);
+  });
+
+  it('rejects Linear Pattern with a missing or incompatible source', () => {
+    const doc = baseDocument();
+    doc.schemaVersion = 9;
+    doc.project.features.push({
+      id: 'pattern-invalid',
+      kind: 'linear-pattern',
+      name: 'Invalid Pattern',
+      enabled: true,
+      params: { sourceFeatureId: 'missing-hole', count: 3, spacingMm: 8, axis: 'x' },
+    } as unknown as LinearPatternFeature);
+    expect(() => parseProjectDocument(JSON.stringify(doc))).toThrow(/earlier Hole or Cut/i);
   });
 
   it('rejects Pad when its source sketch is missing or later', () => {
