@@ -16,10 +16,10 @@ import type {
 import type { SketchEntity, SketchPoint2D } from './sketch';
 
 const PROJECT_FORMAT = 'cad-cam-3d-project';
-const PROJECT_SCHEMA_VERSION = 12;
+const PROJECT_SCHEMA_VERSION = 13;
 const materials = new Set<PrintProfile['material']>(['PLA', 'PETG', 'ABS', 'ASA', 'PA-CF', 'Other']);
 
-export type ProjectDocumentV12 = {
+export type ProjectDocumentV13 = {
   format: typeof PROJECT_FORMAT;
   schemaVersion: typeof PROJECT_SCHEMA_VERSION;
   savedAt: string;
@@ -402,15 +402,31 @@ function readFeature(value: unknown, index: number, sourceSchemaVersion: number)
   throw new Error(`${label} has unsupported feature kind ${kind}.`);
 }
 
-function readPrintProfile(value: unknown): PrintProfile {
+function readPrintProfile(value: unknown, sourceSchemaVersion: number): PrintProfile {
   if (!isRecord(value)) throw new Error('project.printProfile must be an object.');
   const material = readString(value, 'material', 'project.printProfile.material');
   if (!materials.has(material as PrintProfile['material'])) throw new Error(`Unsupported print material ${material}.`);
+
+  let registrationClearancePerSideMm: number | null = null;
+  if (sourceSchemaVersion >= 13) {
+    if (!isRecord(value.fitCalibration)) {
+      throw new Error('project.printProfile.fitCalibration must be an object.');
+    }
+    const calibration = value.fitCalibration.registrationClearancePerSideMm;
+    if (calibration !== null) {
+      if (typeof calibration !== 'number' || !Number.isFinite(calibration) || calibration < 0.05 || calibration > 2) {
+        throw new Error('project.printProfile.fitCalibration.registrationClearancePerSideMm must be null or a finite number from 0.05 to 2 mm.');
+      }
+      registrationClearancePerSideMm = calibration;
+    }
+  }
+
   return {
     name: readString(value, 'name', 'project.printProfile.name'),
     buildVolume: readDimensions(value.buildVolume, 'project.printProfile.buildVolume'),
     nozzleMm: readNumber(value, 'nozzleMm', 'project.printProfile.nozzleMm', 0.1),
     material: material as PrintProfile['material'],
+    fitCalibration: { registrationClearancePerSideMm },
   };
 }
 
@@ -491,7 +507,7 @@ function readProject(value: unknown, sourceSchemaVersion: number): CadProject {
     id: readString(value, 'id', 'project.id'), name: readString(value, 'name', 'project.name'),
     dimensions: readDimensions(value.dimensions, 'project.dimensions'),
     features,
-    printProfile: readPrintProfile(value.printProfile),
+    printProfile: readPrintProfile(value.printProfile, sourceSchemaVersion),
   };
 }
 
@@ -501,7 +517,7 @@ function safeFileName(name: string) {
 }
 
 export function serializeProject(project: CadProject): string {
-  const document: ProjectDocumentV12 = { format: PROJECT_FORMAT, schemaVersion: PROJECT_SCHEMA_VERSION, savedAt: new Date().toISOString(), project };
+  const document: ProjectDocumentV13 = { format: PROJECT_FORMAT, schemaVersion: PROJECT_SCHEMA_VERSION, savedAt: new Date().toISOString(), project };
   return JSON.stringify(document, null, 2);
 }
 
@@ -511,7 +527,7 @@ export function parseProjectDocument(text: string): { project: CadProject; schem
   if (!isRecord(raw)) throw new Error('Project document must be an object.');
   if (raw.format !== PROJECT_FORMAT) throw new Error('This file is not a CAD_CAM_3D project document.');
   const sourceSchemaVersion = raw.schemaVersion;
-  if (![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, PROJECT_SCHEMA_VERSION].includes(sourceSchemaVersion as number)) {
+  if (![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, PROJECT_SCHEMA_VERSION].includes(sourceSchemaVersion as number)) {
     throw new Error(`Unsupported project schema version ${String(sourceSchemaVersion)}. Supported versions are 1 through ${PROJECT_SCHEMA_VERSION}.`);
   }
   return {
