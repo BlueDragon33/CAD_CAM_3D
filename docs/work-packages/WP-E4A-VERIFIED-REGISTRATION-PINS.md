@@ -1,6 +1,6 @@
 # WP-E4A — Verified Registration Pin Foundation
 
-Status: **ACTIVE**
+Status: **HUMAN GATE OPEN — AUTOMATED GATES PASS**
 Parent: `WP-E4-SPLIT-SEAM-JOINING-FOUNDATION`
 Blueprint zone: Floors 51–60 — Manufacturing Intelligence
 
@@ -65,3 +65,17 @@ Multi-axis grid alignment is intentionally unsupported in this slice.
 ## Human gate
 
 Do not expose/accept this as a user-facing manufacturing feature until the aligned multi-object 3MF path is integrated and visually checked in a slicer. Flat Split 3MF acceptance does not automatically accept registration-pin geometry.
+
+## Automated evidence
+
+- deterministic planner unit coverage: PASS;
+- too-small seam and multi-axis grid fail-closed coverage: PASS;
+- exact positive-volume corridor smoke: PASS;
+- exact male-pin fuse / female-pocket cut smoke: PASS;
+- TypeScript: PASS;
+- unit regression: PASS;
+- exact B-Rep smoke suite: PASS;
+- production build: PASS;
+- Preview Pages deployment: PASS.
+
+Human slicer validation remains required before this registration feature is accepted.
