@@ -1,6 +1,6 @@
 # WP-D2 — Deterministic Mirror Foundation
 
-Status: **ACTIVE**
+Status: **FOUNDATION ACCEPTED**
 Blueprint zone: Floors 41–50 — Parametric Modeling
 Constitution: `blueprint-os:universal-century-grade@1.2.0`
 
