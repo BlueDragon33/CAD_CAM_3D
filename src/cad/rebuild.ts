@@ -2,6 +2,7 @@ import { solveSketch } from './constraints';
 import type {
   CadProject,
   ChamferFeature,
+  DatumAxisFeature,
   CutFeature,
   FilletFeature,
   HoleFeature,
@@ -9,6 +10,7 @@ import type {
   MirrorFeature,
   PadFeature,
   PocketFeature,
+  RevolveFeature,
   ShellFeature,
   SketchFeature,
 } from './model';
@@ -24,7 +26,7 @@ export type RebuildDiagnostic = {
   message: string;
 };
 
-export type SolidOperationFeature = PadFeature | PocketFeature | HoleFeature | CutFeature | FilletFeature | ChamferFeature | ShellFeature | LinearPatternFeature | MirrorFeature;
+export type SolidOperationFeature = PadFeature | PocketFeature | RevolveFeature | HoleFeature | CutFeature | FilletFeature | ChamferFeature | ShellFeature | LinearPatternFeature | MirrorFeature;
 
 export type RebuiltPart = {
   width: number;
@@ -62,6 +64,7 @@ export function rebuildProject(project: CadProject): RebuiltPart {
   const operationSequence: SolidOperationFeature[] = [];
   const diagnostics: RebuildDiagnostic[] = [];
   const sketchesById = new Map<string, SketchFeature>();
+  const datumAxesById = new Map<string, DatumAxisFeature>();
   const repeatableFeaturesById = new Map<string, HoleFeature | CutFeature>();
 
   for (const feature of project.features) {
@@ -151,6 +154,7 @@ export function rebuildProject(project: CadProject): RebuiltPart {
         });
         continue;
       }
+      datumAxesById.set(feature.id, feature);
       diagnostics.push({
         level: 'info',
         featureId: feature.id,
@@ -225,6 +229,53 @@ export function rebuildProject(project: CadProject): RebuiltPart {
           : feature.params.extent === 'through-all'
             ? 'Pocket will remove material through-all opposite the resolved sketch-plane normal using the exact kernel.'
             : `Pocket will remove material ${feature.params.distanceMm.toFixed(2)} mm inward using the exact kernel.`,
+      });
+      continue;
+    }
+
+    if (feature.kind === 'revolve') {
+      if (!hasSolid) {
+        diagnostics.push({ level: 'error', featureId: feature.id, message: 'Revolve Add requires an existing solid.' });
+        continue;
+      }
+      const sourceSketch = sketchesById.get(feature.params.sketchId);
+      const datumAxis = datumAxesById.get(feature.params.axisId);
+      if (!sourceSketch || sourceSketch.params.plane.kind !== 'face') {
+        diagnostics.push({ level: 'error', featureId: feature.id, message: 'Revolve requires an enabled earlier face-attached Sketch.' });
+        continue;
+      }
+      if (!datumAxis || datumAxis.params.source.kind !== 'sketch-local' || datumAxis.params.source.sketchId !== sourceSketch.id) {
+        diagnostics.push({ level: 'error', featureId: feature.id, message: 'Revolve requires an earlier local Datum Axis from the same attached Sketch.' });
+        continue;
+      }
+      const solvedSource = solveSketch(project, sourceSketch);
+      if (solvedSource.constraintState === 'inconsistent') {
+        diagnostics.push({ level: 'error', featureId: feature.id, message: 'Revolve source Sketch has inconsistent constraints.' });
+        continue;
+      }
+      const sourceProfile = resolveManufacturingProfileWithRegions(solvedSource.entities, solvedSource.width, solvedSource.depth);
+      if (!sourceProfile.promoted || !sourceProfile.profile) {
+        diagnostics.push({ level: 'error', featureId: feature.id, message: 'Revolve source Sketch requires one promoted valid profile.' });
+        continue;
+      }
+      if (sourceProfile.profile.kind === 'region') {
+        diagnostics.push({ level: 'error', featureId: feature.id, message: 'Revolve foundation currently accepts one simple promoted loop without inner holes.' });
+        continue;
+      }
+      const bounds = sourceProfile.profile.bounds;
+      const offset = datumAxis.params.source.offsetMm;
+      const axisCutsInterior = datumAxis.params.source.axis === 'u'
+        ? offset > bounds.minZ + 1e-6 && offset < bounds.maxZ - 1e-6
+        : offset > bounds.minX + 1e-6 && offset < bounds.maxX - 1e-6;
+      if (axisCutsInterior) {
+        diagnostics.push({ level: 'error', featureId: feature.id, message: 'Revolve Datum Axis crosses the profile interior; move it to or outside the profile boundary.' });
+        continue;
+      }
+      operationSequence.push(feature);
+      diagnostics.push({
+        level: 'info',
+        featureId: feature.id,
+        message: `Revolve will add the attached profile through ${feature.params.angleDeg.toFixed(1)}° around local ${datumAxis.params.source.axis.toUpperCase()} using the exact kernel.`,
       });
       continue;
     }
