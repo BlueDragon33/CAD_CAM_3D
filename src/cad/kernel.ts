@@ -13,6 +13,7 @@ export type CadKernelCapabilities = {
   shell: boolean;
   linearPattern: boolean;
   mirror: boolean;
+  revolve: boolean;
 };
 
 export type CadKernel = {
@@ -47,6 +48,7 @@ export const meshMvpKernel: CadKernel = {
     shell: false,
     linearPattern: false,
     mirror: false,
+    revolve: false,
   },
   buildMesh(project) {
     return buildPartGeometry(project);
