@@ -1,0 +1,58 @@
+{
+  "schemaVersion": "1.0.0",
+  "policyId": "blueprint-os:universal-century-grade",
+  "policyVersion": "1.2.0",
+  "projectId": "project:cad-cam-3d",
+  "posture": "LOCAL_CORE",
+  "canonicalAuthority": {
+    "parametricModel": "local-portable-project-model",
+    "geometryKernel": "local-or-self-controlled-runtime",
+    "manufacturingRules": "repository-domain-contracts",
+    "ai": "optional-intelligence-only"
+  },
+  "dependencies": [
+    {
+      "id": "cad-local-runtime",
+      "class": "LOCAL_CORE",
+      "costClass": "local-or-open",
+      "purpose": "Parametric feature graph, geometry and manufacturing validation",
+      "dataBoundary": "local project state",
+      "offlineBehavior": "Core model editing/export remains available without cloud",
+      "exitPath": "Portable STEP/STL/3MF/project formats and provider-independent feature model"
+    },
+    {
+      "id": "ai-provider",
+      "class": "OPTIONAL_INTELLIGENCE",
+      "costClass": "optional",
+      "purpose": "Natural-language modeling assistance, design suggestions and explanation",
+      "dataBoundary": "Explicitly supplied design context only",
+      "offlineBehavior": "Manual parametric CAD remains functional",
+      "exitPath": "AI provider can be replaced/disabled"
+    },
+    {
+      "id": "google-drive-or-equivalent",
+      "class": "OPTIONAL_SYNC",
+      "costClass": "free-or-optional-paid",
+      "purpose": "Optional project artifact backup/sync",
+      "dataBoundary": "Portable CAD/project exports only",
+      "offlineBehavior": "No impact on modeling",
+      "exitPath": "Ordinary files can move to another storage provider"
+    },
+    {
+      "id": "application-management",
+      "class": "OPTIONAL_SYNC",
+      "costClass": "replaceable-external",
+      "purpose": "Project metadata/lifecycle coordination only",
+      "dataBoundary": "No geometry/model authority",
+      "offlineBehavior": "CAD core remains standalone",
+      "exitPath": "Contract adapter can be disabled/replaced"
+    }
+  ],
+  "forbidden": [
+    "ai-owned-cad-model-truth",
+    "drive-as-parametric-model-authority",
+    "application-management-owned-geometry",
+    "mandatory-paid-cloud-for-core-model-editing",
+    "nonportable-provider-only-canonical-format"
+  ]
+}
