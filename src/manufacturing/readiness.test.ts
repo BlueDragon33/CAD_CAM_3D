@@ -21,6 +21,9 @@ describe('manufacturing readiness foundation', () => {
     expect(finding?.blocksExport).toBe(false);
     expect(report.exportBlocked).toBe(false);
     expect(report.selectedPrinterReady).toBe(false);
+    expect(report.splitPlan?.pieceCount).toBe(2);
+    expect(report.splitPlan?.strategy).toBe('single-axis');
+    expect(report.findings.some((entry) => entry.id === 'split:envelope-plan-available')).toBe(true);
   });
 
   it('recommends a 90-degree axis-aligned orientation when the current orientation does not fit', () => {
@@ -38,6 +41,7 @@ describe('manufacturing readiness foundation', () => {
     const finding = report.findings.find((entry) => entry.id === 'orientation:axis-aligned-fit');
     expect(finding?.level).toBe('warning');
     expect(report.recommendedOrientation).toMatchObject({ width: 100, depth: 70, height: 160 });
+    expect(report.splitPlan).toBeNull();
     expect(report.selectedPrinterReady).toBe(true);
     expect(report.exportBlocked).toBe(false);
   });
