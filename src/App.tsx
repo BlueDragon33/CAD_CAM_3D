@@ -26,6 +26,7 @@ import {
 } from './cad/topology-ref';
 import type { TopologySelection } from './cad/topology-selection';
 import { validateForPrint } from './manufacturing/validate';
+import { analyzeManufacturingReadiness, type ManufacturingReadinessReport } from './manufacturing/readiness';
 import { downloadProjectStlAdaptive, type StlExportReport } from './manufacturing/export';
 import { downloadProjectStep, type StepExportReport } from './manufacturing/step-export';
 import { Sketcher } from './components/Sketcher';
@@ -57,6 +58,8 @@ export default function App() {
   const [status, setStatus] = useState('General CAD foundation ready.');
   const [lastExport, setLastExport] = useState<StlExportReport | null>(null);
   const [lastStepExport, setLastStepExport] = useState<StepExportReport | null>(null);
+  const [manufacturingReport, setManufacturingReport] = useState<ManufacturingReadinessReport | null>(null);
+  const [manufacturingBusy, setManufacturingBusy] = useState(false);
   const [stlBusy, setStlBusy] = useState(false);
   const [exactBusy, setExactBusy] = useState(false);
   const projectInputRef = useRef<HTMLInputElement>(null);
@@ -442,7 +445,7 @@ export default function App() {
       const loaded = await loadProjectFile(file);
       setProject(loaded.project);
       setSelectedFeatureId(loaded.project.features[1]?.id ?? loaded.project.features[0]?.id ?? null);
-      setTopologySelection(null); setLastExport(null); setLastStepExport(null);
+      setTopologySelection(null); setLastExport(null); setLastStepExport(null); setManufacturingReport(null);
       const migration = loaded.report.migrated ? ` · migrated schema v${loaded.report.sourceSchemaVersion} → v${loaded.report.schemaVersion}` : ` · schema v${loaded.report.schemaVersion}`;
       setStatus(`Project opened${migration} · ${loaded.report.fileName}.`);
     } catch (error) {
@@ -473,9 +476,29 @@ export default function App() {
     } finally { setExactBusy(false); }
   };
 
+  const analyzePrint = async () => {
+    setManufacturingBusy(true);
+    setStatus('Analyzing final manufacturing geometry…');
+    try {
+      const report = await analyzeManufacturingReadiness(project);
+      setManufacturingReport(report);
+      const blockers = report.findings.filter((entry) => entry.level === 'blocker').length;
+      const warnings = report.findings.filter((entry) => entry.level === 'warning').length;
+      setStatus(
+        (report.selectedPrinterReady ? 'Manufacturing readiness PASS' : 'Manufacturing review needed')
+        + ` · ${report.exact ? 'exact' : 'lightweight'} ${report.kernelId} · ${blockers} blocker(s) · ${warnings} warning(s).`,
+      );
+    } catch (error) {
+      setManufacturingReport(null);
+      setStatus(error instanceof Error ? `Manufacturing analysis blocked: ${error.message}` : 'Manufacturing analysis failed.');
+    } finally {
+      setManufacturingBusy(false);
+    }
+  };
+
   const reset = () => {
     const next = createDefaultProject();
-    setProject(next); setSelectedFeatureId(next.features[1]?.id ?? next.features[0]?.id ?? null); setTopologySelection(null); setLastExport(null); setLastStepExport(null); setStatus('Workspace reset.');
+    setProject(next); setSelectedFeatureId(next.features[1]?.id ?? next.features[0]?.id ?? null); setTopologySelection(null); setLastExport(null); setLastStepExport(null); setManufacturingReport(null); setStatus('Workspace reset.');
   };
 
   const handleTopologySelection = (selection: TopologySelection | null) => {
@@ -707,6 +730,7 @@ export default function App() {
           <span className="kernel-badge" title={`Kernel id: ${activeCadKernel.id}`}>{activeCadKernel.label}</span>
           <button type="button" onClick={saveProject}>Save Project</button>
           <button type="button" onClick={() => projectInputRef.current?.click()}>Open Project</button>
+          <button type="button" onClick={() => void analyzePrint()} disabled={!rebuilt.hasSolid || manufacturingBusy}>{manufacturingBusy ? 'Analyzing…' : 'Analyze Print'}</button>
           <button type="button" onClick={() => void exportStl()} disabled={!rebuilt.hasSolid || stlBusy}>{stlBusy ? 'Building STL…' : 'Export STL'}</button>
           <button type="button" onClick={() => void exportStep()} disabled={!rebuilt.hasSolid || exactBusy}>{exactBusy ? 'Building B-Rep…' : 'Export STEP'}</button>
           <button type="button" onClick={reset}>Reset</button>
@@ -775,6 +799,16 @@ export default function App() {
           <h2>Print readiness</h2>
           <div className="profile-card"><strong>{project.printProfile.name}</strong><span>{project.printProfile.material} · {project.printProfile.nozzleMm} mm nozzle</span></div>
           <ul className="checks">{checks.map((check, index) => <li key={index} data-level={check.level}>{check.message}</li>)}</ul>
+          {manufacturingReport ? <>
+            <div className="profile-card">
+              <strong>Adaptive manufacturing analysis · {manufacturingReport.selectedPrinterReady ? 'READY' : 'REVIEW'}</strong>
+              <span>{manufacturingReport.exact ? 'Exact' : 'Lightweight'} · {manufacturingReport.kernelId} · {manufacturingReport.dimensionsMm.width.toFixed(2)} × {manufacturingReport.dimensionsMm.depth.toFixed(2)} × {manufacturingReport.dimensionsMm.height.toFixed(2)} mm</span>
+              <small>{manufacturingReport.exportBlocked ? 'Manufacturing export is blocked by invalid geometry/project state.' : 'No geometry-state export blocker detected. Printer/profile warnings may still require action.'}</small>
+            </div>
+            <ul className="checks diagnostics">{manufacturingReport.findings.map((finding) => <li key={finding.id} data-level={finding.level === 'blocker' ? 'error' : finding.level}>
+              {finding.message}{finding.remedy ? ` Remedy: ${finding.remedy}` : ''}
+            </li>)}</ul>
+          </> : null}
           {lastExport ? <div className="profile-card"><strong>Last STL · {lastExport.valid ? 'PASS' : 'WARN'}</strong><span>{lastExport.triangleCount} triangles · {(lastExport.byteLength / 1024).toFixed(1)} KB</span><small>{lastExport.messages.join(' ')}</small><small>Kernel: {lastExport.kernelId}</small></div> : null}
           {lastStepExport ? <div className="profile-card"><strong>Last STEP · {lastStepExport.valid ? 'PASS' : 'WARN'}</strong><span>{lastStepExport.faceCount} faces · {lastStepExport.edgeCount} edges · {(lastStepExport.byteLength / 1024).toFixed(1)} KB</span><small>Volume {lastStepExport.volumeMm3.toFixed(1)} mm³ · Surface {lastStepExport.surfaceAreaMm2.toFixed(1)} mm²</small><small>Kernel: {lastStepExport.kernelId}{lastStepExport.filletApplied ? ' · fillet' : ''}{lastStepExport.chamferApplied ? ' · chamfer' : ''}</small>{lastStepExport.warnings.length > 0 ? <small>{lastStepExport.warnings.join(' ')}</small> : null}</div> : null}
           <h2>Kernel</h2>
