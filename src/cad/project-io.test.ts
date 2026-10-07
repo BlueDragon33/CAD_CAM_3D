@@ -34,7 +34,7 @@ describe('project schema migration', () => {
   it('round-trips schema v9', () => {
     const project = createDefaultProject();
     const parsed = parseProjectDocument(serializeProject(project));
-    expect(parsed.schemaVersion).toBe(8);
+    expect(parsed.schemaVersion).toBe(9);
     expect(parsed.sourceSchemaVersion).toBe(9);
     expect(parsed.migrated).toBe(false);
     expect(parsed.project.id).toBe(project.id);
