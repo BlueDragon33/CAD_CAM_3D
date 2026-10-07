@@ -187,6 +187,21 @@ function findEdgeHandleByHash(kernel: OcctKernel, shape: ShapeHandle, targetHash
   return selected;
 }
 
+function findFaceHandleByHash(kernel: OcctKernel, shape: ShapeHandle, targetHash: number) {
+  const handles = kernel.getSubShapes(shape, 'face');
+  let selected: ShapeHandle | null = null;
+  for (const face of handles) {
+    let keep = false;
+    try {
+      keep = selected === null && kernel.hashCode(face, HASH_UPPER_BOUND) === targetHash;
+      if (keep) selected = face;
+    } finally {
+      if (!keep) kernel.release(face);
+    }
+  }
+  return selected;
+}
+
 function currentExactFaces(kernel: OcctKernel, shape: ShapeHandle, tracker: FaceLineageTracker): ExactFaceTopology[] {
   const mesh = kernel.meshShape(shape, { linearDeflection: 0.08, angularDeflection: 0.35 });
   const geometry = mapOcctMeshToThree(mesh);
