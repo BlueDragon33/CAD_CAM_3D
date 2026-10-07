@@ -29,6 +29,7 @@ import { validateForPrint } from './manufacturing/validate';
 import { analyzeManufacturingReadiness, type ManufacturingReadinessReport } from './manufacturing/readiness';
 import { downloadProjectStlAdaptive, type StlExportReport } from './manufacturing/export';
 import { downloadProjectStep, type StepExportReport } from './manufacturing/step-export';
+import { downloadProjectThreeMf, type ThreeMfExportReport } from './manufacturing/three-mf';
 import { Sketcher } from './components/Sketcher';
 import { Viewport } from './components/Viewport';
 import { defaultManagementPolicy, managementIdentity } from './management/policy';
@@ -58,9 +59,11 @@ export default function App() {
   const [status, setStatus] = useState('General CAD foundation ready.');
   const [lastExport, setLastExport] = useState<StlExportReport | null>(null);
   const [lastStepExport, setLastStepExport] = useState<StepExportReport | null>(null);
+  const [lastThreeMfExport, setLastThreeMfExport] = useState<ThreeMfExportReport | null>(null);
   const [manufacturingReport, setManufacturingReport] = useState<ManufacturingReadinessReport | null>(null);
   const [manufacturingBusy, setManufacturingBusy] = useState(false);
   const [stlBusy, setStlBusy] = useState(false);
+  const [threeMfBusy, setThreeMfBusy] = useState(false);
   const [exactBusy, setExactBusy] = useState(false);
   const projectInputRef = useRef<HTMLInputElement>(null);
   const policy = defaultManagementPolicy;
@@ -445,7 +448,7 @@ export default function App() {
       const loaded = await loadProjectFile(file);
       setProject(loaded.project);
       setSelectedFeatureId(loaded.project.features[1]?.id ?? loaded.project.features[0]?.id ?? null);
-      setTopologySelection(null); setLastExport(null); setLastStepExport(null); setManufacturingReport(null);
+      setTopologySelection(null); setLastExport(null); setLastStepExport(null); setLastThreeMfExport(null); setManufacturingReport(null);
       const migration = loaded.report.migrated ? ` · migrated schema v${loaded.report.sourceSchemaVersion} → v${loaded.report.schemaVersion}` : ` · schema v${loaded.report.schemaVersion}`;
       setStatus(`Project opened${migration} · ${loaded.report.fileName}.`);
     } catch (error) {
@@ -462,6 +465,18 @@ export default function App() {
     } catch (error) {
       setStatus(error instanceof Error ? `STL export blocked: ${error.message}` : 'STL export failed.');
     } finally { setStlBusy(false); }
+  };
+
+  const exportThreeMf = async () => {
+    setThreeMfBusy(true); setStatus('Building portable 3MF from final manufacturing geometry…');
+    try {
+      const report = await downloadProjectThreeMf(project);
+      setLastThreeMfExport(report);
+      const warningText = report.warnings.length > 0 ? ` · ${report.warnings.join(' ')}` : '';
+      setStatus(`3MF export PASS · ${report.fileName} · ${report.triangleCount} triangles · ${(report.byteLength / 1024).toFixed(1)} KB · millimeter · ${report.kernelId}${warningText}`);
+    } catch (error) {
+      setStatus(error instanceof Error ? `3MF export blocked: ${error.message}` : '3MF export failed.');
+    } finally { setThreeMfBusy(false); }
   };
 
   const exportStep = async () => {
@@ -498,7 +513,7 @@ export default function App() {
 
   const reset = () => {
     const next = createDefaultProject();
-    setProject(next); setSelectedFeatureId(next.features[1]?.id ?? next.features[0]?.id ?? null); setTopologySelection(null); setLastExport(null); setLastStepExport(null); setManufacturingReport(null); setStatus('Workspace reset.');
+    setProject(next); setSelectedFeatureId(next.features[1]?.id ?? next.features[0]?.id ?? null); setTopologySelection(null); setLastExport(null); setLastStepExport(null); setLastThreeMfExport(null); setManufacturingReport(null); setStatus('Workspace reset.');
   };
 
   const handleTopologySelection = (selection: TopologySelection | null) => {
@@ -732,6 +747,7 @@ export default function App() {
           <button type="button" onClick={() => projectInputRef.current?.click()}>Open Project</button>
           <button type="button" onClick={() => void analyzePrint()} disabled={!rebuilt.hasSolid || manufacturingBusy}>{manufacturingBusy ? 'Analyzing…' : 'Analyze Print'}</button>
           <button type="button" onClick={() => void exportStl()} disabled={!rebuilt.hasSolid || stlBusy}>{stlBusy ? 'Building STL…' : 'Export STL'}</button>
+          <button type="button" onClick={() => void exportThreeMf()} disabled={!rebuilt.hasSolid || threeMfBusy}>{threeMfBusy ? 'Building 3MF…' : 'Export 3MF'}</button>
           <button type="button" onClick={() => void exportStep()} disabled={!rebuilt.hasSolid || exactBusy}>{exactBusy ? 'Building B-Rep…' : 'Export STEP'}</button>
           <button type="button" onClick={reset}>Reset</button>
           <input ref={projectInputRef} className="file-input" type="file" accept=".json,.cad3d.json,application/json" onChange={(event) => { const file = event.target.files?.[0]; void openProject(file); event.target.value = ''; }} />
@@ -810,6 +826,7 @@ export default function App() {
             </li>)}</ul>
           </> : null}
           {lastExport ? <div className="profile-card"><strong>Last STL · {lastExport.valid ? 'PASS' : 'WARN'}</strong><span>{lastExport.triangleCount} triangles · {(lastExport.byteLength / 1024).toFixed(1)} KB</span><small>{lastExport.messages.join(' ')}</small><small>Kernel: {lastExport.kernelId}</small></div> : null}
+          {lastThreeMfExport ? <div className="profile-card"><strong>Last 3MF · {lastThreeMfExport.valid ? 'PASS' : 'WARN'}</strong><span>{lastThreeMfExport.triangleCount} triangles · {(lastThreeMfExport.byteLength / 1024).toFixed(1)} KB · {lastThreeMfExport.unit}</span><small>Kernel: {lastThreeMfExport.kernelId} · Core 3MF single-object package</small>{lastThreeMfExport.warnings.length > 0 ? <small>{lastThreeMfExport.warnings.join(' ')}</small> : null}</div> : null}
           {lastStepExport ? <div className="profile-card"><strong>Last STEP · {lastStepExport.valid ? 'PASS' : 'WARN'}</strong><span>{lastStepExport.faceCount} faces · {lastStepExport.edgeCount} edges · {(lastStepExport.byteLength / 1024).toFixed(1)} KB</span><small>Volume {lastStepExport.volumeMm3.toFixed(1)} mm³ · Surface {lastStepExport.surfaceAreaMm2.toFixed(1)} mm²</small><small>Kernel: {lastStepExport.kernelId}{lastStepExport.filletApplied ? ' · fillet' : ''}{lastStepExport.chamferApplied ? ' · chamfer' : ''}</small>{lastStepExport.warnings.length > 0 ? <small>{lastStepExport.warnings.join(' ')}</small> : null}</div> : null}
           <h2>Kernel</h2>
           <div className="profile-card"><strong>{activeCadKernel.label}</strong><span>{activeCadKernel.capabilities.exactBrep ? 'Exact B-Rep' : 'Fast deterministic mesh'} · STL {activeCadKernel.capabilities.stlExport ? 'ready' : 'off'}</span><small>Simple vertical features stay lightweight. Exact edge/face features promote preview/STL automatically.</small></div>
