@@ -9,7 +9,7 @@ export type EvolutionRelation = {
 
 export type TopologyEvolutionStep = {
   featureId: string;
-  featureKind: Extract<FeatureKind, 'pad' | 'pocket' | 'hole' | 'cut' | 'fillet' | 'chamfer' | 'shell' | 'linear-pattern'>;
+  featureKind: Extract<FeatureKind, 'pad' | 'pocket' | 'hole' | 'cut' | 'fillet' | 'chamfer' | 'shell' | 'linear-pattern' | 'mirror'>;
   beforeFaceHashes: number[];
   afterFaceHashes: number[];
   modified: EvolutionRelation[];
