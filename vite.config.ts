@@ -19,6 +19,7 @@ function offlineAssetManifest(): Plugin {
 }
 
 export default defineConfig({
+  base: process.env.GITHUB_PAGES === 'true' ? '/CAD_CAM_3D/' : '/',
   plugins: [react(), offlineAssetManifest()],
   server: { port: 5173 },
   optimizeDeps: {
