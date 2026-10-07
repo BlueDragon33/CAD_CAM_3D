@@ -1,6 +1,6 @@
 # WP-D0 — Shell Foundation Hardening
 
-Status: **ACTIVE**
+Status: **FOUNDATION ACCEPTED**
 Blueprint zone: Floors 41–50 — Parametric Modeling
 Constitution: `blueprint-os:universal-century-grade@1.2.0`
 
@@ -58,3 +58,21 @@ Uses the already-pinned `occt-wasm@5.0.0` exact-kernel provider. No new external
 - topology lineage/history remains resolvable after Shell;
 - production build PASS;
 - PR/docs state exact limitations truthfully.
+
+
+## Acceptance evidence
+
+Accepted on branch `foundation/general-system` after GitHub Actions run `37573095037` / run #361.
+
+Evidence:
+
+- TypeScript typecheck: PASS.
+- Unit regression: PASS — 22 tests.
+- Exact B-Rep smoke suite: PASS.
+- Exact Shell smoke: PASS — 4512.000 mm³, 11 faces, 18 topology-history relation entries.
+- Production build: PASS.
+- Schema v8 persistence: Shell intent round-trips with durable opening-face references.
+- Schema migration: v1-v7 accepted into v8.
+- Invalid Shell without an opening face is rejected before runtime entry.
+
+Known limits remain explicit: constant inward thickness, Arc join, exact-kernel-only execution, no variable thickness, no multi-body shelling and no curved-surface sketch attachment.
