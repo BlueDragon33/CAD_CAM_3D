@@ -245,13 +245,30 @@ export function rebuildProject(project: CadProject): RebuiltPart {
       continue;
     }
 
-    if (!hasSolid) {
-      diagnostics.push({ level: 'error', featureId: feature.id, message: 'Chamfer requires an existing solid.' });
+    if (feature.kind === 'chamfer') {
+      if (!hasSolid) {
+        diagnostics.push({ level: 'error', featureId: feature.id, message: 'Chamfer requires an existing solid.' });
+        continue;
+      }
+      chamferDistance = Math.max(0, Math.min(feature.params.distance, width / 2, depth / 2, height / 2));
+      if (chamferDistance > 0) operationSequence.push(feature);
+      diagnostics.push({ level: 'info', featureId: feature.id, message: 'Chamfer is recorded parametrically; exact B-Rep chamfering is delegated to the CAD kernel.' });
       continue;
     }
-    chamferDistance = Math.max(0, Math.min(feature.params.distance, width / 2, depth / 2, height / 2));
-    if (chamferDistance > 0) operationSequence.push(feature);
-    diagnostics.push({ level: 'info', featureId: feature.id, message: 'Chamfer is recorded parametrically; exact B-Rep chamfering is delegated to the CAD kernel.' });
+
+    if (feature.kind === 'shell') {
+      if (!hasSolid) {
+        diagnostics.push({ level: 'error', featureId: feature.id, message: 'Shell requires an existing solid.' });
+        continue;
+      }
+      hasSolid = false;
+      diagnostics.push({
+        level: 'error',
+        featureId: feature.id,
+        message: 'Shell intent is persisted by schema v8 but exact B-Rep execution is not enabled yet. Rebuild/export is blocked rather than showing pre-Shell geometry as if it were final.',
+      });
+      continue;
+    }
   }
 
   if (!hasSketch) diagnostics.push({ level: 'error', message: 'No enabled sketch exists in the feature history.' });
