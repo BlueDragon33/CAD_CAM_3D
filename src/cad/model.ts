@@ -181,6 +181,13 @@ export type PrintProfile = {
   buildVolume: Dimensions;
   nozzleMm: number;
   material: 'PLA' | 'PETG' | 'ABS' | 'ASA' | 'PA-CF' | 'Other';
+  fitCalibration: {
+    /**
+     * Per-side radial clearance for cylindrical registration features.
+     * null means use the documented uncalibrated nozzle-relative default.
+     */
+    registrationClearancePerSideMm: number | null;
+  };
 };
 
 export type CadProject = {
@@ -348,6 +355,7 @@ export function createDefaultProject(): CadProject {
       buildVolume: { width: 256, depth: 256, height: 256 },
       nozzleMm: 0.4,
       material: 'PETG',
+      fitCalibration: { registrationClearancePerSideMm: null },
     },
   };
 
