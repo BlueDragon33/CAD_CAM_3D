@@ -575,6 +575,94 @@ function buildExactShape(kernel: OcctKernel, project: CadProject, rebuilt: Rebui
       continue;
     }
 
+    if (feature.kind === 'linear-pattern') {
+      const source = project.features.find((candidate) => (
+        candidate.enabled
+        && candidate.id === feature.params.sourceFeatureId
+        && (candidate.kind === 'hole' || candidate.kind === 'cut')
+      ));
+      if (!source) {
+        throw new Error(`${feature.name}: Linear Pattern source Hole/Cut is unavailable during exact rebuild.`);
+      }
+
+      for (let instance = 1; instance < feature.params.count; instance += 1) {
+        const shift = feature.params.spacingMm * instance;
+        let tool: ShapeHandle;
+
+        if (source.kind === 'hole') {
+          if (source.params.placement.mode === 'face') {
+            const placement = {
+              ...source.params.placement,
+              uMm: source.params.placement.uMm + (feature.params.axis === 'u' ? shift : 0),
+              vMm: source.params.placement.vMm + (feature.params.axis === 'v' ? shift : 0),
+            };
+            const resolved = resolveFaceBoundPlacement(
+              kernel, shape, tracker, rebuilt, feature.name, placement, warnings,
+            );
+            if (!resolved) {
+              throw new Error(`${feature.name}: pattern instance ${instance + 1} could not resolve the source face safely.`);
+            }
+            tool = makeOrientedCylinderTool(
+              kernel, source.params.diameter / 2, resolved.point, resolved.frame, rebuilt,
+            );
+          } else {
+            tool = kernel.makeCylinder(source.params.diameter / 2, rebuilt.height + CUT_OVERRUN_MM * 2);
+            tool = kernel.translate(
+              tool,
+              source.params.x + (feature.params.axis === 'x' ? shift : 0),
+              source.params.z + (feature.params.axis === 'z' ? shift : 0),
+              -CUT_OVERRUN_MM,
+            );
+          }
+        } else if (source.params.placement.mode === 'face') {
+          const placement = {
+            ...source.params.placement,
+            uMm: source.params.placement.uMm + (feature.params.axis === 'u' ? shift : 0),
+            vMm: source.params.placement.vMm + (feature.params.axis === 'v' ? shift : 0),
+          };
+          const resolved = resolveFaceBoundPlacement(
+            kernel, shape, tracker, rebuilt, feature.name, placement, warnings,
+          );
+          if (!resolved) {
+            throw new Error(`${feature.name}: pattern instance ${instance + 1} could not resolve the source face safely.`);
+          }
+          tool = makeOrientedBoxTool(
+            kernel, source.params.width, source.params.depth, resolved.point, resolved.frame, rebuilt,
+          );
+        } else {
+          tool = kernel.makeBox(source.params.width, source.params.depth, rebuilt.height + CUT_OVERRUN_MM * 2);
+          tool = kernel.translate(
+            tool,
+            source.params.x - source.params.width / 2 + (feature.params.axis === 'x' ? shift : 0),
+            source.params.z - source.params.depth / 2 + (feature.params.axis === 'z' ? shift : 0),
+            -CUT_OVERRUN_MM,
+          );
+        }
+
+        const before = currentFaceHashes(kernel, shape);
+        try {
+          const evolution = kernel.cutWithHistory(shape, tool, before, HASH_UPPER_BOUND);
+          shape = evolution.result;
+          if (!kernel.isValid(shape)) {
+            throw new Error(`instance ${instance + 1} produced an invalid exact body.`);
+          }
+          const after = currentFaceHashes(kernel, shape);
+          tracker.record(
+            `${feature.id}:instance:${instance + 1}`,
+            'linear-pattern',
+            before,
+            after,
+            evolution,
+          );
+        } catch (error) {
+          throw new Error(error instanceof Error
+            ? `${feature.name}: instance ${instance + 1} failed: ${error.message}`
+            : `${feature.name}: instance ${instance + 1} failed.`);
+        }
+      }
+      continue;
+    }
+
     const size = feature.kind === 'fillet' ? feature.params.radius : feature.params.distance;
     const amount = Math.max(0, Math.min(size, rebuilt.width / 2, rebuilt.depth / 2, rebuilt.height / 2));
     if (amount <= 0) continue;
@@ -673,5 +761,6 @@ export const exactKernelDescriptor = {
     promotedSketchProfiles: true,
     attachedPlanarMaterialFeatures: true,
     shell: true,
+    linearPattern: true,
   },
 };
