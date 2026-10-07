@@ -7,6 +7,7 @@ import type {
   HoleFeature,
   PadFeature,
   PocketFeature,
+  ShellFeature,
   SketchFeature,
 } from './model';
 import {
@@ -21,7 +22,7 @@ export type RebuildDiagnostic = {
   message: string;
 };
 
-export type SolidOperationFeature = PadFeature | PocketFeature | HoleFeature | CutFeature | FilletFeature | ChamferFeature;
+export type SolidOperationFeature = PadFeature | PocketFeature | HoleFeature | CutFeature | FilletFeature | ChamferFeature | ShellFeature;
 
 export type RebuiltPart = {
   width: number;
@@ -261,11 +262,23 @@ export function rebuildProject(project: CadProject): RebuiltPart {
         diagnostics.push({ level: 'error', featureId: feature.id, message: 'Shell requires an existing solid.' });
         continue;
       }
-      hasSolid = false;
+      if (feature.params.openings.length === 0) {
+        diagnostics.push({ level: 'error', featureId: feature.id, message: 'Shell requires at least one durable opening-face reference.' });
+        continue;
+      }
+      const maximumThickness = Math.max(0.1, Math.min(width, depth, height) / 2);
+      if (feature.params.thicknessMm >= maximumThickness) {
+        diagnostics.push({
+          level: 'warning',
+          featureId: feature.id,
+          message: `Shell thickness ${feature.params.thicknessMm.toFixed(2)} mm approaches or exceeds half the smallest rebuilt span; OpenCascade may reject the offset.`,
+        });
+      }
+      operationSequence.push(feature);
       diagnostics.push({
-        level: 'error',
+        level: 'info',
         featureId: feature.id,
-        message: 'Shell intent is persisted by schema v8 but exact B-Rep execution is not enabled yet. Rebuild/export is blocked rather than showing pre-Shell geometry as if it were final.',
+        message: `Shell will hollow the exact body inward by ${feature.params.thicknessMm.toFixed(2)} mm and remove ${feature.params.openings.length} persisted opening face(s).`,
       });
       continue;
     }
