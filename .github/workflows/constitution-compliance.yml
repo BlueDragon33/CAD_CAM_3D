@@ -12,3 +12,35 @@ permissions:
 jobs:
   constitution:
     uses: BlueDragon33/Software-Blueprint-Hub/.github/workflows/constitution-compliance.yml@main
+
+  dependency-sovereignty:
+    name: Constitution 1.2 CAD/CAM dependency sovereignty
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Validate project dependency budget
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          a=json.loads(Path(".blueprint/constitution-adoption.json").read_text())
+          b=json.loads(Path(".blueprint/dependency-budget.json").read_text())
+          assert a["policyVersion"]=="1.2.0"
+          assert "operational-sovereignty-dependency-minimization" in a["inheritedPillars"]
+          assert b["policyVersion"]=="1.2.0"
+          assert b["projectId"]==a["projectId"]=="project:cad-cam-3d"
+          assert b["posture"]=="LOCAL_PORTABLE_DESIGN_CORE"
+          assert b["complianceState"]=="MIGRATION_REQUIRED"
+          deps={d["id"]:d for d in b["dependencies"]}
+          assert deps["local-cad-cam-runtime"]["class"]=="LOCAL_CORE"
+          assert deps["remote-rendering-or-generation"]["class"]=="OPTIONAL_PUBLISH"
+          assert deps["ai-provider"]["class"]=="OPTIONAL_INTELLIGENCE"
+          for d in b["dependencies"]:
+              assert d.get("offlineBehavior")
+              assert d.get("exitPath")
+          forbidden=set(b["forbidden"])
+          assert {"cloud-only-canonical-cad-project","ai-owned-canonical-geometry","provider-specific-format-without-portable-export"} <= forbidden
+          assert b["productionAuthority"]=="separate-explicit-release-gate"
+          print("CAD/CAM Constitution 1.2 dependency sovereignty: PASS")
+          PY
