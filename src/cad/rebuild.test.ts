@@ -5,6 +5,8 @@ import {
   type HoleFeature,
   type LinearPatternFeature,
   type MirrorFeature,
+  type RevolveFeature,
+  type SketchFeature,
 } from './model';
 import { rebuildProject } from './rebuild';
 
@@ -55,6 +57,71 @@ describe('semantic Datum Axis', () => {
     project.features.splice(1, 0, datum);
     const rebuilt = rebuildProject(project);
     expect(rebuilt.diagnostics.some((item) => item.featureId === datum.id && item.level === 'error')).toBe(true);
+  });
+});
+
+
+describe('semantic Revolve', () => {
+  function addAttachedRevolveFixture(axisOffsetMm = 0) {
+    const project = createDefaultProject();
+    const baseExtrude = project.features.find((feature) => feature.kind === 'extrude')!;
+    const attached: SketchFeature = {
+      id: 'revolve-sketch',
+      kind: 'sketch',
+      name: 'Revolve Sketch',
+      enabled: true,
+      params: {
+        plane: {
+          kind: 'face',
+          ref: {
+            kind: 'face',
+            lineageIds: [`${baseExtrude.id}:top`],
+            capturedAfterFeatureId: baseExtrude.id,
+            signature: { centroid: [0, 12, 0], normal: [0, 1, 0], areaMm2: 2400 },
+          },
+          originUMm: 0,
+          originVMm: 0,
+        },
+        profile: 'rectangle',
+        entities: [
+          { id: 'rv-1', kind: 'line', construction: false, start: { x: 8, z: 2 }, end: { x: 12, z: 2 } },
+          { id: 'rv-2', kind: 'line', construction: false, start: { x: 12, z: 2 }, end: { x: 12, z: 6 } },
+          { id: 'rv-3', kind: 'line', construction: false, start: { x: 12, z: 6 }, end: { x: 8, z: 6 } },
+          { id: 'rv-4', kind: 'line', construction: false, start: { x: 8, z: 6 }, end: { x: 8, z: 2 } },
+        ],
+        constraints: [],
+      },
+    };
+    const axis: DatumAxisFeature = {
+      id: 'revolve-axis',
+      kind: 'datum-axis',
+      name: 'Revolve Axis',
+      enabled: true,
+      params: { source: { kind: 'sketch-local', sketchId: attached.id, axis: 'u', offsetMm: axisOffsetMm } },
+    };
+    const revolve: RevolveFeature = {
+      id: 'revolve-feature',
+      kind: 'revolve',
+      name: 'Revolve 1',
+      enabled: true,
+      params: { sketchId: attached.id, axisId: axis.id, angleDeg: 360, operation: 'add' },
+    };
+    project.features.push(attached, axis, revolve);
+    return { project, revolve };
+  }
+
+  it('schedules an exact Revolve from an attached Sketch and same-sketch local Datum Axis', () => {
+    const { project, revolve } = addAttachedRevolveFixture(0);
+    const rebuilt = rebuildProject(project);
+    expect(rebuilt.operationSequence.at(-1)?.kind).toBe('revolve');
+    expect(rebuilt.diagnostics.some((item) => item.level === 'error' && item.featureId === revolve.id)).toBe(false);
+  });
+
+  it('blocks Revolve when the Datum Axis crosses the promoted profile interior', () => {
+    const { project, revolve } = addAttachedRevolveFixture(4);
+    const rebuilt = rebuildProject(project);
+    expect(rebuilt.operationSequence.some((feature) => feature.kind === 'revolve')).toBe(false);
+    expect(rebuilt.diagnostics.some((item) => item.level === 'error' && item.featureId === revolve.id && /crosses/i.test(item.message))).toBe(true);
   });
 });
 
