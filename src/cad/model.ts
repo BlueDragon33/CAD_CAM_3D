@@ -1,6 +1,6 @@
 import type { SketchEntity } from './sketch';
 
-export type FeatureKind = 'sketch' | 'extrude' | 'pad' | 'pocket' | 'cut' | 'hole' | 'fillet' | 'chamfer' | 'shell' | 'linear-pattern';
+export type FeatureKind = 'sketch' | 'extrude' | 'pad' | 'pocket' | 'cut' | 'hole' | 'fillet' | 'chamfer' | 'shell' | 'linear-pattern' | 'mirror';
 
 export type Dimensions = {
   width: number;
@@ -154,7 +154,14 @@ export type LinearPatternFeature = FeatureBase<'linear-pattern', {
   axis: 'x' | 'z' | 'u' | 'v';
 }>;
 
-export type CadFeature = SketchFeature | ExtrudeFeature | PadFeature | PocketFeature | CutFeature | HoleFeature | FilletFeature | ChamferFeature | ShellFeature | LinearPatternFeature;
+export type MirrorFeature = FeatureBase<'mirror', {
+  sourceFeatureId: string;
+  plane:
+    | { kind: 'global'; axis: 'x' | 'z'; offsetMm: number }
+    | { kind: 'face-local'; axis: 'u' | 'v'; offsetMm: number };
+}>;
+
+export type CadFeature = SketchFeature | ExtrudeFeature | PadFeature | PocketFeature | CutFeature | HoleFeature | FilletFeature | ChamferFeature | ShellFeature | LinearPatternFeature | MirrorFeature;
 
 export type PrintProfile = {
   name: string;
@@ -185,6 +192,7 @@ function featureName(kind: FeatureKind, project: CadProject) {
     chamfer: 'Chamfer',
     shell: 'Shell',
     'linear-pattern': 'Linear Pattern',
+    mirror: 'Mirror',
   };
   return `${label[kind]} ${count}`;
 }
@@ -271,14 +279,27 @@ export function createFeature(kind: FeatureKind, project: CadProject): CadFeatur
 
   const source = [...project.features].reverse().find((feature) => feature.kind === 'hole' || feature.kind === 'cut');
   const faceBound = source && (source.kind === 'hole' || source.kind === 'cut') && source.params.placement.mode === 'face';
+  if (kind === 'linear-pattern') {
+    return {
+      ...base,
+      kind,
+      params: {
+        sourceFeatureId: source?.id ?? '',
+        count: 3,
+        spacingMm: 10,
+        axis: faceBound ? 'u' : 'x',
+      },
+    };
+  }
+
   return {
     ...base,
-    kind: 'linear-pattern',
+    kind: 'mirror',
     params: {
       sourceFeatureId: source?.id ?? '',
-      count: 3,
-      spacingMm: 10,
-      axis: faceBound ? 'u' : 'x',
+      plane: faceBound
+        ? { kind: 'face-local', axis: 'u', offsetMm: 0 }
+        : { kind: 'global', axis: 'x', offsetMm: 0 },
     },
   };
 }
