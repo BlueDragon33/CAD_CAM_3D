@@ -33,7 +33,7 @@ import { Viewport } from './components/Viewport';
 import { defaultManagementPolicy, managementIdentity } from './management/policy';
 
 const featureLabels: Record<FeatureKind, string> = {
-  sketch: 'Sketch', 'datum-axis': 'Datum Axis', extrude: 'Extrude', pad: 'Pad', pocket: 'Pocket', cut: 'Cut', hole: 'Hole', fillet: 'Fillet', chamfer: 'Chamfer', shell: 'Shell', 'linear-pattern': 'Linear Pattern', mirror: 'Mirror',
+  sketch: 'Sketch', 'datum-axis': 'Datum Axis', extrude: 'Extrude', pad: 'Pad', pocket: 'Pocket', revolve: 'Revolve', cut: 'Cut', hole: 'Hole', fillet: 'Fillet', chamfer: 'Chamfer', shell: 'Shell', 'linear-pattern': 'Linear Pattern', mirror: 'Mirror',
 };
 
 function clampDimension(value: number, minimum = 0.1) {
@@ -188,6 +188,34 @@ export default function App() {
       );
       return;
     }
+    if (feature.kind === 'revolve') {
+      if (!selectedFeature || selectedFeature.kind !== 'datum-axis' || selectedFeature.params.source.kind !== 'sketch-local') {
+        setStatus('Revolve creation blocked: select a local Datum Axis from an attached Sketch first.');
+        return;
+      }
+      const sourceSketch = project.features.find((candidate) => candidate.id === selectedFeature.params.source.sketchId);
+      if (!sourceSketch || sourceSketch.kind !== 'sketch' || sourceSketch.params.plane.kind !== 'face') {
+        setStatus('Revolve creation blocked: Datum Axis source Sketch is missing or no longer face-attached.');
+        return;
+      }
+      if (!sourceSketch.params.entities.some((entity) => !entity.construction)) {
+        setStatus('Revolve creation blocked: promote one valid attached profile first.');
+        return;
+      }
+      feature = {
+        ...feature,
+        params: {
+          ...feature.params,
+          sketchId: sourceSketch.id,
+          axisId: selectedFeature.id,
+          angleDeg: 360,
+          operation: 'add',
+        },
+      };
+      appendFeature(feature, 'Revolve Add created from the Datum Axis and its attached Sketch. Exact OpenCascade rebuild will execute the sweep.');
+      return;
+    }
+
     if (feature.kind === 'mirror') {
       if (!selectedFeature || (selectedFeature.kind !== 'hole' && selectedFeature.kind !== 'cut')) {
         setStatus('Mirror creation blocked: select an earlier Hole or Cut feature first.');
@@ -560,6 +588,23 @@ export default function App() {
         <small>Source Sketch {selectedFeature.params.sketchId.slice(0, 8)} · removes material opposite the resolved durable plane normal.</small>
       </div>
     </div>;
+    if (selectedFeature.kind === 'revolve') {
+      const sketch = project.features.find((feature) => feature.id === selectedFeature.params.sketchId);
+      const axis = project.features.find((feature) => feature.id === selectedFeature.params.axisId);
+      return <div className="inspector-grid">
+        <div className="constraint-state" data-ready={sketch?.kind === 'sketch' && axis?.kind === 'datum-axis'}>
+          <strong>{sketch?.kind === 'sketch' ? `Profile · ${sketch.name}` : 'Profile missing'}</strong>
+          <small>{axis?.kind === 'datum-axis' ? `Axis · ${axis.name}` : 'Datum Axis missing'} · additive exact feature.</small>
+        </div>
+        <label><span>Angle</span><div><input type="number" min="0.1" max="360" step="1" value={selectedFeature.params.angleDeg} onChange={(e) => updateFeature(selectedFeature.id, (feature) => feature.kind === 'revolve'
+          ? { ...feature, params: { ...feature.params, angleDeg: Math.min(360, numberValue(e.target.value, 0.1)) } }
+          : feature)} /><b>°</b></div></label>
+        <div className="constraint-state" data-ready={exactKernelDescriptor.capabilities.revolve}>
+          <strong>Exact additive Revolve</strong>
+          <small>Uses one promoted attached profile and one durable local Datum Axis; inner-hole regions are intentionally blocked in this foundation.</small>
+        </div>
+      </div>;
+    }
     if (selectedFeature.kind === 'hole') {
       const faceBound = selectedFeature.params.placement.mode === 'face';
       return <div className="inspector-grid">
@@ -672,7 +717,7 @@ export default function App() {
       <section className="workspace">
         <aside className="panel tools-panel">
           <h2>Build</h2>
-          {(['sketch', 'datum-axis', 'extrude', 'pad', 'pocket', 'hole', 'cut', 'linear-pattern', 'mirror', 'fillet', 'chamfer', 'shell'] as FeatureKind[]).map((kind) => (
+          {(['sketch', 'datum-axis', 'extrude', 'pad', 'pocket', 'revolve', 'hole', 'cut', 'linear-pattern', 'mirror', 'fillet', 'chamfer', 'shell'] as FeatureKind[]).map((kind) => (
             <button key={kind} type="button" className="tool-button" onClick={() => addFeature(kind)}>
               <span>{featureLabels[kind]}</span>
               <small>{kind === 'sketch' && topologySelection?.kind === 'face'
@@ -681,6 +726,8 @@ export default function App() {
     ? 'Use selected Sketch'
   : (kind === 'pad' || kind === 'pocket') && selectedFeature?.kind === 'sketch' && selectedFeature.params.plane.kind === 'face'
     ? 'Use selected Sketch'
+  : kind === 'revolve' && selectedFeature?.kind === 'datum-axis'
+    ? 'Use selected Datum Axis'
     : (kind === 'fillet' || kind === 'chamfer') && topologySelection?.kind === 'edge'
       ? 'Use selected edge'
       : kind === 'mirror' && (selectedFeature?.kind === 'hole' || selectedFeature?.kind === 'cut')
@@ -720,7 +767,7 @@ export default function App() {
 
         <aside className="panel history-panel">
           <h2>Feature history</h2>
-          <ol className="feature-tree">{project.features.map((feature) => <li key={feature.id} data-selected={feature.id === selectedFeatureId} data-disabled={!feature.enabled}><button type="button" onClick={() => setSelectedFeatureId(feature.id)}><span className="feature-dot" /><div><strong>{feature.name}</strong><small>{feature.kind}{feature.kind === 'sketch' ? ` · ${feature.params.plane.kind === 'face' ? 'attached' : 'base XZ'}${feature.params.entities.length > 0 ? ` · ${feature.params.entities.length} primitive(s)` : ''}` : ''}{(feature.kind === 'fillet' || feature.kind === 'chamfer') && feature.params.selection.mode === 'topology' ? ' · topology-bound' : ''}{(feature.kind === 'hole' || feature.kind === 'cut') && feature.params.placement.mode === 'face' ? ' · face-bound' : ''}{(feature.kind === 'pad' || feature.kind === 'pocket') ? ` · sketch ${feature.params.sketchId.slice(0, 8)}` : ''}{feature.kind === 'datum-axis' ? ` · ${feature.params.source.axis}` : ''}{feature.enabled ? '' : ' · suppressed'}</small></div></button></li>)}</ol>
+          <ol className="feature-tree">{project.features.map((feature) => <li key={feature.id} data-selected={feature.id === selectedFeatureId} data-disabled={!feature.enabled}><button type="button" onClick={() => setSelectedFeatureId(feature.id)}><span className="feature-dot" /><div><strong>{feature.name}</strong><small>{feature.kind}{feature.kind === 'sketch' ? ` · ${feature.params.plane.kind === 'face' ? 'attached' : 'base XZ'}${feature.params.entities.length > 0 ? ` · ${feature.params.entities.length} primitive(s)` : ''}` : ''}{(feature.kind === 'fillet' || feature.kind === 'chamfer') && feature.params.selection.mode === 'topology' ? ' · topology-bound' : ''}{(feature.kind === 'hole' || feature.kind === 'cut') && feature.params.placement.mode === 'face' ? ' · face-bound' : ''}{(feature.kind === 'pad' || feature.kind === 'pocket' || feature.kind === 'revolve') ? ` · sketch ${feature.params.sketchId.slice(0, 8)}` : ''}{feature.kind === 'datum-axis' ? ` · ${feature.params.source.axis}` : ''}{feature.enabled ? '' : ' · suppressed'}</small></div></button></li>)}</ol>
           <h2>Feature inspector</h2>
           <div className="feature-inspector">{renderInspector()}{selectedFeature ? <div className="inspector-actions"><button type="button" onClick={toggleSelectedFeature}>{selectedFeature.enabled ? 'Suppress' : 'Enable'}</button><button type="button" className="danger" onClick={removeSelectedFeature}>Remove</button></div> : null}</div>
           <h2>Rebuild diagnostics</h2>
@@ -732,7 +779,7 @@ export default function App() {
           {lastStepExport ? <div className="profile-card"><strong>Last STEP · {lastStepExport.valid ? 'PASS' : 'WARN'}</strong><span>{lastStepExport.faceCount} faces · {lastStepExport.edgeCount} edges · {(lastStepExport.byteLength / 1024).toFixed(1)} KB</span><small>Volume {lastStepExport.volumeMm3.toFixed(1)} mm³ · Surface {lastStepExport.surfaceAreaMm2.toFixed(1)} mm²</small><small>Kernel: {lastStepExport.kernelId}{lastStepExport.filletApplied ? ' · fillet' : ''}{lastStepExport.chamferApplied ? ' · chamfer' : ''}</small>{lastStepExport.warnings.length > 0 ? <small>{lastStepExport.warnings.join(' ')}</small> : null}</div> : null}
           <h2>Kernel</h2>
           <div className="profile-card"><strong>{activeCadKernel.label}</strong><span>{activeCadKernel.capabilities.exactBrep ? 'Exact B-Rep' : 'Fast deterministic mesh'} · STL {activeCadKernel.capabilities.stlExport ? 'ready' : 'off'}</span><small>Simple vertical features stay lightweight. Exact edge/face features promote preview/STL automatically.</small></div>
-          <div className="profile-card"><strong>{exactKernelDescriptor.label}</strong><span>Exact B-Rep · STEP/STL · Pad/Pocket · Fillet/Chamfer/Shell · Linear Pattern / Mirror · face tools</span><small>Attached Sketches drive exact Pad/Pocket; durable edge refs drive Fillet/Chamfer; durable face refs drive Shell openings and oriented Hole/Cut; Linear Pattern and Mirror derive repeated/symmetric Hole/Cut instances without copying canonical source features.</small></div>
+          <div className="profile-card"><strong>{exactKernelDescriptor.label}</strong><span>Exact B-Rep · STEP/STL · Pad/Pocket/Revolve · Fillet/Chamfer/Shell · Linear Pattern / Mirror · face tools</span><small>Attached Sketches drive exact Pad/Pocket/Revolve; durable Datum Axis drives Revolve; durable edge refs drive Fillet/Chamfer; durable face refs drive Shell openings and oriented Hole/Cut; Linear Pattern and Mirror derive repeated/symmetric Hole/Cut instances without copying canonical source features.</small></div>
           <h2>Management</h2>
           <div className="management-card"><strong>{managementIdentity.controlPlane}</strong><span>UI policy · feature flags · print policy</span><small>Project geometry and export files remain inside CAD_CAM_3D.</small></div>
         </aside>
