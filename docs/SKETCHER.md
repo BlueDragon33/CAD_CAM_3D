@@ -4,7 +4,7 @@ The sketch subsystem is application/domain data. It is independent from Three.js
 
 ## Persisted model
 
-Current project schema: **v7**.
+Current project schema: **v8**.
 
 Sketch primitives:
 
@@ -33,7 +33,8 @@ Schema history relevant to Sketch:
 
 - v5: persisted entities/constraints + construction/profile membership;
 - v6: durable `SketchPlaneRef`;
-- v7: attached Sketch may be consumed by Pad/Pocket.
+- v7: attached Sketch may be consumed by Pad/Pocket;
+- v8: Shell intent is persisted while exact Shell execution remains capability-gated until its B-Rep workflow is proven.
 
 ## Sketch planes
 
