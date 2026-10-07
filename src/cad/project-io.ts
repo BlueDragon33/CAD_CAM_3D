@@ -16,10 +16,10 @@ import type {
 import type { SketchEntity, SketchPoint2D } from './sketch';
 
 const PROJECT_FORMAT = 'cad-cam-3d-project';
-const PROJECT_SCHEMA_VERSION = 8;
+const PROJECT_SCHEMA_VERSION = 9;
 const materials = new Set<PrintProfile['material']>(['PLA', 'PETG', 'ABS', 'ASA', 'PA-CF', 'Other']);
 
-export type ProjectDocumentV8 = {
+export type ProjectDocumentV9 = {
   format: typeof PROJECT_FORMAT;
   schemaVersion: typeof PROJECT_SCHEMA_VERSION;
   savedAt: string;
@@ -335,6 +335,19 @@ function readFeature(value: unknown, index: number, sourceSchemaVersion: number)
       join: 'arc',
     } };
   }
+  if (kind === 'linear-pattern') {
+    if (sourceSchemaVersion < 9) throw new Error(`${label} contains Linear Pattern but schema ${sourceSchemaVersion} predates Linear Pattern support.`);
+    const axis = readString(params, 'axis', `${label}.params.axis`);
+    if (axis !== 'x' && axis !== 'z' && axis !== 'u' && axis !== 'v') throw new Error(`${label}.params.axis must be x, z, u or v.`);
+    const count = readNumber(params, 'count', `${label}.params.count`, 2);
+    if (!Number.isInteger(count) || count > 64) throw new Error(`${label}.params.count must be an integer from 2 through 64.`);
+    return { id, kind, name, enabled, params: {
+      sourceFeatureId: readString(params, 'sourceFeatureId', `${label}.params.sourceFeatureId`),
+      count,
+      spacingMm: readNumber(params, 'spacingMm', `${label}.params.spacingMm`, 0.1),
+      axis,
+    } };
+  }
   throw new Error(`${label} has unsupported feature kind ${kind}.`);
 }
 
@@ -363,6 +376,19 @@ function validateFeatureReferences(features: CadFeature[]) {
         throw new Error(`${feature.name} must reference a face-attached sketch.`);
       }
     }
+    if (feature.kind === 'linear-pattern') {
+      const source = seen.get(feature.params.sourceFeatureId);
+      if (!source || (source.kind !== 'hole' && source.kind !== 'cut')) {
+        throw new Error(`${feature.name} must reference an earlier Hole or Cut feature.`);
+      }
+      const faceBound = source.params.placement.mode === 'face';
+      if (faceBound && feature.params.axis !== 'u' && feature.params.axis !== 'v') {
+        throw new Error(`${feature.name} must use local U/V axis for a face-bound source.`);
+      }
+      if (!faceBound && feature.params.axis !== 'x' && feature.params.axis !== 'z') {
+        throw new Error(`${feature.name} must use global X/Z axis for a global source.`);
+      }
+    }
     seen.set(feature.id, feature);
   }
 }
@@ -386,7 +412,7 @@ function safeFileName(name: string) {
 }
 
 export function serializeProject(project: CadProject): string {
-  const document: ProjectDocumentV8 = { format: PROJECT_FORMAT, schemaVersion: PROJECT_SCHEMA_VERSION, savedAt: new Date().toISOString(), project };
+  const document: ProjectDocumentV9 = { format: PROJECT_FORMAT, schemaVersion: PROJECT_SCHEMA_VERSION, savedAt: new Date().toISOString(), project };
   return JSON.stringify(document, null, 2);
 }
 
@@ -396,7 +422,7 @@ export function parseProjectDocument(text: string): { project: CadProject; schem
   if (!isRecord(raw)) throw new Error('Project document must be an object.');
   if (raw.format !== PROJECT_FORMAT) throw new Error('This file is not a CAD_CAM_3D project document.');
   const sourceSchemaVersion = raw.schemaVersion;
-  if (![1, 2, 3, 4, 5, 6, 7, PROJECT_SCHEMA_VERSION].includes(sourceSchemaVersion as number)) {
+  if (![1, 2, 3, 4, 5, 6, 7, 8, PROJECT_SCHEMA_VERSION].includes(sourceSchemaVersion as number)) {
     throw new Error(`Unsupported project schema version ${String(sourceSchemaVersion)}. Supported versions are 1 through ${PROJECT_SCHEMA_VERSION}.`);
   }
   return {
