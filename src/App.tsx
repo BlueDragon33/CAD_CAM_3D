@@ -33,7 +33,7 @@ import { Viewport } from './components/Viewport';
 import { defaultManagementPolicy, managementIdentity } from './management/policy';
 
 const featureLabels: Record<FeatureKind, string> = {
-  sketch: 'Sketch', extrude: 'Extrude', pad: 'Pad', pocket: 'Pocket', cut: 'Cut', hole: 'Hole', fillet: 'Fillet', chamfer: 'Chamfer',
+  sketch: 'Sketch', extrude: 'Extrude', pad: 'Pad', pocket: 'Pocket', cut: 'Cut', hole: 'Hole', fillet: 'Fillet', chamfer: 'Chamfer', shell: 'Shell',
 };
 
 function clampDimension(value: number, minimum = 0.1) {
@@ -459,6 +459,13 @@ export default function App() {
         <div className="topology-bind-actions"><button type="button" onClick={bindSelectedFeatureToFace} disabled={topologySelection?.kind !== 'face'}>Bind selected face</button><button type="button" onClick={useGlobalPlacement} disabled={!faceBound}>Use global X/Z</button></div>
       </div>;
     }
+    if (selectedFeature.kind === 'shell') return <div className="inspector-grid">
+      <label><span>Thickness</span><div><input type="number" min="0.1" step="0.1" value={selectedFeature.params.thicknessMm} disabled /><b>mm</b></div></label>
+      <div className="constraint-state" data-ready={false}>
+        <strong>Shell staged · exact execution pending</strong>
+        <small>Schema v8 preserves Shell intent, but rebuild/export stays blocked until exact B-Rep execution and topology-remap tests pass.</small>
+      </div>
+    </div>;
     return renderEdgeTreatmentInspector(selectedFeature);
   };
 
