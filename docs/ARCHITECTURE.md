@@ -57,9 +57,9 @@ simple preview/STL       exact preview / STEP / STL
 
 ## Dual-kernel strategy
 
-`mesh-mvp-v1` handles direct base-profile extrusion and lightweight STL quickly. `occt-wasm-v5` is lazy-loaded for exact topology, exact edge treatments, oriented face features, attached planar Pad/Pocket, exact Shell, deterministic Linear Pattern, STEP, adaptive STL and promoted-profile Boolean operations.
+`mesh-mvp-v1` handles direct base-profile extrusion and lightweight manufacturing tessellation quickly. `occt-wasm-v5` is lazy-loaded for exact topology, exact edge treatments, oriented face features, attached planar Pad/Pocket, exact Shell, deterministic Linear Pattern/Mirror, exact Revolve, STEP, adaptive STL/3MF and promoted-profile Boolean operations.
 
-`src/cad/project-analysis.ts` promotes models automatically when the fast kernel would be incomplete. Current exact triggers include Pad, Pocket, Shell, Linear Pattern, Mirror, Fillet, Chamfer, non-horizontal face-bound Hole/Cut, and Hole/Cut on a promoted sketch profile. Datum Axis is semantic reference geometry and does not force exact geometry by itself.
+`src/cad/project-analysis.ts` promotes models automatically when the fast kernel would be incomplete. Current exact triggers include Pad, Pocket, Revolve, Shell, Linear Pattern, Mirror, Fillet, Chamfer, non-horizontal face-bound Hole/Cut, and Hole/Cut on a promoted sketch profile. Datum Axis is semantic reference geometry and does not force exact geometry by itself.
 
 ### Lightweight path
 
@@ -85,7 +85,8 @@ simple preview/STL       exact preview / STEP / STL
 - exact inward Shell from durable opening-face references;
 - deterministic Linear Pattern deriving repeated Hole/Cut instances from one canonical source feature;
 - deterministic Mirror deriving one reflected Hole/Cut instance from one canonical source feature;
-- topology evolution through Pad/Pocket/Hole/Cut/Fillet/Chamfer/Shell/Linear Pattern/Mirror;
+- exact additive Revolve consuming a durable Datum Axis and promoted source Sketch;
+- topology evolution through Pad/Pocket/Revolve/Hole/Cut/Fillet/Chamfer/Shell/Linear Pattern/Mirror;
 - exact face/edge picking and durable reference resolution;
 - exact preview tessellation;
 - adaptive STL + preflight;
@@ -167,7 +168,7 @@ For the named rectangle, manufacturing binding accepts descendants of the six pl
 
 ## Project persistence
 
-Current editable project schema is v11.
+Current editable project schema is v12.
 
 Migration chain:
 - v1: legacy Fillet selection + global Hole/Cut;
@@ -180,28 +181,48 @@ Migration chain:
 - v8: `Shell` persists wall thickness plus one or more durable opening-face references;
 - v9: `Linear Pattern` persists an earlier Hole/Cut source feature ID, count, spacing and valid global/local axis;
 - v10: `Mirror` persists an earlier Hole/Cut source feature ID plus explicit global or face-local symmetry plane;
-- v11: `Datum Axis` persists a base-XZ or attached-sketch-local source, axis and offset without kernel runtime identity.
+- v11: `Datum Axis` persists a base-XZ or attached-sketch-local source, axis and offset without kernel runtime identity;
+- v12: `Revolve` persists an earlier promoted Sketch ID, durable Datum Axis ID, bounded angle and additive operation semantics.
 
-The loader accepts v1-v11 and validates supported fields before a project enters the workspace. Multi-loop region membership and side-face semantic lineage reuse stable entity IDs/flags; schema bumps are reserved for changes to durable project meaning such as SketchPlaneRef and Pad/Pocket.
+The loader accepts v1-v12 and validates supported fields before a project enters the workspace. Multi-loop region membership and side-face semantic lineage reuse stable entity IDs/flags; schema bumps are reserved for changes to durable project meaning such as SketchPlaneRef and Pad/Pocket.
 
 Project JSON, B-Rep and manufacturing files remain owned by CAD_CAM_3D and are not mirrored into Quản trị Ứng dụng.
 
 ## Planned modules
 
 - stronger sketch constraint vocabulary/solver behind the existing semantic model;
-- arbitrary datum planes beyond face attachment; Datum Axis now has a narrow durable base-XZ/attached-sketch foundation;
+- arbitrary datum planes beyond face attachment and current Datum Axis;
 - explicit nested islands / multi-body semantics;
 - cylindrical-surface local coordinates for curved-face placement;
 - richer Shell options (variable thickness/join policy) and exact surface metadata;
-- pattern/revolve/loft/sweep after sketch-profile foundations are stronger;
+- Sweep/Loft only after profile/plane/axis contracts are mature;
 - sectioning and measurement;
-- AI planner producing validated feature operations;
-- component catalog for electronics/robotics;
-- manufacturing intelligence for tolerance, wall, bridging, orientation and split logic;
-- 3MF workflow.
+- richer manufacturing intelligence for clearance, wall inspection, bridging, arbitrary orientation and split/join planning;
+- verified electronics/robotics component packs layered over the local semantic catalog contract;
+- future AI/model providers emitting the bounded typed proposal contract rather than mutating CAD state directly;
+- optional collaboration/account/licensing adapters only after commercial product value is ready for them.
+
+## Manufacturing, AI and local-first foundation
+
+Manufacturing projections now share the adaptive final geometry path:
+
+- STL exports rotate workspace Y-up geometry into slicer Z-up coordinates without reflection;
+- portable Core 3MF is generated locally with explicit millimeter units and no external ZIP/SaaS dependency;
+- adaptive readiness uses exact B-Rep dimensions whenever the project requires the exact kernel;
+- selected-printer envelope analysis checks current and all 90° axis-aligned orientations before recommending split planning;
+- nozzle-scale Hole/Shell heuristics and a geometry-based downward-overhang heuristic are advisory, not slicer guarantees;
+- build-volume mismatch may block readiness for the selected printer without corrupting or withholding a valid manufacturing file.
+
+The command bridge now follows the bounded AI architecture: deterministic intent parsing creates a typed, non-mutating proposal; the UI previews it; commit revalidates both project and topology-selection fingerprints before normal `CadProject` mutation. Future AI providers must target the same validated operation boundary.
+
+Local resilience includes bounded browser recovery snapshots validated through the normal project parser/migration chain. Production builds additionally emit an offline asset manifest and service worker that cache the app shell, JS/CSS and exact-kernel WASM without making cache state canonical project data.
+
+A semantic component-catalog contract and offline local provider now exist for future verified robotics/electronics packs. Synthetic test definitions are never presented as real manufacturer dimensions. External provider/dependency posture is tracked in `docs/DEPENDENCY_BUDGET.md`.
 
 ## Current foundation
 
-The project now supports deterministic feature history, schema-v11 persistence with v1-v10 migration, explicit five-state sketch constraint diagnostics, constrained interactive Line/Circle/Arc entities, closed-loop validation, explicit Line/Line+Arc/Circle region promotion, direct inner-hole classification, durable planar Sketch attachment, exact attached Pad/Pocket, exact Shell, deterministic Hole/Cut Linear Pattern, deterministic Hole/Cut Mirror, durable Datum Axis, mesh/OpenCascade parity gating, sketch-entity semantic side-face lineage, planar promoted-side Hole/Cut binding, lightweight and exact preview/STL paths, STEP, topology evolution, durable face/edge references, oriented planar-face Hole/Cut, exact Fillet, exact Chamfer and exact inward Shell.
+The project now supports deterministic feature history, schema-v12 persistence with v1-v11 migration, explicit five-state sketch constraint diagnostics, constrained interactive Line/Circle/Arc entities, closed-loop validation, explicit Line/Line+Arc/Circle region promotion, direct inner-hole classification, durable planar Sketch attachment, exact attached Pad/Pocket, exact Shell, deterministic Hole/Cut Linear Pattern and Mirror, durable Datum Axis, exact additive Revolve, mesh/OpenCascade parity gating, sketch-entity semantic side-face lineage, planar promoted-side Hole/Cut binding, lightweight and exact preview/manufacturing paths, STL, portable Core 3MF, STEP, topology evolution, durable face/edge references, oriented planar-face Hole/Cut, exact Fillet and exact Chamfer.
 
-The next axis-driven modeling milestone is exact Revolve consuming a durable Datum Axis; solver maturity continues behind the same persisted sketch semantic model. Nested islands should only be enabled together with explicit island/multi-body semantics.
+Automated foundations also cover adaptive manufacturing readiness, axis-aligned printer-fit recommendations, downward-overhang warning, local autosave/recovery, offline production asset caching, a bounded preview-before-commit design-command planner and an offline semantic component-catalog provider.
+
+The next automated work may deepen manufacturing checks and verified component/domain packs, but commercially important changes to the command/recovery/manufacturing interaction now require human UX acceptance before being treated as release-quality behavior. Nested islands remain gated on explicit island/multi-body semantics, and Sweep/Loft remain gated on mature profile/plane/path contracts.
