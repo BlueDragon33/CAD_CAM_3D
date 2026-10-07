@@ -1,6 +1,6 @@
 # CAD_CAM_3D Human UX Acceptance Runbook
 
-Status: **CONTINUATION AUTHORIZED; ALIGNED-SPLIT HUMAN GATE OPEN**
+Status: **CONTINUATION AUTHORIZED; ALIGNED-SPLIT HUMAN GATE ACCEPTED 2026-10-08**
 Scope: current foundation branch `foundation/general-system`
 Purpose: verify premium usability and real-browser/slicer behavior that CI cannot prove.
 
@@ -91,7 +91,7 @@ Recorded result: **ACCEPT SPLIT 3MF** — Product Owner, 2026-10-07.
 
 This targeted decision authorizes further work built on split-export UX. It does not authorize PR merge or Production.
 
-### 4B. Verified registration pins → Aligned Split 3MF — CURRENT HUMAN GATE
+### 4B. Verified registration pins → Aligned Split 3MF — ACCEPTED 2026-10-08
 
 This gate covers the new optional registration-only alignment path. It does **not** reopen or replace the already accepted flat Split 3MF path.
 
@@ -129,13 +129,9 @@ Expected fail-closed behavior:
 - a proposed pin crossing a hole/cut/void: corridor verification must block aligned export;
 - any invalid/disconnected post-Boolean piece: aligned export must block.
 
-For this targeted gate, report one of:
+Recorded result: **ACCEPT ALIGNED SPLIT 3MF** — Product Owner, 2026-10-08.
 
-- **ACCEPT ALIGNED SPLIT 3MF**
-- **ACCEPT ALIGNED SPLIT 3MF WITH FINDINGS** + concrete issue(s)
-- **REJECT ALIGNED SPLIT 3MF** + screenshot/error where practical
-
-This gate authorizes or blocks further work built on automatic registration geometry. It still does not authorize PR merge or Production.
+This gate authorizes further work built on automatic registration geometry. It still does not authorize PR merge or Production.
 
 ## 5. Recovery
 
