@@ -601,7 +601,7 @@ function buildExactShape(kernel: OcctKernel, project: CadProject, rebuilt: Rebui
   }
 
   if (!kernel.isValid(shape)) warnings.push('OCCT reports that the rebuilt B-Rep is not fully valid.');
-  return { shape, warnings, filletApplied, chamferApplied, evolution: tracker.snapshot() };
+  return { shape, warnings, filletApplied, chamferApplied, shellApplied, evolution: tracker.snapshot() };
 }
 
 async function buildSnapshotUnsafe(project: CadProject, options: ExactKernelBuildOptions): Promise<ExactKernelSnapshot> {
@@ -610,7 +610,7 @@ async function buildSnapshotUnsafe(project: CadProject, options: ExactKernelBuil
   const kernel = await getKernel();
   kernel.releaseAll();
   try {
-    const { shape, warnings, filletApplied, chamferApplied, evolution } = buildExactShape(kernel, project, rebuilt);
+    const { shape, warnings, filletApplied, chamferApplied, shellApplied, evolution } = buildExactShape(kernel, project, rebuilt);
     const mesh = kernel.meshShape(shape, { linearDeflection: 0.08, angularDeflection: 0.35 });
     const geometry = mapOcctMeshToThree(mesh);
     const faceGroups = mesh.faceGroups ? new Int32Array(mesh.faceGroups) : null;
@@ -634,7 +634,7 @@ async function buildSnapshotUnsafe(project: CadProject, options: ExactKernelBuil
         kernelId: 'occt-wasm-v5', exactBrep: true, valid, triangleCount: mesh.triangleCount,
         faceCount: faceHashes.length, edgeCount: edgeHashes.length, volumeMm3: kernel.getVolume(shape), surfaceAreaMm2: kernel.getSurfaceArea(shape),
         dimensionsMm: { width: bbox.xmax - bbox.xmin, depth: bbox.ymax - bbox.ymin, height: bbox.zmax - bbox.zmin },
-        filletApplied, chamferApplied, evolutionStepCount: evolution.steps.length, warnings,
+        filletApplied, chamferApplied, shellApplied, evolutionStepCount: evolution.steps.length, warnings,
       },
     };
   } finally {
@@ -672,6 +672,6 @@ export const exactKernelDescriptor = {
     exactChamfer: true,
     promotedSketchProfiles: true,
     attachedPlanarMaterialFeatures: true,
-    shell: false,
+    shell: true,
   },
 };
