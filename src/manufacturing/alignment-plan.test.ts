@@ -46,7 +46,7 @@ describe('split alignment planning', () => {
     expect(alignment.unsupportedSeamIds).toEqual(split!.seams.map((seam) => seam.id));
   });
 
-  it('is deterministic and emits two pins per supported grid seam', () => {
+  it('is deterministic and fails closed for multi-axis grid alignment', () => {
     const project = createDefaultProject();
     project.printProfile.buildVolume = { width: 256, depth: 256, height: 256 };
     const split = planBuildVolumeSplit({ width: 300, depth: 300, height: 20 }, project);
@@ -56,8 +56,8 @@ describe('split alignment planning', () => {
     const second = planSplitAlignment(project, split!);
 
     expect(first).toEqual(second);
-    expect(first.ready).toBe(true);
-    expect(first.pins).toHaveLength(split!.seams.length * 2);
-    expect(new Set(first.pins.map((pin) => pin.id)).size).toBe(first.pins.length);
+    expect(first.ready).toBe(false);
+    expect(first.pins).toHaveLength(0);
+    expect(first.unsupportedSeamIds).toEqual(split!.seams.map((seam) => seam.id));
   });
 });
