@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   createDefaultProject,
+  type DatumAxisFeature,
   type HoleFeature,
   type LinearPatternFeature,
   type MirrorFeature,
@@ -22,6 +23,40 @@ function globalHole(id = 'hole-source'): HoleFeature {
     },
   };
 }
+
+describe('semantic Datum Axis', () => {
+  it('accepts a durable base-XZ axis without scheduling a solid operation', () => {
+    const project = createDefaultProject();
+    const sketch = project.features.find((feature) => feature.kind === 'sketch')!;
+    const datum: DatumAxisFeature = {
+      id: 'datum-x',
+      kind: 'datum-axis',
+      name: 'Datum Axis 1',
+      enabled: true,
+      params: { source: { kind: 'base-xz', sketchId: sketch.id, axis: 'x', offsetMm: 2 } },
+    };
+    project.features.splice(1, 0, datum);
+    const rebuilt = rebuildProject(project);
+    expect(rebuilt.hasSolid).toBe(true);
+    expect(rebuilt.operationSequence).toHaveLength(0);
+    expect(rebuilt.diagnostics.some((item) => item.featureId === datum.id && item.level === 'info')).toBe(true);
+  });
+
+  it('rejects a local axis bound to a base-XZ Sketch', () => {
+    const project = createDefaultProject();
+    const sketch = project.features.find((feature) => feature.kind === 'sketch')!;
+    const datum: DatumAxisFeature = {
+      id: 'datum-invalid',
+      kind: 'datum-axis',
+      name: 'Invalid Datum',
+      enabled: true,
+      params: { source: { kind: 'sketch-local', sketchId: sketch.id, axis: 'u', offsetMm: 0 } },
+    };
+    project.features.splice(1, 0, datum);
+    const rebuilt = rebuildProject(project);
+    expect(rebuilt.diagnostics.some((item) => item.featureId === datum.id && item.level === 'error')).toBe(true);
+  });
+});
 
 describe('semantic rebuild Linear Pattern', () => {
   it('keeps one canonical source and schedules a global pattern after it', () => {
