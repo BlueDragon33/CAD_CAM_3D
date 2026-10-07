@@ -1,6 +1,6 @@
 # WP-E3 — Exact B-Rep Split Geometry Foundation
 
-Status: **ACTIVE**
+Status: **COMPLETED — SPLIT 3MF HUMAN ACCEPTED 2026-10-07**
 Parent: `WP-E2-BUILD-VOLUME-SPLIT-PLANNING`
 Blueprint zone: Floors 51–60 — Manufacturing Intelligence
 
@@ -61,3 +61,10 @@ Piece ranges are measured from the final exact B-Rep envelope minimum on each so
 ## Next contract
 
 After exact generation is stable, add a bounded multi-part manufacturing export projection. Multi-object 3MF or multi-STL output must consume these validated exact pieces and must remain distinct from the canonical editable project.
+
+## Acceptance evidence
+
+- automated CI and exact-kernel split smoke: PASS;
+- multi-object Core 3MF Preview deployment: PASS;
+- Product Owner human slicer gate: **ACCEPT SPLIT 3MF** on 2026-10-07;
+- merge and Production remain explicitly unauthorized.
