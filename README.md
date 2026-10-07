@@ -24,3 +24,19 @@ The initial implementation lives on a development branch before being promoted t
 Repository này công bố metadata tại `control/application-management.contract.json` theo schema `application-management.contract/v1`.
 
 Contract hiện chỉ dùng để Application Management tự nhận diện ứng dụng và phân loại **Kỹ thuật**. Remote admin, device registry và production runtime vẫn **chưa sẵn sàng**; Trung tâm không được suy diễn hoặc bật thao tác giả trước khi backend thật được triển khai.
+
+
+## Operational sovereignty
+
+CAD_CAM_3D adopts **Universal Constitution 1.2.0** at **B2**.
+
+Default posture: **LOCAL_CORE + PORTABLE_ARTIFACTS**.
+
+- Parametric model/feature truth stays in local/project-owned data.
+- STEP/STL/3MF and other portable exports remain first-class exit paths.
+- AI may assist natural-language modeling/design, but never becomes the only owner of model truth.
+- Google Drive or equivalent may optionally sync/back up project files.
+- Application Management remains metadata/lifecycle coordination only.
+- Core CAD editing must not require a mandatory paid cloud provider when local/self-controlled execution can satisfy the requirement.
+
+Canonical dependency posture: `.blueprint/dependency-budget.json`.
