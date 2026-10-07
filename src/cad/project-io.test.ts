@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createDefaultProject, type LinearPatternFeature, type PadFeature, type ShellFeature, type SketchFeature } from './model';
+import { createDefaultProject, type HoleFeature, type LinearPatternFeature, type PadFeature, type ShellFeature, type SketchFeature } from './model';
 import { parseProjectDocument, serializeProject } from './project-io';
 
 function baseDocument() {
@@ -80,13 +80,13 @@ describe('project schema migration', () => {
 
   it('round-trips schema v9 Linear Pattern without copying its source feature', () => {
     const project = createDefaultProject();
-    const source = {
+    const source: HoleFeature = {
       id: 'hole-source',
       kind: 'hole',
       name: 'Hole Source',
       enabled: true,
       params: { diameter: 4, x: -10, z: 0, through: true, placement: { mode: 'global-xz' } },
-    } as const;
+    };
     const pattern: LinearPatternFeature = {
       id: 'pattern-1',
       kind: 'linear-pattern',
