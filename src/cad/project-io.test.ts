@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createDefaultProject, type HoleFeature, type LinearPatternFeature, type PadFeature, type ShellFeature, type SketchFeature } from './model';
+import { createDefaultProject, type HoleFeature, type LinearPatternFeature, type MirrorFeature, type PadFeature, type ShellFeature, type SketchFeature } from './model';
 import { parseProjectDocument, serializeProject } from './project-io';
 
 function baseDocument() {
@@ -12,7 +12,7 @@ function baseDocument() {
 }
 
 describe('project schema migration', () => {
-  for (const version of [1, 2, 3, 4, 5, 6, 7, 8]) {
+  for (const version of [1, 2, 3, 4, 5, 6, 7, 8, 9]) {
     it(`loads schema v${version} into the current base-XZ sketch contract`, () => {
       const doc = baseDocument();
       doc.schemaVersion = version;
@@ -25,22 +25,22 @@ describe('project schema migration', () => {
       const parsed = parseProjectDocument(JSON.stringify(doc));
       const migratedSketch = parsed.project.features.find((feature): feature is SketchFeature => feature.kind === 'sketch')!;
       expect(parsed.sourceSchemaVersion).toBe(version);
-      expect(parsed.schemaVersion).toBe(9);
+      expect(parsed.schemaVersion).toBe(10);
       expect(parsed.migrated).toBe(true);
       expect(migratedSketch.params.plane).toEqual({ kind: 'base-xz' });
     });
   }
 
-  it('round-trips schema v9', () => {
+  it('round-trips schema v10', () => {
     const project = createDefaultProject();
     const parsed = parseProjectDocument(serializeProject(project));
-    expect(parsed.schemaVersion).toBe(9);
-    expect(parsed.sourceSchemaVersion).toBe(9);
+    expect(parsed.schemaVersion).toBe(10);
+    expect(parsed.sourceSchemaVersion).toBe(10);
     expect(parsed.migrated).toBe(false);
     expect(parsed.project.id).toBe(project.id);
   });
 
-  it('round-trips schema v9 Shell intent with durable opening references', () => {
+  it('round-trips schema v10 Shell intent with durable opening references', () => {
     const project = createDefaultProject();
     const shell: ShellFeature = {
       id: 'shell-1',
@@ -78,7 +78,7 @@ describe('project schema migration', () => {
     expect(() => parseProjectDocument(JSON.stringify(doc))).toThrow(/at least one face reference/i);
   });
 
-  it('round-trips schema v9 Linear Pattern without copying its source feature', () => {
+  it('round-trips schema v10 Linear Pattern without copying its source feature', () => {
     const project = createDefaultProject();
     const source: HoleFeature = {
       id: 'hole-source',
@@ -112,6 +112,51 @@ describe('project schema migration', () => {
       params: { sourceFeatureId: 'missing-hole', count: 3, spacingMm: 8, axis: 'x' },
     } as unknown as LinearPatternFeature);
     expect(() => parseProjectDocument(JSON.stringify(doc))).toThrow(/earlier Hole or Cut/i);
+  });
+
+  it('round-trips schema v10 Mirror with an explicit symmetry plane', () => {
+    const project = createDefaultProject();
+    const source: HoleFeature = {
+      id: 'mirror-hole',
+      kind: 'hole',
+      name: 'Mirror Hole',
+      enabled: true,
+      params: { diameter: 4, x: -10, z: 0, through: true, placement: { mode: 'global-xz' } },
+    };
+    const mirror: MirrorFeature = {
+      id: 'mirror-1',
+      kind: 'mirror',
+      name: 'Mirror 1',
+      enabled: true,
+      params: {
+        sourceFeatureId: source.id,
+        plane: { kind: 'global', axis: 'x', offsetMm: 0 },
+      },
+    };
+    project.features.push(source, mirror);
+    const parsed = parseProjectDocument(serializeProject(project));
+    const loaded = parsed.project.features.find((feature): feature is MirrorFeature => feature.kind === 'mirror');
+    expect(loaded?.params).toEqual(mirror.params);
+    expect(parsed.project.features.filter((feature) => feature.kind === 'hole')).toHaveLength(1);
+  });
+
+  it('rejects Mirror when its plane family does not match source placement', () => {
+    const doc = baseDocument();
+    const source: HoleFeature = {
+      id: 'global-hole',
+      kind: 'hole',
+      name: 'Global Hole',
+      enabled: true,
+      params: { diameter: 4, x: -10, z: 0, through: true, placement: { mode: 'global-xz' } },
+    };
+    doc.project.features.push(source, {
+      id: 'mirror-invalid',
+      kind: 'mirror',
+      name: 'Invalid Mirror',
+      enabled: true,
+      params: { sourceFeatureId: source.id, plane: { kind: 'face-local', axis: 'u', offsetMm: 0 } },
+    } as MirrorFeature);
+    expect(() => parseProjectDocument(JSON.stringify(doc))).toThrow(/global mirror plane/i);
   });
 
   it('rejects Pad when its source sketch is missing or later', () => {
