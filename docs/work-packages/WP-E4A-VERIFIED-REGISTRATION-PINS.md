@@ -1,6 +1,6 @@
 # WP-E4A — Verified Registration Pin Foundation
 
-Status: **HUMAN GATE OPEN — AUTOMATED GATES PASS**
+Status: **COMPLETED — HUMAN ACCEPTED 2026-10-08**
 Parent: `WP-E4-SPLIT-SEAM-JOINING-FOUNDATION`
 Blueprint zone: Floors 51–60 — Manufacturing Intelligence
 
@@ -78,4 +78,4 @@ Do not expose/accept this as a user-facing manufacturing feature until the align
 - production build: PASS;
 - Preview Pages deployment: PASS.
 
-Human slicer validation remains required before this registration feature is accepted.
+Human slicer validation: **ACCEPT ALIGNED SPLIT 3MF** — Product Owner, 2026-10-08. Merge and Production remain separate authorities.
