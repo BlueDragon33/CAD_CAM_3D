@@ -16,10 +16,10 @@ import type {
 import type { SketchEntity, SketchPoint2D } from './sketch';
 
 const PROJECT_FORMAT = 'cad-cam-3d-project';
-const PROJECT_SCHEMA_VERSION = 11;
+const PROJECT_SCHEMA_VERSION = 12;
 const materials = new Set<PrintProfile['material']>(['PLA', 'PETG', 'ABS', 'ASA', 'PA-CF', 'Other']);
 
-export type ProjectDocumentV11 = {
+export type ProjectDocumentV12 = {
   format: typeof PROJECT_FORMAT;
   schemaVersion: typeof PROJECT_SCHEMA_VERSION;
   savedAt: string;
@@ -297,6 +297,18 @@ function readFeature(value: unknown, index: number, sourceSchemaVersion: number)
       direction: 'inward',
     } };
   }
+  if (kind === 'revolve') {
+    if (sourceSchemaVersion < 12) throw new Error(`${label} contains Revolve but schema ${sourceSchemaVersion} predates Revolve support.`);
+    if (params.operation !== 'add') throw new Error(`${label}.params.operation must be add.`);
+    const angleDeg = readNumber(params, 'angleDeg', `${label}.params.angleDeg`, 0.1);
+    if (angleDeg > 360) throw new Error(`${label}.params.angleDeg must be <= 360.`);
+    return { id, kind, name, enabled, params: {
+      sketchId: readString(params, 'sketchId', `${label}.params.sketchId`),
+      axisId: readString(params, 'axisId', `${label}.params.axisId`),
+      angleDeg,
+      operation: 'add',
+    } };
+  }
   if (kind === 'hole') {
     if (params.through !== true) throw new Error(`${label}.params.through must be true.`);
     return { id, kind, name, enabled, params: {
@@ -427,6 +439,19 @@ function validateFeatureReferences(features: CadFeature[]) {
         throw new Error(`${feature.name} sketch-local axis must reference a face-attached Sketch.`);
       }
     }
+    if (feature.kind === 'revolve') {
+      const sketch = seen.get(feature.params.sketchId);
+      const axis = seen.get(feature.params.axisId);
+      if (!sketch || sketch.kind !== 'sketch' || sketch.params.plane.kind !== 'face') {
+        throw new Error(`${feature.name} must reference an earlier face-attached Sketch.`);
+      }
+      if (!axis || axis.kind !== 'datum-axis' || axis.params.source.kind !== 'sketch-local') {
+        throw new Error(`${feature.name} must reference an earlier sketch-local Datum Axis.`);
+      }
+      if (axis.params.source.sketchId !== sketch.id) {
+        throw new Error(`${feature.name} Datum Axis must originate from the same Sketch.`);
+      }
+    }
     if (feature.kind === 'linear-pattern') {
       const source = seen.get(feature.params.sourceFeatureId);
       if (!source || (source.kind !== 'hole' && source.kind !== 'cut')) {
@@ -476,7 +501,7 @@ function safeFileName(name: string) {
 }
 
 export function serializeProject(project: CadProject): string {
-  const document: ProjectDocumentV11 = { format: PROJECT_FORMAT, schemaVersion: PROJECT_SCHEMA_VERSION, savedAt: new Date().toISOString(), project };
+  const document: ProjectDocumentV12 = { format: PROJECT_FORMAT, schemaVersion: PROJECT_SCHEMA_VERSION, savedAt: new Date().toISOString(), project };
   return JSON.stringify(document, null, 2);
 }
 
@@ -486,7 +511,7 @@ export function parseProjectDocument(text: string): { project: CadProject; schem
   if (!isRecord(raw)) throw new Error('Project document must be an object.');
   if (raw.format !== PROJECT_FORMAT) throw new Error('This file is not a CAD_CAM_3D project document.');
   const sourceSchemaVersion = raw.schemaVersion;
-  if (![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, PROJECT_SCHEMA_VERSION].includes(sourceSchemaVersion as number)) {
+  if (![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, PROJECT_SCHEMA_VERSION].includes(sourceSchemaVersion as number)) {
     throw new Error(`Unsupported project schema version ${String(sourceSchemaVersion)}. Supported versions are 1 through ${PROJECT_SCHEMA_VERSION}.`);
   }
   return {
