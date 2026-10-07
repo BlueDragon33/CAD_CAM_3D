@@ -70,9 +70,21 @@ export type ExactKernelSnapshot = {
 
 export type ExactKernelBuildOptions = { includeStep?: boolean };
 
+export type ExactSourceAxis = 'X' | 'Y' | 'Z';
+
 export type ExactClipAxisRange = {
   startFromEnvelopeMinMm: number;
   endFromEnvelopeMinMm: number;
+};
+
+export type ExactSplitCylinderOperation = {
+  id: string;
+  mode: 'add' | 'cut';
+  axis: ExactSourceAxis;
+  centerFromEnvelopeMinMm: Record<ExactSourceAxis, number>;
+  startFromEnvelopeMinMm: number;
+  lengthMm: number;
+  radiusMm: number;
 };
 
 export type ExactClipPieceRequest = {
@@ -83,6 +95,28 @@ export type ExactClipPieceRequest = {
     Y: ExactClipAxisRange;
     Z: ExactClipAxisRange;
   };
+  postOperations?: ExactSplitCylinderOperation[];
+};
+
+export type ExactMaterialCorridorProbeRequest = {
+  id: string;
+  axis: ExactSourceAxis;
+  centerFromEnvelopeMinMm: Record<ExactSourceAxis, number>;
+  startFromEnvelopeMinMm: number;
+  lengthMm: number;
+  radiusMm: number;
+};
+
+export type ExactMaterialCorridorProbeResult = {
+  id: string;
+  expectedVolumeMm3: number;
+  materialVolumeMm3: number;
+  volumeDeltaMm3: number;
+  fullMaterial: boolean;
+};
+
+export type ExactClipBuildOptions = {
+  requireVolumeConservation?: boolean;
 };
 
 export type ExactClippedPieceSnapshot = {
@@ -871,6 +905,71 @@ function exactClipSourceLengths(box: ReturnType<OcctKernel['getBoundingBox']>) {
   };
 }
 
+function validateEnvelopeCoordinate(
+  label: string,
+  value: number,
+  sourceLengthMm: number,
+) {
+  const tolerance = Math.max(1e-7, sourceLengthMm * 1e-8);
+  if (!Number.isFinite(value) || value < -tolerance || value > sourceLengthMm + tolerance) {
+    throw new Error(`${label}=${value} mm is outside the final exact envelope 0..${sourceLengthMm} mm.`);
+  }
+}
+
+function makeEnvelopeCylinder(
+  kernel: OcctKernel,
+  box: ReturnType<OcctKernel['getBoundingBox']>,
+  axis: ExactSourceAxis,
+  center: Record<ExactSourceAxis, number>,
+  startFromEnvelopeMinMm: number,
+  lengthMm: number,
+  radiusMm: number,
+) {
+  const lengths = exactClipSourceLengths(box);
+  if (!Number.isFinite(lengthMm) || lengthMm <= 0 || !Number.isFinite(radiusMm) || radiusMm <= 0) {
+    throw new Error('Exact split cylinder requires positive finite length and radius.');
+  }
+  for (const sourceAxis of ['X', 'Y', 'Z'] as const) {
+    validateEnvelopeCoordinate(`Exact split cylinder center.${sourceAxis}`, center[sourceAxis], lengths[sourceAxis]);
+  }
+  validateEnvelopeCoordinate('Exact split cylinder start', startFromEnvelopeMinMm, lengths[axis]);
+  validateEnvelopeCoordinate('Exact split cylinder end', startFromEnvelopeMinMm + lengthMm, lengths[axis]);
+
+  let tool = kernel.makeCylinder(radiusMm, lengthMm);
+  if (axis === 'X') {
+    tool = kernel.rotate(
+      tool,
+      { point: { x: 0, y: 0, z: 0 }, direction: { x: 0, y: 1, z: 0 } },
+      Math.PI / 2,
+    );
+    return kernel.translate(
+      tool,
+      box.xmin + startFromEnvelopeMinMm,
+      box.ymin + center.Z,
+      box.zmin + center.Y,
+    );
+  }
+  if (axis === 'Z') {
+    tool = kernel.rotate(
+      tool,
+      { point: { x: 0, y: 0, z: 0 }, direction: { x: 1, y: 0, z: 0 } },
+      -Math.PI / 2,
+    );
+    return kernel.translate(
+      tool,
+      box.xmin + center.X,
+      box.ymin + startFromEnvelopeMinMm,
+      box.zmin + center.Y,
+    );
+  }
+  return kernel.translate(
+    tool,
+    box.xmin + center.X,
+    box.ymin + center.Z,
+    box.zmin + startFromEnvelopeMinMm,
+  );
+}
+
 function validateClipRange(axis: 'X' | 'Y' | 'Z', range: ExactClipAxisRange, sourceLengthMm: number) {
   const tolerance = Math.max(1e-7, sourceLengthMm * 1e-8);
   if (!Number.isFinite(range.startFromEnvelopeMinMm)
@@ -887,6 +986,7 @@ function validateClipRange(axis: 'X' | 'Y' | 'Z', range: ExactClipAxisRange, sou
 async function buildClippedPiecesUnsafe(
   project: CadProject,
   requests: readonly ExactClipPieceRequest[],
+  options: ExactClipBuildOptions = {},
 ): Promise<ExactClipSnapshot> {
   if (requests.length === 0) throw new Error('Exact clipping requires at least one requested piece envelope.');
   const ids = new Set<string>();
@@ -936,9 +1036,33 @@ async function buildClippedPiecesUnsafe(
           z: box.zmin + y.endFromEnvelopeMinMm,
         },
       );
-      const pieceShape = kernel.common(shape, clip);
-      const volumeMm3 = Math.max(0, kernel.getVolume(pieceShape));
+      let pieceShape = kernel.common(shape, clip);
+      const baselineVolumeMm3 = Math.max(0, kernel.getVolume(pieceShape));
       const emptyTolerance = Math.max(1e-8, sourceVolumeMm3 * 1e-10);
+      const baselineEmpty = !Number.isFinite(baselineVolumeMm3) || baselineVolumeMm3 <= emptyTolerance;
+      if (baselineEmpty && (request.postOperations?.length ?? 0) > 0) {
+        throw new Error(`${request.id}: post-split operations cannot target an empty exact cell.`);
+      }
+
+      for (const operation of request.postOperations ?? []) {
+        const tool = makeEnvelopeCylinder(
+          kernel,
+          box,
+          operation.axis,
+          operation.centerFromEnvelopeMinMm,
+          operation.startFromEnvelopeMinMm,
+          operation.lengthMm,
+          operation.radiusMm,
+        );
+        pieceShape = operation.mode === 'add'
+          ? kernel.fuse(pieceShape, tool)
+          : kernel.cut(pieceShape, tool);
+        if (!kernel.isValid(pieceShape)) {
+          throw new Error(`${request.id}: post-split operation "${operation.id}" produced an invalid B-Rep.`);
+        }
+      }
+
+      const volumeMm3 = Math.max(0, kernel.getVolume(pieceShape));
       const empty = !Number.isFinite(volumeMm3) || volumeMm3 <= emptyTolerance;
       let solidCount = 0;
       let brepValid = true;
@@ -984,7 +1108,8 @@ async function buildClippedPiecesUnsafe(
     const volumeDeltaMm3 = Math.abs(sourceVolumeMm3 - generatedVolumeMm3);
     const volumeToleranceMm3 = Math.max(1e-5, sourceVolumeMm3 * 1e-6);
     const volumeConserved = volumeDeltaMm3 <= volumeToleranceMm3;
-    if (!volumeConserved) {
+    const requireVolumeConservation = options.requireVolumeConservation !== false;
+    if (requireVolumeConservation && !volumeConserved) {
       warnings.push(
         `Exact split volume conservation failed: source ${sourceVolumeMm3.toFixed(6)} mm³ vs pieces ${generatedVolumeMm3.toFixed(6)} mm³.`,
       );
@@ -996,13 +1121,60 @@ async function buildClippedPiecesUnsafe(
       generatedVolumeMm3,
       volumeDeltaMm3,
       volumeConserved,
-      valid: volumeConserved && builtPieces.every((piece) => piece.empty || piece.brepValid),
+      valid: (!requireVolumeConservation || volumeConserved)
+        && builtPieces.every((piece) => piece.empty || piece.brepValid),
       pieces: builtPieces,
       warnings,
     };
   } catch (error) {
     for (const piece of builtPieces) piece.geometry?.dispose();
     throw error;
+  } finally {
+    kernel.releaseAll();
+  }
+}
+
+async function probeMaterialCorridorsUnsafe(
+  project: CadProject,
+  probes: readonly ExactMaterialCorridorProbeRequest[],
+): Promise<ExactMaterialCorridorProbeResult[]> {
+  if (probes.length === 0) return [];
+  const rebuilt = rebuildProject(project);
+  if (!rebuilt.hasSolid) throw new Error('A valid rebuilt solid is required before exact material-corridor probing.');
+  const kernel = await getKernel();
+  kernel.releaseAll();
+  try {
+    const { shape } = buildExactShape(kernel, project, rebuilt);
+    if (!kernel.isValid(shape)) throw new Error('Final exact B-Rep is invalid; corridor probing was blocked.');
+    const box = kernel.getBoundingBox(shape, false);
+    const sourceLengths = exactClipSourceLengths(box);
+
+    return probes.map((probe) => {
+      const axisLength = sourceLengths[probe.axis];
+      validateEnvelopeCoordinate(`${probe.id} start`, probe.startFromEnvelopeMinMm, axisLength);
+      validateEnvelopeCoordinate(`${probe.id} end`, probe.startFromEnvelopeMinMm + probe.lengthMm, axisLength);
+      const tool = makeEnvelopeCylinder(
+        kernel,
+        box,
+        probe.axis,
+        probe.centerFromEnvelopeMinMm,
+        probe.startFromEnvelopeMinMm,
+        probe.lengthMm,
+        probe.radiusMm,
+      );
+      const intersection = kernel.common(shape, tool);
+      const expectedVolumeMm3 = Math.PI * probe.radiusMm * probe.radiusMm * probe.lengthMm;
+      const materialVolumeMm3 = Math.max(0, kernel.getVolume(intersection));
+      const volumeDeltaMm3 = Math.abs(expectedVolumeMm3 - materialVolumeMm3);
+      const toleranceMm3 = Math.max(1e-5, expectedVolumeMm3 * 1e-5);
+      return {
+        id: probe.id,
+        expectedVolumeMm3,
+        materialVolumeMm3,
+        volumeDeltaMm3,
+        fullMaterial: volumeDeltaMm3 <= toleranceMm3,
+      };
+    });
   } finally {
     kernel.releaseAll();
   }
@@ -1028,8 +1200,16 @@ export async function buildExactKernelSnapshot(project: CadProject, options: Exa
 export async function buildExactClippedPieces(
   project: CadProject,
   requests: readonly ExactClipPieceRequest[],
+  options: ExactClipBuildOptions = {},
 ) {
-  return runSerializedExactOperation(() => buildClippedPiecesUnsafe(project, requests));
+  return runSerializedExactOperation(() => buildClippedPiecesUnsafe(project, requests, options));
+}
+
+export async function probeExactMaterialCorridors(
+  project: CadProject,
+  probes: readonly ExactMaterialCorridorProbeRequest[],
+) {
+  return runSerializedExactOperation(() => probeMaterialCorridorsUnsafe(project, probes));
 }
 
 export const exactKernelDescriptor = {
