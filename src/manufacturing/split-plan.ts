@@ -26,6 +26,17 @@ export type SplitPiecePlan = {
   rangesFromEnvelopeMinMm: Record<SourceAxis, SplitPieceRange>;
 };
 
+export type SplitSeamPlan = {
+  id: string;
+  normalAxis: SourceAxis;
+  positionFromEnvelopeMinMm: number;
+  negativePieceId: string;
+  positivePieceId: string;
+  envelopeContactAreaMm2: number;
+  alignmentStrategy: 'none';
+  structuralAssessment: 'unassessed';
+};
+
 export type ManufacturingSplitPlan = {
   strategy: 'single-axis' | 'grid';
   pieceCount: number;
@@ -36,6 +47,7 @@ export type ManufacturingSplitPlan = {
   };
   splitAxes: SplitAxisPlan[];
   pieces: SplitPiecePlan[];
+  seams: SplitSeamPlan[];
   seamStrategy: 'flat-seam';
   geometryGenerationReady: false;
   note: string;
@@ -138,6 +150,43 @@ function buildPiecePlans(axes: SplitAxisPlan[]): SplitPiecePlan[] {
   return pieces;
 }
 
+const sourceAxes: readonly SourceAxis[] = ['X', 'Y', 'Z'];
+
+function pieceGridKey(index: Record<SourceAxis, number>) {
+  return `${index.X}:${index.Y}:${index.Z}`;
+}
+
+function buildSeamPlans(pieces: SplitPiecePlan[]): SplitSeamPlan[] {
+  const byGrid = new Map(pieces.map((piece) => [pieceGridKey(piece.gridIndex), piece]));
+  const seams: SplitSeamPlan[] = [];
+
+  for (const piece of pieces) {
+    for (const normalAxis of sourceAxes) {
+      const neighborIndex = { ...piece.gridIndex, [normalAxis]: piece.gridIndex[normalAxis] + 1 };
+      const neighbor = byGrid.get(pieceGridKey(neighborIndex));
+      if (!neighbor) continue;
+
+      const tangentAxes = sourceAxes.filter((axis) => axis !== normalAxis);
+      const envelopeContactAreaMm2 = tangentAxes
+        .map((axis) => piece.rangesFromEnvelopeMinMm[axis].lengthMm)
+        .reduce((product, length) => product * length, 1);
+
+      seams.push({
+        id: `seam-${normalAxis.toLowerCase()}-${piece.id}--${neighbor.id}`,
+        normalAxis,
+        positionFromEnvelopeMinMm: piece.rangesFromEnvelopeMinMm[normalAxis].endFromEnvelopeMinMm,
+        negativePieceId: piece.id,
+        positivePieceId: neighbor.id,
+        envelopeContactAreaMm2,
+        alignmentStrategy: 'none',
+        structuralAssessment: 'unassessed',
+      });
+    }
+  }
+
+  return seams;
+}
+
 function candidateFor(
   orientation: ManufacturingSplitPlan['orientation'],
   dimensions: Dimensions,
@@ -158,6 +207,7 @@ function candidateFor(
   const pieceCount = axes.reduce((product, axis) => product * axis.segmentCount, 1);
   const pieces = buildPiecePlans(axes);
   if (pieces.length !== pieceCount) return null;
+  const seams = buildSeamPlans(pieces);
 
   return {
     strategy: splitAxes.length === 1 ? 'single-axis' : 'grid',
@@ -165,9 +215,10 @@ function candidateFor(
     orientation,
     splitAxes,
     pieces,
+    seams,
     seamStrategy: 'flat-seam',
     geometryGenerationReady: false,
-    note: 'Envelope split plan only. Piece envelopes are deterministic, but exact cutting, alignment joints and multi-part export are not generated yet.',
+    note: 'Envelope planning is deterministic. Exact split generation and multi-object 3MF are available downstream; seam areas remain envelope candidates only, with no alignment or structural-strength claim.',
   };
 }
 
