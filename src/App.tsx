@@ -29,6 +29,7 @@ import { analyzeManufacturingReadiness, type ManufacturingReadinessReport } from
 import { downloadProjectStlAdaptive, type StlExportReport } from './manufacturing/export';
 import { downloadProjectStep, type StepExportReport } from './manufacturing/step-export';
 import { downloadProjectThreeMf, type ThreeMfExportReport } from './manufacturing/three-mf';
+import { downloadProjectSplitThreeMf, type SplitThreeMfExportReport } from './manufacturing/split-export';
 import { Sketcher } from './components/Sketcher';
 import { Viewport } from './components/Viewport';
 import { defaultManagementPolicy, managementIdentity } from './management/policy';
@@ -72,10 +73,12 @@ export default function App() {
   const [lastExport, setLastExport] = useState<StlExportReport | null>(null);
   const [lastStepExport, setLastStepExport] = useState<StepExportReport | null>(null);
   const [lastThreeMfExport, setLastThreeMfExport] = useState<ThreeMfExportReport | null>(null);
+  const [lastSplitThreeMfExport, setLastSplitThreeMfExport] = useState<SplitThreeMfExportReport | null>(null);
   const [manufacturingReport, setManufacturingReport] = useState<ManufacturingReadinessReport | null>(null);
   const [manufacturingBusy, setManufacturingBusy] = useState(false);
   const [stlBusy, setStlBusy] = useState(false);
   const [threeMfBusy, setThreeMfBusy] = useState(false);
+  const [splitThreeMfBusy, setSplitThreeMfBusy] = useState(false);
   const [exactBusy, setExactBusy] = useState(false);
   const projectInputRef = useRef<HTMLInputElement>(null);
   const policy = defaultManagementPolicy;
@@ -98,6 +101,13 @@ export default function App() {
       }
     }, 1200);
     return () => window.clearTimeout(timer);
+  }, [project]);
+
+  useEffect(() => {
+    // Manufacturing reports are derived evidence, not project truth. Any model
+    // edit invalidates the prior analysis and any split-export result.
+    setManufacturingReport(null);
+    setLastSplitThreeMfExport(null);
   }, [project]);
 
   const setDimension = (key: keyof CadProject['dimensions'], raw: string) => {
@@ -542,7 +552,7 @@ export default function App() {
       const loaded = await loadProjectFile(file);
       setProject(loaded.project);
       setSelectedFeatureId(loaded.project.features[1]?.id ?? loaded.project.features[0]?.id ?? null);
-      setTopologySelection(null); setLastExport(null); setLastStepExport(null); setLastThreeMfExport(null); setManufacturingReport(null); setRecoveryCandidate(null);
+      setTopologySelection(null); setLastExport(null); setLastStepExport(null); setLastThreeMfExport(null); setLastSplitThreeMfExport(null); setManufacturingReport(null); setRecoveryCandidate(null);
       const migration = loaded.report.migrated ? ` · migrated schema v${loaded.report.sourceSchemaVersion} → v${loaded.report.schemaVersion}` : ` · schema v${loaded.report.schemaVersion}`;
       setStatus(`Project opened${migration} · ${loaded.report.fileName}.`);
     } catch (error) {
@@ -571,6 +581,35 @@ export default function App() {
     } catch (error) {
       setStatus(error instanceof Error ? `3MF export blocked: ${error.message}` : '3MF export failed.');
     } finally { setThreeMfBusy(false); }
+  };
+
+  const exportSplitThreeMf = async () => {
+    const plan = manufacturingReport?.splitPlan;
+    if (!plan) {
+      setStatus('Split 3MF export requires a current Analyze Print result with a split plan.');
+      return;
+    }
+    if (manufacturingReport.exportBlocked) {
+      setStatus('Split 3MF export blocked: resolve invalid geometry/project findings first.');
+      return;
+    }
+
+    setSplitThreeMfBusy(true);
+    setStatus(`Generating ${plan.pieceCount} exact B-Rep split envelope(s) for multi-object 3MF…`);
+    try {
+      const report = await downloadProjectSplitThreeMf(project, plan);
+      setLastSplitThreeMfExport(report);
+      const warningText = report.warnings.length > 0 ? ` · ${report.warnings.join(' ')}` : '';
+      setStatus(
+        `Split 3MF PASS · ${report.fileName} · ${report.generatedPieceCount} exact object(s) · `
+        + `${(report.byteLength / 1024).toFixed(1)} KB · volume conserved ${report.volumeConserved ? 'yes' : 'no'}${warningText}`,
+      );
+    } catch (error) {
+      setLastSplitThreeMfExport(null);
+      setStatus(error instanceof Error ? `Split 3MF export blocked: ${error.message}` : 'Split 3MF export failed.');
+    } finally {
+      setSplitThreeMfBusy(false);
+    }
   };
 
   const exportStep = async () => {
@@ -919,9 +958,24 @@ export default function App() {
             <ul className="checks diagnostics">{manufacturingReport.findings.map((finding) => <li key={finding.id} data-level={finding.level === 'blocker' ? 'error' : finding.level}>
               {finding.message}{finding.remedy ? ` Remedy: ${finding.remedy}` : ''}
             </li>)}</ul>
+            {manufacturingReport.splitPlan ? <div className="profile-card">
+              <strong>Exact split handoff · {manufacturingReport.splitPlan.pieceCount} planned piece(s)</strong>
+              <span>{manufacturingReport.splitPlan.strategy === 'single-axis' ? 'Single-axis' : 'Grid'} · flat seams · multi-object Core 3MF</span>
+              <small>OpenCascade intersects the final B-Rep with each planned envelope. Empty, invalid or disconnected cells fail closed; alignment joints are not generated yet.</small>
+              <div className="topology-bind-actions">
+                <button
+                  type="button"
+                  onClick={() => void exportSplitThreeMf()}
+                  disabled={manufacturingReport.exportBlocked || splitThreeMfBusy}
+                >
+                  {splitThreeMfBusy ? 'Building split 3MF…' : 'Export Split 3MF'}
+                </button>
+              </div>
+            </div> : null}
           </> : null}
           {lastExport ? <div className="profile-card"><strong>Last STL · {lastExport.valid ? 'PASS' : 'WARN'}</strong><span>{lastExport.triangleCount} triangles · {(lastExport.byteLength / 1024).toFixed(1)} KB</span><small>{lastExport.messages.join(' ')}</small><small>Kernel: {lastExport.kernelId}</small></div> : null}
           {lastThreeMfExport ? <div className="profile-card"><strong>Last 3MF · {lastThreeMfExport.valid ? 'PASS' : 'WARN'}</strong><span>{lastThreeMfExport.triangleCount} triangles · {(lastThreeMfExport.byteLength / 1024).toFixed(1)} KB · {lastThreeMfExport.unit}</span><small>Kernel: {lastThreeMfExport.kernelId} · Core 3MF single-object package</small>{lastThreeMfExport.warnings.length > 0 ? <small>{lastThreeMfExport.warnings.join(' ')}</small> : null}</div> : null}
+          {lastSplitThreeMfExport ? <div className="profile-card"><strong>Last Split 3MF · {lastSplitThreeMfExport.valid && lastSplitThreeMfExport.volumeConserved ? 'PASS' : 'WARN'}</strong><span>{lastSplitThreeMfExport.objectCount} object(s) · {lastSplitThreeMfExport.triangleCount} triangles · {(lastSplitThreeMfExport.byteLength / 1024).toFixed(1)} KB</span><small>Exact B-Rep · volume delta {lastSplitThreeMfExport.volumeDeltaMm3.toFixed(6)} mm³ · flat seams only</small>{lastSplitThreeMfExport.warnings.length > 0 ? <small>{lastSplitThreeMfExport.warnings.join(' ')}</small> : null}</div> : null}
           {lastStepExport ? <div className="profile-card"><strong>Last STEP · {lastStepExport.valid ? 'PASS' : 'WARN'}</strong><span>{lastStepExport.faceCount} faces · {lastStepExport.edgeCount} edges · {(lastStepExport.byteLength / 1024).toFixed(1)} KB</span><small>Volume {lastStepExport.volumeMm3.toFixed(1)} mm³ · Surface {lastStepExport.surfaceAreaMm2.toFixed(1)} mm²</small><small>Kernel: {lastStepExport.kernelId}{lastStepExport.filletApplied ? ' · fillet' : ''}{lastStepExport.chamferApplied ? ' · chamfer' : ''}</small>{lastStepExport.warnings.length > 0 ? <small>{lastStepExport.warnings.join(' ')}</small> : null}</div> : null}
           <h2>Kernel</h2>
           <div className="profile-card"><strong>{activeCadKernel.label}</strong><span>{activeCadKernel.capabilities.exactBrep ? 'Exact B-Rep' : 'Fast deterministic mesh'} · STL {activeCadKernel.capabilities.stlExport ? 'ready' : 'off'}</span><small>Simple vertical features stay lightweight. Exact edge/face features promote preview/STL automatically.</small></div>
