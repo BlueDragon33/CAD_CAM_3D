@@ -132,6 +132,35 @@ export function rebuildProject(project: CadProject): RebuiltPart {
       continue;
     }
 
+    if (feature.kind === 'datum-axis') {
+      const sourceSketch = sketchesById.get(feature.params.source.sketchId);
+      if (!sourceSketch) {
+        diagnostics.push({ level: 'error', featureId: feature.id, message: 'Datum Axis requires an enabled earlier Sketch source.' });
+        continue;
+      }
+      const sourceMatches = feature.params.source.kind === 'base-xz'
+        ? sourceSketch.params.plane.kind === 'base-xz'
+        : sourceSketch.params.plane.kind === 'face';
+      if (!sourceMatches) {
+        diagnostics.push({
+          level: 'error',
+          featureId: feature.id,
+          message: feature.params.source.kind === 'base-xz'
+            ? 'Datum Axis base-XZ source must reference a base-XZ Sketch.'
+            : 'Datum Axis local U/V source must reference a face-attached Sketch.',
+        });
+        continue;
+      }
+      diagnostics.push({
+        level: 'info',
+        featureId: feature.id,
+        message: feature.params.source.kind === 'base-xz'
+          ? `Datum Axis persists global ${feature.params.source.axis.toUpperCase()} sketch-plane intent at ${feature.params.source.offsetMm.toFixed(2)} mm offset.`
+          : `Datum Axis persists attached-sketch local ${feature.params.source.axis.toUpperCase()} intent at ${feature.params.source.offsetMm.toFixed(2)} mm offset.`,
+      });
+      continue;
+    }
+
     if (feature.kind === 'extrude') {
       if (lastSketch?.params.plane.kind === 'face') {
         diagnostics.push({
