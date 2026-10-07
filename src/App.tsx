@@ -8,7 +8,6 @@ import {
   type FeatureKind,
   type FilletFeature,
 } from './cad/model';
-import { interpretCommand } from './cad/command';
 import { activeCadKernel } from './cad/kernel';
 import { exactKernelDescriptor } from './cad/exact-kernel';
 import { downloadProjectFile, loadProjectFile } from './cad/project-io';
@@ -34,6 +33,7 @@ import { Sketcher } from './components/Sketcher';
 import { Viewport } from './components/Viewport';
 import { defaultManagementPolicy, managementIdentity } from './management/policy';
 import { newestRecoverySnapshot, restoreRecoverySnapshot, saveRecoverySnapshot, type RecoverySnapshot } from './persistence/local-recovery';
+import { planDesignInstruction, projectProposalFingerprint, type DesignProposal } from './ai/planner';
 
 const featureLabels: Record<FeatureKind, string> = {
   sketch: 'Sketch', 'datum-axis': 'Datum Axis', extrude: 'Extrude', pad: 'Pad', pocket: 'Pocket', revolve: 'Revolve', cut: 'Cut', hole: 'Hole', fillet: 'Fillet', chamfer: 'Chamfer', shell: 'Shell', 'linear-pattern': 'Linear Pattern', mirror: 'Mirror',
@@ -66,6 +66,7 @@ export default function App() {
   const [selectedFeatureId, setSelectedFeatureId] = useState<string | null>(() => project.features[1]?.id ?? project.features[0]?.id ?? null);
   const [topologySelection, setTopologySelection] = useState<TopologySelection | null>(null);
   const [command, setCommand] = useState('');
+  const [designProposal, setDesignProposal] = useState<DesignProposal | null>(null);
   const [status, setStatus] = useState('General CAD foundation ready.');
   const [recoveryCandidate, setRecoveryCandidate] = useState<RecoverySnapshot | null>(() => initialRecoveryCandidate());
   const [lastExport, setLastExport] = useState<StlExportReport | null>(null);
@@ -428,32 +429,83 @@ export default function App() {
     setStatus(`${selectedFeature.name}: last Shell opening removed.`);
   };
 
+  const topologySelectionFingerprint = () => topologySelection ? JSON.stringify(topologySelection) : null;
+
   const runCommand = (event: FormEvent) => {
     event.preventDefault();
-    const result = interpretCommand(command);
-    if (result.dimensions) setProject((current) => ({ ...current, dimensions: result.dimensions! }));
-    if (result.feature) {
-      let feature = createFeature(result.feature.kind, project);
-      if (feature.kind === 'hole' && result.feature.kind === 'hole') {
-        feature = { ...feature, params: { ...feature.params, diameter: clampDimension(result.feature.diameter) } };
-        feature = bindFeatureToCurrentFace(feature, project.features) ?? feature;
-      } else if (feature.kind === 'cut' && result.feature.kind === 'cut') {
-        feature = { ...feature, params: { ...feature.params, width: clampDimension(result.feature.width), depth: clampDimension(result.feature.depth) } };
-        feature = bindFeatureToCurrentFace(feature, project.features) ?? feature;
-      } else if (feature.kind === 'fillet' && result.feature.kind === 'fillet') {
-        feature = bindEdgeTreatmentToCurrentEdge({ ...feature, params: { ...feature.params, radius: clampDimension(result.feature.radius, 0) } }, project.features);
-      } else if (feature.kind === 'chamfer' && result.feature.kind === 'chamfer') {
-        feature = bindEdgeTreatmentToCurrentEdge({ ...feature, params: { ...feature.params, distance: clampDimension(result.feature.distance, 0) } }, project.features);
-      }
-      appendFeature(
-        feature,
-        (feature.kind === 'fillet' || feature.kind === 'chamfer') && feature.params.selection.mode === 'topology'
-          ? `${result.message} Bound to the currently selected exact edge.`
-          : (feature.kind === 'hole' || feature.kind === 'cut') && feature.params.placement.mode === 'face'
-            ? `${result.message} Bound to the currently selected exact face.`
-            : result.message,
-      );
-    } else setStatus(result.message);
+    const proposal = planDesignInstruction(command, {
+      project,
+      selectedTopology: topologySelection?.kind ?? null,
+      selectionFingerprint: topologySelectionFingerprint(),
+    });
+    setDesignProposal(proposal);
+    const prefix = proposal.status === 'ready'
+      ? 'Proposal ready'
+      : proposal.status === 'blocked'
+        ? 'Proposal blocked'
+        : 'Instruction unsupported';
+    setStatus(prefix + ' · ' + proposal.summary);
+  };
+
+  const cancelDesignProposal = () => {
+    setDesignProposal(null);
+    setStatus('Design proposal cancelled. No project change was made.');
+  };
+
+  const commitDesignProposal = () => {
+    const proposal = designProposal;
+    if (!proposal || proposal.status !== 'ready') return;
+    if (proposal.sourceFingerprint !== projectProposalFingerprint(project)) {
+      setStatus('Proposal is stale because the project changed after preview. Preview the instruction again.');
+      setDesignProposal(null);
+      return;
+    }
+    if (proposal.selectionFingerprint !== topologySelectionFingerprint()) {
+      setStatus('Proposal is stale because the exact topology selection changed after preview. Preview the instruction again.');
+      setDesignProposal(null);
+      return;
+    }
+    if (proposal.operations.length !== 1) {
+      setStatus('Proposal commit blocked: this foundation only commits one validated operation at a time.');
+      return;
+    }
+
+    const operation = proposal.operations[0];
+    if (operation.kind === 'set-dimensions') {
+      setProject((current) => ({ ...current, dimensions: operation.dimensions }));
+      setStatus(proposal.summary + ' Committed from validated preview.');
+      setDesignProposal(null);
+      setCommand('');
+      return;
+    }
+
+    const requested = operation.feature;
+    let feature = createFeature(requested.kind, project);
+    if (operation.target === 'selected-face' && topologySelection?.kind !== 'face') {
+      setStatus('Proposal commit blocked: the selected face is no longer available.');
+      return;
+    }
+    if (operation.target === 'selected-edge' && topologySelection?.kind !== 'edge') {
+      setStatus('Proposal commit blocked: the selected edge is no longer available.');
+      return;
+    }
+
+    if (feature.kind === 'hole' && requested.kind === 'hole') {
+      feature = { ...feature, params: { ...feature.params, diameter: clampDimension(requested.diameter) } };
+      if (operation.target === 'selected-face') feature = bindFeatureToCurrentFace(feature, project.features) ?? feature;
+    } else if (feature.kind === 'cut' && requested.kind === 'cut') {
+      feature = { ...feature, params: { ...feature.params, width: clampDimension(requested.width), depth: clampDimension(requested.depth) } };
+      if (operation.target === 'selected-face') feature = bindFeatureToCurrentFace(feature, project.features) ?? feature;
+    } else if (feature.kind === 'fillet' && requested.kind === 'fillet') {
+      const base = { ...feature, params: { ...feature.params, radius: clampDimension(requested.radius, 0) } };
+      feature = operation.target === 'selected-edge' ? bindEdgeTreatmentToCurrentEdge(base, project.features) : base;
+    } else if (feature.kind === 'chamfer' && requested.kind === 'chamfer') {
+      const base = { ...feature, params: { ...feature.params, distance: clampDimension(requested.distance, 0) } };
+      feature = operation.target === 'selected-edge' ? bindEdgeTreatmentToCurrentEdge(base, project.features) : base;
+    }
+
+    appendFeature(feature, proposal.summary + ' Committed from validated preview.');
+    setDesignProposal(null);
     setCommand('');
   };
 
@@ -879,7 +931,21 @@ export default function App() {
         </aside>
       </section>
 
-      {policy.aiCommandBridge ? <form className="commandbar" onSubmit={runCommand}><div className="command-copy"><strong>AI command bridge</strong><span>{status}</span></div><input value={command} onChange={(e) => setCommand(e.target.value)} placeholder="Try: 80x50x25 · hole 4mm · cut 12x8 · fillet 2mm · chamfer 1mm" aria-label="Design instruction" /><button type="submit">Apply</button></form> : null}
+      {policy.aiCommandBridge ? <div className="command-stack">
+        <form className="commandbar" onSubmit={runCommand}>
+          <div className="command-copy"><strong>Design command planner</strong><span>{status}</span></div>
+          <input value={command} onChange={(e) => setCommand(e.target.value)} placeholder="Try: 80x50x25 · hole 4mm · cut 12x8 · fillet 2mm · chamfer 1mm" aria-label="Design instruction" />
+          <button type="submit">Preview</button>
+        </form>
+        {designProposal ? <div className="command-proposal" data-status={designProposal.status}>
+          <div><strong>{designProposal.status === 'ready' ? 'Validated proposal' : designProposal.status === 'blocked' ? 'Blocked proposal' : 'Unsupported instruction'}</strong><span>{designProposal.summary}</span></div>
+          <ul>{designProposal.diagnostics.map((diagnostic, index) => <li key={index}>{diagnostic}</li>)}</ul>
+          <div className="command-proposal-actions">
+            <button type="button" onClick={cancelDesignProposal}>Cancel</button>
+            <button type="button" onClick={commitDesignProposal} disabled={designProposal.status !== 'ready'}>Commit</button>
+          </div>
+        </div> : null}
+      </div> : null}
     </main>
   );
 }
