@@ -813,5 +813,6 @@ export const exactKernelDescriptor = {
     attachedPlanarMaterialFeatures: true,
     shell: true,
     linearPattern: true,
+    mirror: true,
   },
 };
