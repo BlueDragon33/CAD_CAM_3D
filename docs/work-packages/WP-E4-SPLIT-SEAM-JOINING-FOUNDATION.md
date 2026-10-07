@@ -34,6 +34,12 @@ It does not yet claim:
 
 Those require additional geometry evidence and, where structural claims are involved, explicit engineering assumptions.
 
+### Exact-kernel probe finding
+
+A direct zero-thickness Boolean `Common` between two adjacent clipped solids does **not** expose their shared face through the pinned `occt-wasm@5.0.0` wrapper. A regression probe intentionally failed on that assumption. The unsupported probe was removed rather than weakening the gate or fabricating contact evidence.
+
+Therefore future alignment planning must validate positive-volume material corridors across a seam (or another explicitly proven kernel operation) instead of treating touching-solid Boolean Common as a reliable face-contact API.
+
 ## Determinism
 
 For a fixed split plan:
