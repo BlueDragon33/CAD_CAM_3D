@@ -1,3 +1,4 @@
+import { deriveRegistrationFitPolicy } from './fit-policy';
 import type { CadProject } from '../cad/model';
 import type {
   ManufacturingSplitPlan,
@@ -38,15 +39,14 @@ function pieceById(plan: ManufacturingSplitPlan, id: string) {
 }
 
 function seamPinGeometry(project: CadProject) {
-  const nozzle = project.printProfile.nozzleMm;
-  if (!Number.isFinite(nozzle) || nozzle <= 0) return null;
-
-  const pinDiameterMm = Math.max(2, nozzle * 5);
-  const clearancePerSideMm = Math.max(0.15, nozzle * 0.5);
-  const pocketDiameterMm = pinDiameterMm + clearancePerSideMm * 2;
-  const desiredEngagementMm = Math.max(4, nozzle * 10);
-
-  return { pinDiameterMm, clearancePerSideMm, pocketDiameterMm, desiredEngagementMm };
+  const policy = deriveRegistrationFitPolicy(project.printProfile);
+  if (!policy) return null;
+  return {
+    pinDiameterMm: policy.pinDiameterMm,
+    clearancePerSideMm: policy.clearancePerSideMm,
+    pocketDiameterMm: policy.pocketDiameterMm,
+    desiredEngagementMm: policy.desiredEngagementMm,
+  };
 }
 
 function candidatePinsForSeam(
