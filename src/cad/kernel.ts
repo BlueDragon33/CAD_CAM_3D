@@ -12,6 +12,7 @@ export type CadKernelCapabilities = {
   attachedPlanarMaterialFeatures: boolean;
   shell: boolean;
   linearPattern: boolean;
+  mirror: boolean;
 };
 
 export type CadKernel = {
@@ -45,6 +46,7 @@ export const meshMvpKernel: CadKernel = {
     attachedPlanarMaterialFeatures: false,
     shell: false,
     linearPattern: false,
+    mirror: false,
   },
   buildMesh(project) {
     return buildPartGeometry(project);
