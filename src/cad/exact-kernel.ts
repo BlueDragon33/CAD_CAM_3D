@@ -69,6 +69,45 @@ export type ExactKernelSnapshot = {
 };
 
 export type ExactKernelBuildOptions = { includeStep?: boolean };
+
+export type ExactClipAxisRange = {
+  startFromEnvelopeMinMm: number;
+  endFromEnvelopeMinMm: number;
+};
+
+export type ExactClipPieceRequest = {
+  id: string;
+  ordinal: number;
+  rangesFromEnvelopeMinMm: {
+    X: ExactClipAxisRange;
+    Y: ExactClipAxisRange;
+    Z: ExactClipAxisRange;
+  };
+};
+
+export type ExactClippedPieceSnapshot = {
+  id: string;
+  ordinal: number;
+  geometry: THREE.BufferGeometry | null;
+  empty: boolean;
+  brepValid: boolean;
+  solidCount: number;
+  manufacturingReady: boolean;
+  volumeMm3: number;
+  dimensionsMm: { width: number; depth: number; height: number };
+};
+
+export type ExactClipSnapshot = {
+  kernelId: 'occt-wasm-v5';
+  sourceVolumeMm3: number;
+  generatedVolumeMm3: number;
+  volumeDeltaMm3: number;
+  volumeConserved: boolean;
+  valid: boolean;
+  pieces: ExactClippedPieceSnapshot[];
+  warnings: string[];
+};
+
 type OcctModule = typeof import('occt-wasm');
 
 let modulePromise: Promise<OcctModule> | null = null;
@@ -824,17 +863,173 @@ async function buildSnapshotUnsafe(project: CadProject, options: ExactKernelBuil
   }
 }
 
-export async function buildExactKernelSnapshot(project: CadProject, options: ExactKernelBuildOptions = {}) {
+function exactClipSourceLengths(box: ReturnType<OcctKernel['getBoundingBox']>) {
+  return {
+    X: box.xmax - box.xmin,
+    Y: box.zmax - box.zmin,
+    Z: box.ymax - box.ymin,
+  };
+}
+
+function validateClipRange(axis: 'X' | 'Y' | 'Z', range: ExactClipAxisRange, sourceLengthMm: number) {
+  const tolerance = Math.max(1e-7, sourceLengthMm * 1e-8);
+  if (!Number.isFinite(range.startFromEnvelopeMinMm)
+    || !Number.isFinite(range.endFromEnvelopeMinMm)
+    || range.startFromEnvelopeMinMm < -tolerance
+    || range.endFromEnvelopeMinMm > sourceLengthMm + tolerance
+    || range.endFromEnvelopeMinMm - range.startFromEnvelopeMinMm <= tolerance) {
+    throw new Error(
+      `Exact clip range ${axis} [${range.startFromEnvelopeMinMm}, ${range.endFromEnvelopeMinMm}] mm is outside the final exact envelope 0..${sourceLengthMm} mm.`,
+    );
+  }
+}
+
+async function buildClippedPiecesUnsafe(
+  project: CadProject,
+  requests: readonly ExactClipPieceRequest[],
+): Promise<ExactClipSnapshot> {
+  if (requests.length === 0) throw new Error('Exact clipping requires at least one requested piece envelope.');
+  const ids = new Set<string>();
+  for (const request of requests) {
+    if (!request.id.trim()) throw new Error('Exact clipping requires a stable non-empty piece id.');
+    if (ids.has(request.id)) throw new Error(`Exact clipping received duplicate piece id "${request.id}".`);
+    ids.add(request.id);
+    if (!Number.isInteger(request.ordinal) || request.ordinal <= 0) {
+      throw new Error(`Exact clipping piece "${request.id}" has an invalid ordinal.`);
+    }
+  }
+
+  const rebuilt = rebuildProject(project);
+  if (!rebuilt.hasSolid) throw new Error('A valid rebuilt solid is required before exact split generation.');
+  const kernel = await getKernel();
+  kernel.releaseAll();
+  const builtPieces: ExactClippedPieceSnapshot[] = [];
+  try {
+    const { shape, warnings: rebuildWarnings } = buildExactShape(kernel, project, rebuilt);
+    if (!kernel.isValid(shape)) throw new Error('Final exact B-Rep is invalid; split generation was blocked.');
+
+    const box = kernel.getBoundingBox(shape, false);
+    const sourceLengths = exactClipSourceLengths(box);
+    const sourceVolumeMm3 = kernel.getVolume(shape);
+    if (!Number.isFinite(sourceVolumeMm3) || sourceVolumeMm3 <= 0) {
+      throw new Error('Final exact B-Rep has no positive volume; split generation was blocked.');
+    }
+
+    const warnings = [...rebuildWarnings];
+    for (const request of requests) {
+      validateClipRange('X', request.rangesFromEnvelopeMinMm.X, sourceLengths.X);
+      validateClipRange('Y', request.rangesFromEnvelopeMinMm.Y, sourceLengths.Y);
+      validateClipRange('Z', request.rangesFromEnvelopeMinMm.Z, sourceLengths.Z);
+
+      const x = request.rangesFromEnvelopeMinMm.X;
+      const y = request.rangesFromEnvelopeMinMm.Y;
+      const z = request.rangesFromEnvelopeMinMm.Z;
+      const clip = kernel.makeBoxFromCorners(
+        {
+          x: box.xmin + x.startFromEnvelopeMinMm,
+          y: box.ymin + z.startFromEnvelopeMinMm,
+          z: box.zmin + y.startFromEnvelopeMinMm,
+        },
+        {
+          x: box.xmin + x.endFromEnvelopeMinMm,
+          y: box.ymin + z.endFromEnvelopeMinMm,
+          z: box.zmin + y.endFromEnvelopeMinMm,
+        },
+      );
+      const pieceShape = kernel.common(shape, clip);
+      const volumeMm3 = Math.max(0, kernel.getVolume(pieceShape));
+      const emptyTolerance = Math.max(1e-8, sourceVolumeMm3 * 1e-10);
+      const empty = !Number.isFinite(volumeMm3) || volumeMm3 <= emptyTolerance;
+      let solidCount = 0;
+      let brepValid = true;
+      let geometry: THREE.BufferGeometry | null = null;
+      let dimensionsMm = { width: 0, depth: 0, height: 0 };
+
+      if (!empty) {
+        brepValid = kernel.isValid(pieceShape);
+        const solids = kernel.getSubShapes(pieceShape, 'solid');
+        solidCount = solids.length;
+        for (const solid of solids) kernel.release(solid);
+
+        const pieceBox = kernel.getBoundingBox(pieceShape, false);
+        dimensionsMm = {
+          width: pieceBox.xmax - pieceBox.xmin,
+          depth: pieceBox.ymax - pieceBox.ymin,
+          height: pieceBox.zmax - pieceBox.zmin,
+        };
+        const mesh = kernel.meshShape(pieceShape, { linearDeflection: 0.08, angularDeflection: 0.35 });
+        if (mesh.triangleCount > 0) geometry = mapOcctMeshToThree(mesh);
+      }
+
+      const manufacturingReady = !empty && brepValid && solidCount === 1 && geometry !== null;
+      if (empty) warnings.push(`${request.id}: planned envelope cell contains no exact solid volume and will not become a manufacturing piece.`);
+      else if (!brepValid) warnings.push(`${request.id}: clipped B-Rep is invalid.`);
+      else if (solidCount !== 1) warnings.push(`${request.id}: clipped cell contains ${solidCount} disconnected solids; automatic manufacturing-piece export is blocked.`);
+      else if (!geometry) warnings.push(`${request.id}: exact tessellation produced no triangles.`);
+
+      builtPieces.push({
+        id: request.id,
+        ordinal: request.ordinal,
+        geometry,
+        empty,
+        brepValid,
+        solidCount,
+        manufacturingReady,
+        volumeMm3: empty ? 0 : volumeMm3,
+        dimensionsMm,
+      });
+    }
+
+    const generatedVolumeMm3 = builtPieces.reduce((sum, piece) => sum + piece.volumeMm3, 0);
+    const volumeDeltaMm3 = Math.abs(sourceVolumeMm3 - generatedVolumeMm3);
+    const volumeToleranceMm3 = Math.max(1e-5, sourceVolumeMm3 * 1e-6);
+    const volumeConserved = volumeDeltaMm3 <= volumeToleranceMm3;
+    if (!volumeConserved) {
+      warnings.push(
+        `Exact split volume conservation failed: source ${sourceVolumeMm3.toFixed(6)} mm³ vs pieces ${generatedVolumeMm3.toFixed(6)} mm³.`,
+      );
+    }
+
+    return {
+      kernelId: 'occt-wasm-v5',
+      sourceVolumeMm3,
+      generatedVolumeMm3,
+      volumeDeltaMm3,
+      volumeConserved,
+      valid: volumeConserved && builtPieces.every((piece) => piece.empty || piece.brepValid),
+      pieces: builtPieces,
+      warnings,
+    };
+  } catch (error) {
+    for (const piece of builtPieces) piece.geometry?.dispose();
+    throw error;
+  } finally {
+    kernel.releaseAll();
+  }
+}
+
+async function runSerializedExactOperation<T>(operation: () => Promise<T>) {
   let resolveGate!: () => void;
   const gate = new Promise<void>((resolve) => { resolveGate = resolve; });
   const previous = operationTail;
   operationTail = previous.then(() => gate, () => gate);
   await previous;
   try {
-    return await buildSnapshotUnsafe(project, options);
+    return await operation();
   } finally {
     resolveGate();
   }
+}
+
+export async function buildExactKernelSnapshot(project: CadProject, options: ExactKernelBuildOptions = {}) {
+  return runSerializedExactOperation(() => buildSnapshotUnsafe(project, options));
+}
+
+export async function buildExactClippedPieces(
+  project: CadProject,
+  requests: readonly ExactClipPieceRequest[],
+) {
+  return runSerializedExactOperation(() => buildClippedPiecesUnsafe(project, requests));
 }
 
 export const exactKernelDescriptor = {
