@@ -17,6 +17,10 @@ import type { SketchEntity, SketchPoint2D } from './sketch';
 
 const PROJECT_FORMAT = 'cad-cam-3d-project';
 const PROJECT_SCHEMA_VERSION = 13;
+export const MAX_PROJECT_DOCUMENT_BYTES = 8 * 1024 * 1024;
+const MAX_PROJECT_FEATURES = 5000;
+const MAX_SKETCH_ENTITIES = 10000;
+const MAX_SKETCH_CONSTRAINTS = 20000;
 const materials = new Set<PrintProfile['material']>(['PLA', 'PETG', 'ABS', 'ASA', 'PA-CF', 'Other']);
 
 export type ProjectDocumentV13 = {
@@ -99,6 +103,7 @@ function readSketchPointRef(value: unknown, label: string): SketchPointRef {
 function readSketchEntities(value: unknown, label: string, sourceSchemaVersion: number): SketchEntity[] {
   if (sourceSchemaVersion <= 4) return [];
   if (!Array.isArray(value)) throw new Error(`${label} must be an array.`);
+  if (value.length > MAX_SKETCH_ENTITIES) throw new Error(`${label} exceeds the v1 safety limit of ${MAX_SKETCH_ENTITIES} entities.`);
   return value.map((entry, index) => {
     const entityLabel = `${label}[${index}]`;
     if (!isRecord(entry)) throw new Error(`${entityLabel} must be an object.`);
@@ -126,6 +131,7 @@ function readSketchEntities(value: unknown, label: string, sourceSchemaVersion: 
 
 function readConstraints(value: unknown, label: string): SketchConstraint[] {
   if (!Array.isArray(value)) throw new Error(`${label} must be an array.`);
+  if (value.length > MAX_SKETCH_CONSTRAINTS) throw new Error(`${label} exceeds the v1 safety limit of ${MAX_SKETCH_CONSTRAINTS} constraints.`);
   return value.map((entry, index) => {
     const constraintLabel = `${label}[${index}]`;
     if (!isRecord(entry)) throw new Error(`${constraintLabel} must be an object.`);
@@ -501,6 +507,7 @@ function validateFeatureReferences(features: CadFeature[]) {
 function readProject(value: unknown, sourceSchemaVersion: number): CadProject {
   if (!isRecord(value)) throw new Error('project must be an object.');
   if (!Array.isArray(value.features)) throw new Error('project.features must be an array.');
+  if (value.features.length > MAX_PROJECT_FEATURES) throw new Error(`project.features exceeds the v1 safety limit of ${MAX_PROJECT_FEATURES} features.`);
   const features = value.features.map((feature, index) => readFeature(feature, index, sourceSchemaVersion));
   validateFeatureReferences(features);
   return {
@@ -522,6 +529,8 @@ export function serializeProject(project: CadProject): string {
 }
 
 export function parseProjectDocument(text: string): { project: CadProject; schemaVersion: number; sourceSchemaVersion: number; migrated: boolean } {
+  const byteLength = new TextEncoder().encode(text).byteLength;
+  if (byteLength > MAX_PROJECT_DOCUMENT_BYTES) throw new Error(`Project document exceeds the v1 safety limit of ${MAX_PROJECT_DOCUMENT_BYTES} bytes.`);
   let raw: unknown;
   try { raw = JSON.parse(text) as unknown; } catch { throw new Error('Project file is not valid JSON.'); }
   if (!isRecord(raw)) throw new Error('Project document must be an object.');
@@ -549,6 +558,7 @@ export function downloadProjectFile(project: CadProject): ProjectSaveReport {
 }
 
 export async function loadProjectFile(file: File): Promise<{ project: CadProject; report: ProjectLoadReport }> {
+  if (file.size > MAX_PROJECT_DOCUMENT_BYTES) throw new Error(`Project file exceeds the v1 safety limit of ${MAX_PROJECT_DOCUMENT_BYTES} bytes.`);
   const parsed = parseProjectDocument(await file.text());
   return { project: parsed.project, report: {
     fileName: file.name, schemaVersion: parsed.schemaVersion, sourceSchemaVersion: parsed.sourceSchemaVersion, migrated: parsed.migrated,
