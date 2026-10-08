@@ -30,6 +30,14 @@ jobs:
       - name: Install dependencies
         run: npm install --no-audit --no-fund
 
+      - name: Upload resolved lockfile bootstrap
+        uses: actions/upload-artifact@v4
+        with:
+          name: resolved-package-lock-${{ github.sha }}
+          path: package-lock.json
+          if-no-files-found: error
+          retention-days: 1
+
       - name: Build preview artifact
         env:
           GITHUB_PAGES: "true"
