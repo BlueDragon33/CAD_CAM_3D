@@ -8,6 +8,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 12
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -30,4 +31,4 @@ jobs:
           google-chrome --version
           chromedriver --version
       - name: Browser critical journey
-        run: npm run smoke:browser
+        run: timeout 210s npm run smoke:browser
