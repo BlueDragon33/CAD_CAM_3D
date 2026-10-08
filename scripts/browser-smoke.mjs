@@ -236,6 +236,28 @@ try {
   await waitText('0.30 mm/side clearance');
   await waitText('Export Aligned Split 3MF');
 
+  // Same browser task: two STEP clicks followed by a project change.
+  // The kernel may finish, but the obsolete STEP blob must never be downloaded.
+  const staleStepStarted = await execute(
+    "const b=[...document.querySelectorAll('button')].find(x=>x.textContent.trim()==='Export STEP'); const l=[...document.querySelectorAll('label')].find(x=>x.querySelector('span')?.textContent.trim()==='Registration clearance / side'); const i=l?.querySelector('input'); if(!b||b.disabled||!i) return false; b.click(); b.click(); const setter=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set; setter.call(i,'0.31'); i.dispatchEvent(new Event('input',{bubbles:true})); i.dispatchEvent(new Event('change',{bubbles:true})); return true;",
+  );
+  if (!staleStepStarted) throw new Error('Unable to start duplicate STEP + project edit browser race.');
+  await waitFor('project edit after STEP began', async () => Number(await inputValue('Registration clearance / side')) === 0.31);
+  await waitFor('stale STEP operation settles', async () => execute(
+    "const b=[...document.querySelectorAll('button')].find(x=>x.textContent.trim()==='Export STEP'); return Boolean(b && !b.disabled);",
+  ), 45000, 200);
+  const earlyFiles = await readdir(downloadDir);
+  if (earlyFiles.some((file) => file.toLowerCase().endsWith('.step'))) {
+    throw new Error('A stale STEP download escaped the edit-time export guard.');
+  }
+  await waitText('STEP export PASS', false);
+  await setLabelInput('Registration clearance / side', 0.30);
+  await waitText('Exact split handoff', false);
+  await clickButton('Analyze Print');
+  await waitText('Exact split handoff', true, 45000);
+  await waitText('0.30 mm/side clearance');
+  console.log('Browser smoke: duplicate STEP + edit-while-exporting suppression PASS');
+
   console.log('Browser smoke: exact STEP start');
   const stepStartedAt = performance.now();
   await clickButton('Export STEP');
@@ -257,6 +279,12 @@ try {
   );
   const alignedDurationMs = performance.now() - alignedStartedAt;
   console.log('Browser smoke: aligned split PASS in ' + alignedDurationMs.toFixed(0) + 'ms');
+
+  await waitText('Last STEP · PASS');
+  await setLabelInput('width', 299);
+  await waitText('Last STEP · PASS', false);
+  await setLabelInput('width', 300);
+  console.log('Browser smoke: editing CAD removes stale export PASS labels');
 
   console.log('Browser smoke: Save/Open file round-trip start');
   await clickButton('Save Project');
@@ -391,7 +419,7 @@ try {
       + ` | p95=${p95 === null ? 'n/a' : p95.toFixed(1) + 'ms'}`
       + ` | step=${stepDurationMs.toFixed(0)}ms`
       + ` | aligned=${alignedDurationMs.toFixed(0)}ms`
-      + ' | analyze-single-flight/stale-edit/calibration/reanalysis/aligned-3MF/STEP/save-open/latest-open/history-reset/undo-redo/recovery/offline PASS',
+      + ' | analyze-single-flight/stale-edit/export-single-flight/stale-STEP-block/export-evidence-invalidation/calibration/reanalysis/aligned-3MF/STEP/save-open/latest-open/history-reset/undo-redo/recovery/offline PASS',
   );
 } catch (error) {
   throw new Error(String(error) + previewOutput() + driverOutput());

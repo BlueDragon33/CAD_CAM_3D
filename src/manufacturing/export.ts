@@ -4,6 +4,7 @@ import type { CadProject } from '../cad/model';
 import { activeCadKernel } from '../cad/kernel';
 import { buildExactKernelSnapshot } from '../cad/exact-kernel';
 import { projectRequiresExactGeometry } from '../cad/project-analysis';
+import { assertExportDownloadAllowed } from './export-guard';
 
 export type StlInspection = {
   triangleCount: number;
@@ -209,8 +210,9 @@ export function downloadProjectStl(project: CadProject): StlExportReport {
   return report;
 }
 
-export async function downloadProjectStlAdaptive(project: CadProject): Promise<StlExportReport> {
+export async function downloadProjectStlAdaptive(project: CadProject, mayDownload?: () => boolean): Promise<StlExportReport> {
   const { blob, report } = await createAdaptiveStlExport(project);
+  assertExportDownloadAllowed(mayDownload);
   downloadBlob(blob, report.fileName);
   return report;
 }

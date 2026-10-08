@@ -139,10 +139,13 @@ export default function App() {
   }, [project]);
 
   useEffect(() => {
-    // Fallback for any future project state transition not using setProject.
-    // Derived evidence is never canonical engineering intent.
+    // Fallback for future project transitions not using setProject.
+    // A PASS from the previous model must never be shown for a revised model.
     manufacturingJobGate.current.invalidate();
     setManufacturingReport(null);
+    setLastExport(null);
+    setLastStepExport(null);
+    setLastThreeMfExport(null);
     setLastSplitThreeMfExport(null);
     setLastAlignedSplitThreeMfExport(null);
   }, [project]);
@@ -628,28 +631,67 @@ export default function App() {
     }
   };
 
-  const exportStl = async () => {
-    setStlBusy(true); setStatus('Rebuilding manufacturing geometry for STL…');
+  /**
+   * Export operations share the same exclusive slot as Analyze Print.
+   * The download adapter calls isCurrent() once more immediately before
+   * offering the generated artifact to the browser. A project edit revokes
+   * download permission, but does not pretend to interrupt OCCT computation.
+   */
+  const runExport = async <T,>(
+    message: string,
+    setBusy: (value: boolean) => void,
+    buildAndDownload: (isCurrent: () => boolean) => Promise<T>,
+    onSuccess: (report: T) => void,
+    errorPrefix: string,
+    fallbackError: string,
+    onFailure?: () => void,
+  ) => {
+    const ticket = manufacturingJobGate.current.tryBegin();
+    if (!ticket) return;
+    const inputKey = manufacturingEvidenceKey(project);
+    const isCurrent = () => manufacturingJobGate.current.isCurrent(ticket)
+      && isManufacturingEvidenceCurrent(projectRef.current, inputKey);
+
+    setBusy(true);
+    setStatus(message);
     try {
-      const report = await downloadProjectStlAdaptive(project);
-      setLastExport(report);
-      setStatus(`${report.valid ? 'STL preflight PASS' : 'STL exported with mesh warnings'} · ${report.fileName} · ${report.triangleCount} triangles · ${(report.byteLength / 1024).toFixed(1)} KB · ${report.kernelId}.`);
+      const report = await buildAndDownload(isCurrent);
+      if (isCurrent()) onSuccess(report);
     } catch (error) {
-      setStatus(error instanceof Error ? `STL export blocked: ${error.message}` : 'STL export failed.');
-    } finally { setStlBusy(false); }
+      // A superseded export must not erase a newer edit/status or report.
+      if (isCurrent()) {
+        onFailure?.();
+        setStatus(error instanceof Error ? `${errorPrefix}: ${error.message}` : fallbackError);
+      }
+    } finally {
+      if (manufacturingJobGate.current.finish(ticket)) setBusy(false);
+    }
   };
 
-  const exportThreeMf = async () => {
-    setThreeMfBusy(true); setStatus('Building portable 3MF from final manufacturing geometry…');
-    try {
-      const report = await downloadProjectThreeMf(project);
+  const exportStl = async () => runExport(
+    'Rebuilding manufacturing geometry for STL…',
+    setStlBusy,
+    (isCurrent) => downloadProjectStlAdaptive(project, isCurrent),
+    (report) => {
+      setLastExport(report);
+      setStatus(`${report.valid ? 'STL preflight PASS' : 'STL exported with mesh warnings'} · ${report.fileName} · ${report.triangleCount} triangles · ${(report.byteLength / 1024).toFixed(1)} KB · ${report.kernelId}.`);
+    },
+    'STL export blocked',
+    'STL export failed.',
+  );
+
+  const exportThreeMf = async () => runExport(
+    'Building portable 3MF from final manufacturing geometry…',
+    setThreeMfBusy,
+    (isCurrent) => downloadProjectThreeMf(project, isCurrent),
+    (report) => {
       setLastThreeMfExport(report);
       const warningText = report.warnings.length > 0 ? ` · ${report.warnings.join(' ')}` : '';
       setStatus(`3MF export PASS · ${report.fileName} · ${report.triangleCount} triangles · ${(report.byteLength / 1024).toFixed(1)} KB · millimeter · ${report.kernelId}${warningText}`);
-    } catch (error) {
-      setStatus(error instanceof Error ? `3MF export blocked: ${error.message}` : '3MF export failed.');
-    } finally { setThreeMfBusy(false); }
-  };
+    },
+    '3MF export blocked',
+    '3MF export failed.',
+  );
 
   const exportSplitThreeMf = async () => {
     if (manufacturingReport && !isManufacturingEvidenceCurrent(project, manufacturingReport.inputKey)) {
@@ -667,22 +709,22 @@ export default function App() {
       return;
     }
 
-    setSplitThreeMfBusy(true);
-    setStatus(`Generating ${plan.pieceCount} exact B-Rep split envelope(s) for multi-object 3MF…`);
-    try {
-      const report = await downloadProjectSplitThreeMf(project, plan);
-      setLastSplitThreeMfExport(report);
-      const warningText = report.warnings.length > 0 ? ` · ${report.warnings.join(' ')}` : '';
-      setStatus(
-        `Split 3MF PASS · ${report.fileName} · ${report.generatedPieceCount} exact object(s) · `
-        + `${(report.byteLength / 1024).toFixed(1)} KB · volume conserved ${report.volumeConserved ? 'yes' : 'no'}${warningText}`,
-      );
-    } catch (error) {
-      setLastSplitThreeMfExport(null);
-      setStatus(error instanceof Error ? `Split 3MF export blocked: ${error.message}` : 'Split 3MF export failed.');
-    } finally {
-      setSplitThreeMfBusy(false);
-    }
+    await runExport(
+      `Generating ${plan.pieceCount} exact B-Rep split envelope(s) for multi-object 3MF…`,
+      setSplitThreeMfBusy,
+      (isCurrent) => downloadProjectSplitThreeMf(project, plan, isCurrent),
+      (report) => {
+        setLastSplitThreeMfExport(report);
+        const warningText = report.warnings.length > 0 ? ` · ${report.warnings.join(' ')}` : '';
+        setStatus(
+          `Split 3MF PASS · ${report.fileName} · ${report.generatedPieceCount} exact object(s) · `
+          + `${(report.byteLength / 1024).toFixed(1)} KB · volume conserved ${report.volumeConserved ? 'yes' : 'no'}${warningText}`,
+        );
+      },
+      'Split 3MF export blocked',
+      'Split 3MF export failed.',
+      () => setLastSplitThreeMfExport(null),
+    );
   };
 
   const exportAlignedSplitThreeMf = async () => {
@@ -702,42 +744,37 @@ export default function App() {
       return;
     }
 
-    setAlignedSplitThreeMfBusy(true);
-    setStatus(`Verifying ${alignmentPlan.pins.length} registration-pin corridor(s) and building exact aligned split geometry…`);
-    try {
-      const report = await downloadProjectAlignedSplitThreeMf(
-        project,
-        splitPlan,
-        alignmentPlan,
-      );
-      setLastAlignedSplitThreeMfExport(report);
-      const warningText = report.warnings.length > 0 ? ` · ${report.warnings.join(' ')}` : '';
-      setStatus(
-        `Aligned Split 3MF PASS · ${report.fileName} · ${report.objectCount} object(s) · `
-        + `${report.verifiedPinCount}/${report.plannedPinCount} registration pins verified · `
-        + `expected-volume delta ${report.expectedVolumeDeltaMm3.toFixed(6)} mm³${warningText}`,
-      );
-    } catch (error) {
-      setLastAlignedSplitThreeMfExport(null);
-      setStatus(error instanceof Error
-        ? `Aligned Split 3MF blocked: ${error.message}`
-        : 'Aligned Split 3MF failed.');
-    } finally {
-      setAlignedSplitThreeMfBusy(false);
-    }
+    await runExport(
+      `Verifying ${alignmentPlan.pins.length} registration-pin corridor(s) and building exact aligned split geometry…`,
+      setAlignedSplitThreeMfBusy,
+      (isCurrent) => downloadProjectAlignedSplitThreeMf(project, splitPlan, alignmentPlan, isCurrent),
+      (report) => {
+        setLastAlignedSplitThreeMfExport(report);
+        const warningText = report.warnings.length > 0 ? ` · ${report.warnings.join(' ')}` : '';
+        setStatus(
+          `Aligned Split 3MF PASS · ${report.fileName} · ${report.objectCount} object(s) · `
+          + `${report.verifiedPinCount}/${report.plannedPinCount} registration pins verified · `
+          + `expected-volume delta ${report.expectedVolumeDeltaMm3.toFixed(6)} mm³${warningText}`,
+        );
+      },
+      'Aligned Split 3MF blocked',
+      'Aligned Split 3MF failed.',
+      () => setLastAlignedSplitThreeMfExport(null),
+    );
   };
 
-  const exportStep = async () => {
-    setExactBusy(true); setStatus('Loading OpenCascade WASM and rebuilding exact B-Rep…');
-    try {
-      const report = await downloadProjectStep(project);
+  const exportStep = async () => runExport(
+    'Loading OpenCascade WASM and rebuilding exact B-Rep…',
+    setExactBusy,
+    (isCurrent) => downloadProjectStep(project, isCurrent),
+    (report) => {
       setLastStepExport(report);
       const warningText = report.warnings.length > 0 ? ` · ${report.warnings.join(' ')}` : '';
       setStatus(`STEP export PASS · ${report.fileName} · ${report.faceCount} faces · ${report.edgeCount} edges · ${(report.byteLength / 1024).toFixed(1)} KB${warningText}`);
-    } catch (error) {
-      setStatus(error instanceof Error ? `STEP export blocked: ${error.message}` : 'STEP export failed.');
-    } finally { setExactBusy(false); }
-  };
+    },
+    'STEP export blocked',
+    'STEP export failed.',
+  );
 
   const analyzePrint = async () => {
     // A second event can arrive before React paints the disabled button.
@@ -1044,6 +1081,8 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [projectHistory.past.length, projectHistory.future.length]);
 
+  const heavyBusy = manufacturingBusy || stlBusy || threeMfBusy
+    || splitThreeMfBusy || alignedSplitThreeMfBusy || exactBusy;
   const sketchSelected = selectedFeature?.kind === 'sketch';
 
   return (
@@ -1058,10 +1097,10 @@ export default function App() {
           <button type="button" onClick={saveProject}>Save Project</button>
           {recoveryCandidate ? <button type="button" onClick={restoreRecovery} title={`Local autosave from ${new Date(recoveryCandidate.savedAt).toLocaleString()}`}>Recover</button> : null}
           <button type="button" onClick={() => projectInputRef.current?.click()}>Open Project</button>
-          <button type="button" onClick={() => void analyzePrint()} disabled={!rebuilt.hasSolid || manufacturingBusy}>{manufacturingBusy ? 'Analyzing…' : 'Analyze Print'}</button>
-          <button type="button" onClick={() => void exportStl()} disabled={!rebuilt.hasSolid || stlBusy}>{stlBusy ? 'Building STL…' : 'Export STL'}</button>
-          <button type="button" onClick={() => void exportThreeMf()} disabled={!rebuilt.hasSolid || threeMfBusy}>{threeMfBusy ? 'Building 3MF…' : 'Export 3MF'}</button>
-          <button type="button" onClick={() => void exportStep()} disabled={!rebuilt.hasSolid || exactBusy}>{exactBusy ? 'Building B-Rep…' : 'Export STEP'}</button>
+          <button type="button" onClick={() => void analyzePrint()} disabled={!rebuilt.hasSolid || heavyBusy}>{manufacturingBusy ? 'Analyzing…' : 'Analyze Print'}</button>
+          <button type="button" onClick={() => void exportStl()} disabled={!rebuilt.hasSolid || heavyBusy}>{stlBusy ? 'Building STL…' : 'Export STL'}</button>
+          <button type="button" onClick={() => void exportThreeMf()} disabled={!rebuilt.hasSolid || heavyBusy}>{threeMfBusy ? 'Building 3MF…' : 'Export 3MF'}</button>
+          <button type="button" onClick={() => void exportStep()} disabled={!rebuilt.hasSolid || heavyBusy}>{exactBusy ? 'Building B-Rep…' : 'Export STEP'}</button>
           <button type="button" onClick={reset}>Reset</button>
           <input ref={projectInputRef} className="file-input" type="file" accept=".json,.cad3d.json,application/json" onChange={(event) => { const file = event.target.files?.[0]; void openProject(file); event.target.value = ''; }} />
         </div>
@@ -1177,14 +1216,14 @@ export default function App() {
                 <button
                   type="button"
                   onClick={() => void exportSplitThreeMf()}
-                  disabled={manufacturingReport.exportBlocked || splitThreeMfBusy || alignedSplitThreeMfBusy}
+                  disabled={manufacturingReport.exportBlocked || heavyBusy}
                 >
                   {splitThreeMfBusy ? 'Building split 3MF…' : 'Export Split 3MF'}
                 </button>
                 {splitAlignmentPlan?.ready ? <button
                   type="button"
                   onClick={() => void exportAlignedSplitThreeMf()}
-                  disabled={manufacturingReport.exportBlocked || splitThreeMfBusy || alignedSplitThreeMfBusy}
+                  disabled={manufacturingReport.exportBlocked || heavyBusy}
                 >
                   {alignedSplitThreeMfBusy ? 'Verifying + building…' : 'Export Aligned Split 3MF'}
                 </button> : null}

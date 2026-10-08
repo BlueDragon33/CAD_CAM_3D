@@ -1,6 +1,7 @@
 import type { CadProject } from '../cad/model';
 import type { ManufacturingSplitPlan } from './split-plan';
 import type { SplitAlignmentPlan } from './alignment-plan';
+import { assertExportDownloadAllowed } from './export-guard';
 import {
   disposeExactAlignedManufacturingSplit,
   generateExactAlignedManufacturingSplit,
@@ -84,12 +85,14 @@ export async function downloadProjectAlignedSplitThreeMf(
   project: CadProject,
   splitPlan: ManufacturingSplitPlan,
   alignmentPlan: SplitAlignmentPlan,
+  mayDownload?: () => boolean,
 ): Promise<AlignedSplitThreeMfExportReport> {
   const { blob, report } = await createProjectAlignedSplitThreeMf(
     project,
     splitPlan,
     alignmentPlan,
   );
+  assertExportDownloadAllowed(mayDownload);
   downloadBlob(blob, report.fileName);
   return report;
 }

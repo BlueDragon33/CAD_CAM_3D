@@ -5,6 +5,7 @@ import { buildExactKernelSnapshot } from '../cad/exact-kernel';
 import { projectRequiresExactGeometry } from '../cad/project-analysis';
 import { inspectGeometry, type StlInspection } from './export';
 import { createStoredZip, utf8 } from './zip-store';
+import { assertExportDownloadAllowed } from './export-guard';
 
 export type ThreeMfExportReport = StlInspection & {
   fileName: string;
@@ -249,8 +250,9 @@ function downloadBlob(blob: Blob, fileName: string) {
   window.setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
-export async function downloadProjectThreeMf(project: CadProject): Promise<ThreeMfExportReport> {
+export async function downloadProjectThreeMf(project: CadProject, mayDownload?: () => boolean): Promise<ThreeMfExportReport> {
   const { blob, report } = await createProjectThreeMf(project);
+  assertExportDownloadAllowed(mayDownload);
   downloadBlob(blob, report.fileName);
   return report;
 }
