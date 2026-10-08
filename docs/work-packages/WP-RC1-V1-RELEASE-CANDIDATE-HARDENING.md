@@ -1,6 +1,6 @@
 # WP-RC1 — CAD_CAM_3D v1 Release Candidate Hardening
 
-Status: **ACTIVE**
+Status: **FINAL BRANCH GATE PENDING — IMPLEMENTATION COMPLETE FOR DECLARED v1 SCOPE**
 Target: **v1.0.0 local-first production candidate**
 
 ## Product boundary
@@ -165,3 +165,9 @@ v1 CI regression guards:
 - aligned split <= 15 s.
 
 These are CI regression budgets with deliberate variance headroom. They are not public end-user SLAs.
+
+## Current branch-gate evidence
+
+The declared v1 implementation scope is complete. The final branch gate includes TypeScript, 92 unit regressions, the exact B-Rep smoke suite, production build/offline/release-size audit, Chrome critical journey, and Preview Build. The browser journey includes real project Save/Open file round-trip and explicitly checks clean history after Open.
+
+No post-v1 non-goal (Sweep/Loft, curved-surface attachment, cloud billing/collaboration, structural joints, slicer-equivalent support analysis or Bambu-project parity) is promoted into the v1 claim merely to make the release look broader.
