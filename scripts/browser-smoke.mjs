@@ -291,7 +291,21 @@ try {
   await waitText('Project opened · schema v13');
   await waitFor('opened calibration from saved file', async () => Number(await inputValue('Registration clearance / side')) === 0.3);
   await waitFor('opened width from saved file', async () => Number(await inputValue('width')) === 300);
-  console.log('Browser smoke: Save/Open file round-trip PASS');
+
+  // Deterministically finish an earlier Open after a newer Open. The older
+  // file must not replace the newer project or overwrite its status.
+  const competingOpens = await execute(
+    "const input=document.querySelector('input.file-input[type=file]'); if(!input) return false; const old=JSON.parse(arguments[0]); old.project.dimensions.width=175; const original=File.prototype.text; File.prototype.text=function(){const read=original.call(this); return this.name==='qa-slow-old.cad3d.json' ? new Promise((resolve,reject)=>setTimeout(()=>read.then(resolve,reject),450)) : read;}; window.setTimeout(()=>{File.prototype.text=original;},1400); for(const [name,text] of [['qa-slow-old.cad3d.json',JSON.stringify(old)],['qa-latest.cad3d.json',arguments[0]]]){const file=new File([text],name,{type:'application/json'}); const transfer=new DataTransfer(); transfer.items.add(file); input.files=transfer.files; input.dispatchEvent(new Event('change',{bubbles:true}));} return true;",
+    [savedText],
+  );
+  if (!competingOpens) throw new Error('Unable to exercise out-of-order project file reads.');
+  await waitText('Project opened · schema v13 · qa-latest.cad3d.json');
+  await delay(650);
+  await waitFor('newer project retained after slower Open finishes', async () => Number(await inputValue('width')) === 300);
+  if ((await bodyText()).includes('Project opened · schema v13 · qa-slow-old.cad3d.json')) {
+    throw new Error('A stale older Open overwrote the latest project status.');
+  }
+  console.log('Browser smoke: Save/Open + out-of-order file reads PASS');
 
   const undoDisabledAfterOpen = await execute(
     "const b=[...document.querySelectorAll('button')].find(x=>x.textContent.trim()==='Undo'); return b ? b.disabled : null;",
@@ -377,7 +391,7 @@ try {
       + ` | p95=${p95 === null ? 'n/a' : p95.toFixed(1) + 'ms'}`
       + ` | step=${stepDurationMs.toFixed(0)}ms`
       + ` | aligned=${alignedDurationMs.toFixed(0)}ms`
-      + ' | analyze-single-flight/stale-edit/calibration/reanalysis/aligned-3MF/STEP/save-open/history-reset/undo-redo/recovery/offline PASS',
+      + ' | analyze-single-flight/stale-edit/calibration/reanalysis/aligned-3MF/STEP/save-open/latest-open/history-reset/undo-redo/recovery/offline PASS',
   );
 } catch (error) {
   throw new Error(String(error) + previewOutput() + driverOutput());
