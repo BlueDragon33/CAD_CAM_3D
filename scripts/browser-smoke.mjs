@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
-import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { browserPerformanceEvidence } from './browser-metrics.mjs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -208,6 +209,22 @@ try {
   await setLabelInput('width', 300);
   await setLabelInput('depth', 40);
   await setLabelInput('height', 12);
+
+  // Same browser task: two Analyze clicks before React can render disabled,
+  // followed by a project edit before the pending promise completes.
+  // The old job must not publish stale manufacturing evidence after the edit.
+  const raceStarted = await execute(
+    "const b=[...document.querySelectorAll('button')].find(x=>x.textContent.trim()==='Analyze Print'); const l=[...document.querySelectorAll('label')].find(x=>x.querySelector('span')?.textContent.trim()==='width'); const i=l?.querySelector('input'); if(!b||b.disabled||!i) return false; b.click(); b.click(); const s=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set; s.call(i,'301'); i.dispatchEvent(new Event('input',{bubbles:true})); i.dispatchEvent(new Event('change',{bubbles:true})); return true;",
+  );
+  if (!raceStarted) throw new Error('Unable to exercise repeated Analyze Print + edit in one browser task.');
+  await waitFor('width edit during Analyze Print', async () => Number(await inputValue('width')) === 301);
+  await waitFor('Analyze Print single-flight completion', async () => execute(
+    "const b=[...document.querySelectorAll('button')].find(x=>x.textContent.trim()==='Analyze Print'); return Boolean(b && !b.disabled);",
+  ), 45000, 200);
+  await waitText('Exact split handoff', false);
+  await setLabelInput('width', 300);
+  console.log('Browser smoke: duplicate Analyze + edit-while-busy stale rejection PASS');
+
   await clickButton('Analyze Print');
   await waitText('Exact split handoff', true, 45000);
   await waitText('0.20 mm/side clearance');
@@ -274,7 +291,21 @@ try {
   await waitText('Project opened · schema v13');
   await waitFor('opened calibration from saved file', async () => Number(await inputValue('Registration clearance / side')) === 0.3);
   await waitFor('opened width from saved file', async () => Number(await inputValue('width')) === 300);
-  console.log('Browser smoke: Save/Open file round-trip PASS');
+
+  // Deterministically finish an earlier Open after a newer Open. The older
+  // file must not replace the newer project or overwrite its status.
+  const competingOpens = await execute(
+    "const input=document.querySelector('input.file-input[type=file]'); if(!input) return false; const old=JSON.parse(arguments[0]); old.project.dimensions.width=175; const original=File.prototype.text; File.prototype.text=function(){const read=original.call(this); return this.name==='qa-slow-old.cad3d.json' ? new Promise((resolve,reject)=>setTimeout(()=>read.then(resolve,reject),450)) : read;}; window.setTimeout(()=>{File.prototype.text=original;},1400); for(const [name,text] of [['qa-slow-old.cad3d.json',JSON.stringify(old)],['qa-latest.cad3d.json',arguments[0]]]){const file=new File([text],name,{type:'application/json'}); const transfer=new DataTransfer(); transfer.items.add(file); input.files=transfer.files; input.dispatchEvent(new Event('change',{bubbles:true}));} return true;",
+    [savedText],
+  );
+  if (!competingOpens) throw new Error('Unable to exercise out-of-order project file reads.');
+  await waitText('Project opened · schema v13 · qa-latest.cad3d.json');
+  await delay(650);
+  await waitFor('newer project retained after slower Open finishes', async () => Number(await inputValue('width')) === 300);
+  if ((await bodyText()).includes('Project opened · schema v13 · qa-slow-old.cad3d.json')) {
+    throw new Error('A stale older Open overwrote the latest project status.');
+  }
+  console.log('Browser smoke: Save/Open + out-of-order file reads PASS');
 
   const undoDisabledAfterOpen = await execute(
     "const b=[...document.querySelectorAll('button')].find(x=>x.textContent.trim()==='Undo'); return b ? b.disabled : null;",
@@ -325,35 +356,32 @@ try {
     connectionType: 'wifi',
   });
 
-  const sortedDurations = navigationSamples
-    .map((entry) => entry.duration)
-    .filter((value) => Number.isFinite(value))
-    .sort((a, b) => a - b);
-  const percentile = (p) => {
-    if (sortedDurations.length === 0) return null;
-    return sortedDurations[Math.min(sortedDurations.length - 1, Math.ceil(sortedDurations.length * p) - 1)];
-  };
-  const p50 = percentile(0.5);
-  const p95 = percentile(0.95);
-
-  // Ratified after the first successful CI measurement on 2026-10-08:
-  // p95 navigation 357.8ms, STEP 992ms, aligned split 885ms.
-  // These are regression guards with substantial CI variance headroom,
-  // not end-user latency SLAs.
   const browserBudget = {
     navigationP95Ms: 1500,
     stepMs: 10000,
     alignedSplitMs: 15000,
   };
-  if (p95 !== null && p95 > browserBudget.navigationP95Ms) {
-    throw new Error(`Browser navigation p95 ${p95.toFixed(1)}ms exceeds v1 CI budget ${browserBudget.navigationP95Ms}ms.`);
+  const evidence = browserPerformanceEvidence({
+    navigationMs: navigationSamples.map((entry) => entry.duration),
+    stepMs: stepDurationMs,
+    alignedSplitMs: alignedDurationMs,
+    budgets: browserBudget,
+    revision: process.env.GITHUB_SHA ?? 'local',
+  });
+  // Store sanitized numbers only. Never send project data, filenames, or raw prompts.
+  await mkdir('reports', { recursive: true });
+  await writeFile('reports/browser-performance.json', JSON.stringify(evidence, null, 2) + '\n', 'utf8');
+  if (evidence.conclusion !== 'PASS') {
+    throw new Error(
+      `Browser CI performance regression: navigation p95=${evidence.navigation.p95Ms}ms / ${browserBudget.navigationP95Ms}ms; `
+      + `STEP=${stepDurationMs.toFixed(0)}ms / ${browserBudget.stepMs}ms; `
+      + `Aligned Split=${alignedDurationMs.toFixed(0)}ms / ${browserBudget.alignedSplitMs}ms. `
+      + 'Sanitized evidence is in reports/browser-performance.json.',
+    );
   }
-  if (stepDurationMs > browserBudget.stepMs) {
-    throw new Error(`STEP export ${stepDurationMs.toFixed(0)}ms exceeds v1 CI budget ${browserBudget.stepMs}ms.`);
-  }
-  if (alignedDurationMs > browserBudget.alignedSplitMs) {
-    throw new Error(`Aligned split export ${alignedDurationMs.toFixed(0)}ms exceeds v1 CI budget ${browserBudget.alignedSplitMs}ms.`);
-  }
+  const p50 = evidence.navigation.p50Ms;
+  const p95 = evidence.navigation.p95Ms;
+  const sortedDurations = evidence.rawNavigationMs;
 
   console.log(
     'Browser critical journey PASS'
@@ -363,7 +391,7 @@ try {
       + ` | p95=${p95 === null ? 'n/a' : p95.toFixed(1) + 'ms'}`
       + ` | step=${stepDurationMs.toFixed(0)}ms`
       + ` | aligned=${alignedDurationMs.toFixed(0)}ms`
-      + ' | calibration/reanalysis/aligned-3MF/STEP/save-open/history-reset/undo-redo/recovery/offline PASS',
+      + ' | analyze-single-flight/stale-edit/calibration/reanalysis/aligned-3MF/STEP/save-open/latest-open/history-reset/undo-redo/recovery/offline PASS',
   );
 } catch (error) {
   throw new Error(String(error) + previewOutput() + driverOutput());

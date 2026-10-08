@@ -40,6 +40,8 @@ import { Viewport } from './components/Viewport';
 import { defaultManagementPolicy, managementIdentity } from './management/policy';
 import { newestRecoverySnapshot, restoreRecoverySnapshot, saveRecoverySnapshot, type RecoverySnapshot } from './persistence/local-recovery';
 import { planDesignInstruction, projectProposalFingerprint, type DesignProposal } from './ai/planner';
+import { createExclusiveJobGate } from './platform/exclusive-job';
+import { createLatestIntentGate } from './platform/latest-intent';
 
 const featureLabels: Record<FeatureKind, string> = {
   sketch: 'Sketch', 'datum-axis': 'Datum Axis', extrude: 'Extrude', pad: 'Pad', pocket: 'Pocket', revolve: 'Revolve', cut: 'Cut', hole: 'Hole', fillet: 'Fillet', chamfer: 'Chamfer', shell: 'Shell', 'linear-pattern': 'Linear Pattern', mirror: 'Mirror',
@@ -70,10 +72,17 @@ function initialRecoveryCandidate(): RecoverySnapshot | null {
 export default function App() {
   const [projectHistory, setProjectHistory] = useState(() => createProjectHistory(createDefaultProject()));
   const project = projectHistory.present;
+  // Own long-running analysis synchronously, not via the next React render.
+  const manufacturingJobGate = useRef(createExclusiveJobGate());
+  const openProjectIntent = useRef(createLatestIntentGate());
   const setProject = (update: ProjectUpdate) => {
+    manufacturingJobGate.current.invalidate();
+    openProjectIntent.current.invalidate();
     setProjectHistory((current) => applyProjectUpdate(current, update));
   };
   const replaceProject = (next: CadProject) => {
+    manufacturingJobGate.current.invalidate();
+    openProjectIntent.current.invalidate();
     setProjectHistory(replaceProjectHistory(next));
   };
   const projectRef = useRef(project);
@@ -130,8 +139,9 @@ export default function App() {
   }, [project]);
 
   useEffect(() => {
-    // Manufacturing reports are derived evidence, not project truth. Any model
-    // edit invalidates the prior analysis and any split-export result.
+    // Fallback for any future project state transition not using setProject.
+    // Derived evidence is never canonical engineering intent.
+    manufacturingJobGate.current.invalidate();
     setManufacturingReport(null);
     setLastSplitThreeMfExport(null);
     setLastAlignedSplitThreeMfExport(null);
@@ -600,15 +610,21 @@ export default function App() {
 
   const openProject = async (file: File | undefined) => {
     if (!file) return;
+    const intent = openProjectIntent.current.begin();
+    setStatus('Opening project file…');
     try {
       const loaded = await loadProjectFile(file);
+      if (!openProjectIntent.current.isCurrent(intent)) return;
       replaceProject(loaded.project);
       setSelectedFeatureId(loaded.project.features[1]?.id ?? loaded.project.features[0]?.id ?? null);
       setTopologySelection(null); setLastExport(null); setLastStepExport(null); setLastThreeMfExport(null); setLastSplitThreeMfExport(null); setManufacturingReport(null); setRecoveryCandidate(null);
       const migration = loaded.report.migrated ? ` · migrated schema v${loaded.report.sourceSchemaVersion} → v${loaded.report.schemaVersion}` : ` · schema v${loaded.report.schemaVersion}`;
       setStatus(`Project opened${migration} · ${loaded.report.fileName}.`);
     } catch (error) {
-      setStatus(error instanceof Error ? `Project open blocked: ${error.message}` : 'Project open failed.');
+      // A slower previous read must not overwrite a newer Open/Edit decision.
+      if (openProjectIntent.current.isCurrent(intent)) {
+        setStatus(error instanceof Error ? `Project open blocked: ${error.message}` : 'Project open failed.');
+      }
     }
   };
 
@@ -724,15 +740,20 @@ export default function App() {
   };
 
   const analyzePrint = async () => {
+    // A second event can arrive before React paints the disabled button.
+    // Keep the underlying operation single-flight until the kernel settles.
+    const ticket = manufacturingJobGate.current.tryBegin();
+    if (!ticket) return;
     const requestedInputKey = manufacturingEvidenceKey(project);
     setManufacturingBusy(true);
     setStatus('Analyzing final manufacturing geometry…');
     try {
       const report = await analyzeManufacturingReadiness(project);
-      if (report.inputKey !== requestedInputKey
+      if (!manufacturingJobGate.current.isCurrent(ticket)
+        || report.inputKey !== requestedInputKey
         || !isManufacturingEvidenceCurrent(projectRef.current, report.inputKey)) {
-        setManufacturingReport(null);
-        setStatus('Manufacturing analysis discarded because the project changed while analysis was running. Run Analyze Print again.');
+        // An edit / Open / Undo has already invalidated this job. Never clear
+        // a newer report or overwrite the user's more recent status.
         return;
       }
       setManufacturingReport(report);
@@ -743,10 +764,14 @@ export default function App() {
         + ` · ${report.exact ? 'exact' : 'lightweight'} ${report.kernelId} · ${blockers} blocker(s) · ${warnings} warning(s).`,
       );
     } catch (error) {
-      setManufacturingReport(null);
-      setStatus(error instanceof Error ? `Manufacturing analysis blocked: ${error.message}` : 'Manufacturing analysis failed.');
+      if (manufacturingJobGate.current.isCurrent(ticket)) {
+        setManufacturingReport(null);
+        setStatus(error instanceof Error ? `Manufacturing analysis blocked: ${error.message}` : 'Manufacturing analysis failed.');
+      }
     } finally {
-      setManufacturingBusy(false);
+      if (manufacturingJobGate.current.finish(ticket)) {
+        setManufacturingBusy(false);
+      }
     }
   };
 
@@ -975,6 +1000,8 @@ export default function App() {
 
   const undoProject = () => {
     if (projectHistory.past.length === 0) return;
+    manufacturingJobGate.current.invalidate();
+    openProjectIntent.current.invalidate();
     setProjectHistory((current) => undoProjectHistory(current));
     setTopologySelection(null);
     setDesignProposal(null);
@@ -983,6 +1010,8 @@ export default function App() {
 
   const redoProject = () => {
     if (projectHistory.future.length === 0) return;
+    manufacturingJobGate.current.invalidate();
+    openProjectIntent.current.invalidate();
     setProjectHistory((current) => redoProjectHistory(current));
     setTopologySelection(null);
     setDesignProposal(null);
