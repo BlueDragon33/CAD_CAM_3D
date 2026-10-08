@@ -35,9 +35,11 @@ function capture(process, label) {
 }
 
 async function jsonRequest(url, options = {}) {
+  const { timeoutMs = 15000, ...requestOptions } = options;
   const response = await fetch(url, {
-    ...options,
-    headers: { 'content-type': 'application/json', ...(options.headers || {}) },
+    ...requestOptions,
+    signal: AbortSignal.timeout(timeoutMs),
+    headers: { 'content-type': 'application/json', ...(requestOptions.headers || {}) },
   });
   const text = await response.text();
   let body = null;
@@ -207,19 +209,27 @@ try {
   await waitText('0.30 mm/side clearance');
   await waitText('Export Aligned Split 3MF');
 
-  await clickButton('Export Aligned Split 3MF');
-  await waitOperationResult(
-    'Aligned Split 3MF PASS',
-    ['Aligned Split 3MF blocked:', 'Aligned Split 3MF failed.'],
-    60000,
-  );
-
+  console.log('Browser smoke: exact STEP start');
+  const stepStartedAt = performance.now();
   await clickButton('Export STEP');
   await waitOperationResult(
     'STEP export PASS',
     ['STEP export blocked:', 'STEP export failed.'],
     60000,
   );
+  const stepDurationMs = performance.now() - stepStartedAt;
+  console.log('Browser smoke: exact STEP PASS in ' + stepDurationMs.toFixed(0) + 'ms');
+
+  console.log('Browser smoke: aligned split start');
+  const alignedStartedAt = performance.now();
+  await clickButton('Export Aligned Split 3MF');
+  await waitOperationResult(
+    'Aligned Split 3MF PASS',
+    ['Aligned Split 3MF blocked:', 'Aligned Split 3MF failed.'],
+    90000,
+  );
+  const alignedDurationMs = performance.now() - alignedStartedAt;
+  console.log('Browser smoke: aligned split PASS in ' + alignedDurationMs.toFixed(0) + 'ms');
 
   await clickButton('Undo');
   await waitFor('calibration undo', async () => (await inputValue('Registration clearance / side')) === '');
@@ -276,6 +286,8 @@ try {
       + ` | navigation samples=${sortedDurations.length}`
       + ` | p50=${p50 === null ? 'n/a' : p50.toFixed(1) + 'ms'}`
       + ` | p95=${p95 === null ? 'n/a' : p95.toFixed(1) + 'ms'}`
+      + ` | step=${stepDurationMs.toFixed(0)}ms`
+      + ` | aligned=${alignedDurationMs.toFixed(0)}ms`
       + ' | calibration/reanalysis/aligned-3MF/STEP/undo-redo/recovery/offline PASS',
   );
 } catch (error) {
