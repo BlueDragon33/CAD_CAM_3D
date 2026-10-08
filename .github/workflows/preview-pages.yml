@@ -1,4 +1,4 @@
-name: CAD CAM 3D Preview Pages
+name: CAD CAM 3D Preview Build
 
 on:
   push:
@@ -8,11 +8,9 @@ on:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 concurrency:
-  group: cad-cam-3d-preview-pages
+  group: cad-cam-3d-preview-build
   cancel-in-progress: true
 
 jobs:
@@ -29,29 +27,18 @@ jobs:
           cache: npm
           cache-dependency-path: package.json
 
-      - name: Configure GitHub Pages
-        uses: actions/configure-pages@v5
-
       - name: Install dependencies
         run: npm install --no-audit --no-fund
 
-      - name: Build preview
+      - name: Build preview artifact
         env:
           GITHUB_PAGES: "true"
         run: npm run build
 
-      - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v3
+      - name: Upload preview artifact
+        uses: actions/upload-artifact@v4
         with:
+          name: cad-cam-3d-preview-${{ github.sha }}
           path: dist
-
-  deploy:
-    environment:
-      name: cad-preview-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    runs-on: ubuntu-latest
-    needs: build
-    steps:
-      - name: Deploy preview to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
+          if-no-files-found: error
+          retention-days: 7
