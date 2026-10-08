@@ -1,6 +1,6 @@
 # WP CAD-QA-001 — Engineering Reliability & Measured Performance
 
-Status: **ACTIVE — slice A: manufacturing single-flight / stale completion protection**
+Status: **QA RELEASE CANDIDATE — slices A/B/C + latest-file-open complete; memory/load slice remains open**
 Authority: Universal Constitution 1.2.0 → B4 CAD Commercial Blueprint → Master Century-Grade Execution Prompt
 Zone: Floors 91–100 (QA/Operations), with manufacturing domain boundary in Floors 51–60
 
@@ -63,3 +63,17 @@ Close slice A/B only when exact-HEAD CI + real Chrome critical journey pass. WP 
 - `scripts/browser-metrics.test.mjs` is Vitest-native, avoiding a conflicting nested Node test runner.
 
 This document must not state that the entire WP is complete while export/file-import race and memory/load investigation (slice D) is still open.
+
+## Evidence — 2026-10-08, code head `496036b9b93f9fe636a370e1d00f802cfa4f56a1`
+
+- GitHub Actions CI: run **37807538281** — typecheck, 18 Vitest suites, exact OpenCascade smoke, production build, Chrome critical journey: **PASS**.
+- Universal Constitution + dependency sovereignty: run **37807539405**, **PASS**.
+- Chrome explicitly reported duplicate Analyze + edit-while-busy rejection **PASS** and saved-project out-of-order Open **PASS**.
+- Browser measured five navigation samples, P50 **65.9ms**, P95 **152.1ms**; STEP single observation **712ms**, Aligned Split single observation **930ms**.
+- Sanitized performance evidence artifact: `cad-browser-performance`, artifact **11562843972**, run **37807538281**, retained for 14 days.
+- These values are runner observations, **not** a user-device SLA. Single-export measurements are not called percentile statistics.
+- A CI test-runner mistake (`node:test` under auto-discovered Vitest) was repaired at its root by using the same Vitest runner; tests were not weakened.
+
+### Still open (next QA slice)
+
+Long-run memory and heavy project histories, repeated export contention, and real-device performance baselines require separate evidence. These are not silently labeled PASS by this release slice.
