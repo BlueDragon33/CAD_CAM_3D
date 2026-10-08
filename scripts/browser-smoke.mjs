@@ -51,8 +51,8 @@ async function jsonRequest(url, options = {}) {
 }
 
 const preview = spawn(
-  process.platform === 'win32' ? 'npm.cmd' : 'npm',
-  ['run', 'preview', '--', '--host', host, '--port', String(port)],
+  process.execPath,
+  ['node_modules/vite/bin/vite.js', 'preview', '--host', host, '--port', String(port)],
   { stdio: ['ignore', 'pipe', 'pipe'], env: process.env },
 );
 const driver = spawn(
@@ -280,6 +280,25 @@ try {
   const p50 = percentile(0.5);
   const p95 = percentile(0.95);
 
+  // Ratified after the first successful CI measurement on 2026-10-08:
+  // p95 navigation 357.8ms, STEP 992ms, aligned split 885ms.
+  // These are regression guards with substantial CI variance headroom,
+  // not end-user latency SLAs.
+  const browserBudget = {
+    navigationP95Ms: 1500,
+    stepMs: 10000,
+    alignedSplitMs: 15000,
+  };
+  if (p95 !== null && p95 > browserBudget.navigationP95Ms) {
+    throw new Error(`Browser navigation p95 ${p95.toFixed(1)}ms exceeds v1 CI budget ${browserBudget.navigationP95Ms}ms.`);
+  }
+  if (stepDurationMs > browserBudget.stepMs) {
+    throw new Error(`STEP export ${stepDurationMs.toFixed(0)}ms exceeds v1 CI budget ${browserBudget.stepMs}ms.`);
+  }
+  if (alignedDurationMs > browserBudget.alignedSplitMs) {
+    throw new Error(`Aligned split export ${alignedDurationMs.toFixed(0)}ms exceeds v1 CI budget ${browserBudget.alignedSplitMs}ms.`);
+  }
+
   console.log(
     'Browser critical journey PASS'
       + ` | URL=${appUrl}`
@@ -296,6 +315,9 @@ try {
   if (sessionId) {
     try { await jsonRequest(driverUrl + '/session/' + sessionId, { method: 'DELETE' }); } catch {}
   }
-  preview.kill('SIGTERM');
-  driver.kill('SIGTERM');
+  for (const child of [preview, driver]) {
+    try { child.kill('SIGTERM'); } catch {}
+    child.stdout?.destroy();
+    child.stderr?.destroy();
+  }
 }
