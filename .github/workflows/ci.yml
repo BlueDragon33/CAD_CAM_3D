@@ -25,3 +25,9 @@ jobs:
         run: npm run smoke:exact
       - name: Build
         run: npm run build
+      - name: Verify browser test runtime
+        run: |
+          google-chrome --version
+          chromedriver --version
+      - name: Browser critical journey
+        run: npm run smoke:browser
