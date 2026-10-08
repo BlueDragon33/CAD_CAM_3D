@@ -24,7 +24,7 @@ describe('manufacturing evidence key', () => {
     const extrude = project.features.find((feature) => feature.kind === 'extrude');
     if (!extrude || extrude.kind !== 'extrude') throw new Error('Default Extrude missing.');
 
-    extrude.params.height = extrude.params.height + 1;
+    extrude.enabled = false;
 
     expect(isManufacturingEvidenceCurrent(project, before)).toBe(false);
   });
