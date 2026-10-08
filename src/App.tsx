@@ -41,6 +41,7 @@ import { defaultManagementPolicy, managementIdentity } from './management/policy
 import { newestRecoverySnapshot, restoreRecoverySnapshot, saveRecoverySnapshot, type RecoverySnapshot } from './persistence/local-recovery';
 import { planDesignInstruction, projectProposalFingerprint, type DesignProposal } from './ai/planner';
 import { createExclusiveJobGate } from './platform/exclusive-job';
+import { createLatestIntentGate } from './platform/latest-intent';
 
 const featureLabels: Record<FeatureKind, string> = {
   sketch: 'Sketch', 'datum-axis': 'Datum Axis', extrude: 'Extrude', pad: 'Pad', pocket: 'Pocket', revolve: 'Revolve', cut: 'Cut', hole: 'Hole', fillet: 'Fillet', chamfer: 'Chamfer', shell: 'Shell', 'linear-pattern': 'Linear Pattern', mirror: 'Mirror',
@@ -73,12 +74,15 @@ export default function App() {
   const project = projectHistory.present;
   // Own long-running analysis synchronously, not via the next React render.
   const manufacturingJobGate = useRef(createExclusiveJobGate());
+  const openProjectIntent = useRef(createLatestIntentGate());
   const setProject = (update: ProjectUpdate) => {
     manufacturingJobGate.current.invalidate();
+    openProjectIntent.current.invalidate();
     setProjectHistory((current) => applyProjectUpdate(current, update));
   };
   const replaceProject = (next: CadProject) => {
     manufacturingJobGate.current.invalidate();
+    openProjectIntent.current.invalidate();
     setProjectHistory(replaceProjectHistory(next));
   };
   const projectRef = useRef(project);
@@ -606,15 +610,21 @@ export default function App() {
 
   const openProject = async (file: File | undefined) => {
     if (!file) return;
+    const intent = openProjectIntent.current.begin();
+    setStatus('Opening project file…');
     try {
       const loaded = await loadProjectFile(file);
+      if (!openProjectIntent.current.isCurrent(intent)) return;
       replaceProject(loaded.project);
       setSelectedFeatureId(loaded.project.features[1]?.id ?? loaded.project.features[0]?.id ?? null);
       setTopologySelection(null); setLastExport(null); setLastStepExport(null); setLastThreeMfExport(null); setLastSplitThreeMfExport(null); setManufacturingReport(null); setRecoveryCandidate(null);
       const migration = loaded.report.migrated ? ` · migrated schema v${loaded.report.sourceSchemaVersion} → v${loaded.report.schemaVersion}` : ` · schema v${loaded.report.schemaVersion}`;
       setStatus(`Project opened${migration} · ${loaded.report.fileName}.`);
     } catch (error) {
-      setStatus(error instanceof Error ? `Project open blocked: ${error.message}` : 'Project open failed.');
+      // A slower previous read must not overwrite a newer Open/Edit decision.
+      if (openProjectIntent.current.isCurrent(intent)) {
+        setStatus(error instanceof Error ? `Project open blocked: ${error.message}` : 'Project open failed.');
+      }
     }
   };
 
@@ -991,6 +1001,7 @@ export default function App() {
   const undoProject = () => {
     if (projectHistory.past.length === 0) return;
     manufacturingJobGate.current.invalidate();
+    openProjectIntent.current.invalidate();
     setProjectHistory((current) => undoProjectHistory(current));
     setTopologySelection(null);
     setDesignProposal(null);
@@ -1000,6 +1011,7 @@ export default function App() {
   const redoProject = () => {
     if (projectHistory.future.length === 0) return;
     manufacturingJobGate.current.invalidate();
+    openProjectIntent.current.invalidate();
     setProjectHistory((current) => redoProjectHistory(current));
     setTopologySelection(null);
     setDesignProposal(null);
