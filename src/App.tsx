@@ -40,6 +40,7 @@ import { Viewport } from './components/Viewport';
 import { defaultManagementPolicy, managementIdentity } from './management/policy';
 import { newestRecoverySnapshot, restoreRecoverySnapshot, saveRecoverySnapshot, type RecoverySnapshot } from './persistence/local-recovery';
 import { planDesignInstruction, projectProposalFingerprint, type DesignProposal } from './ai/planner';
+import { createExclusiveJobGate } from './platform/exclusive-job';
 
 const featureLabels: Record<FeatureKind, string> = {
   sketch: 'Sketch', 'datum-axis': 'Datum Axis', extrude: 'Extrude', pad: 'Pad', pocket: 'Pocket', revolve: 'Revolve', cut: 'Cut', hole: 'Hole', fillet: 'Fillet', chamfer: 'Chamfer', shell: 'Shell', 'linear-pattern': 'Linear Pattern', mirror: 'Mirror',
@@ -70,10 +71,14 @@ function initialRecoveryCandidate(): RecoverySnapshot | null {
 export default function App() {
   const [projectHistory, setProjectHistory] = useState(() => createProjectHistory(createDefaultProject()));
   const project = projectHistory.present;
+  // Own long-running analysis synchronously, not via the next React render.
+  const manufacturingJobGate = useRef(createExclusiveJobGate());
   const setProject = (update: ProjectUpdate) => {
+    manufacturingJobGate.current.invalidate();
     setProjectHistory((current) => applyProjectUpdate(current, update));
   };
   const replaceProject = (next: CadProject) => {
+    manufacturingJobGate.current.invalidate();
     setProjectHistory(replaceProjectHistory(next));
   };
   const projectRef = useRef(project);
@@ -130,8 +135,9 @@ export default function App() {
   }, [project]);
 
   useEffect(() => {
-    // Manufacturing reports are derived evidence, not project truth. Any model
-    // edit invalidates the prior analysis and any split-export result.
+    // Fallback for any future project state transition not using setProject.
+    // Derived evidence is never canonical engineering intent.
+    manufacturingJobGate.current.invalidate();
     setManufacturingReport(null);
     setLastSplitThreeMfExport(null);
     setLastAlignedSplitThreeMfExport(null);
@@ -724,15 +730,20 @@ export default function App() {
   };
 
   const analyzePrint = async () => {
+    // A second event can arrive before React paints the disabled button.
+    // Keep the underlying operation single-flight until the kernel settles.
+    const ticket = manufacturingJobGate.current.tryBegin();
+    if (!ticket) return;
     const requestedInputKey = manufacturingEvidenceKey(project);
     setManufacturingBusy(true);
     setStatus('Analyzing final manufacturing geometry…');
     try {
       const report = await analyzeManufacturingReadiness(project);
-      if (report.inputKey !== requestedInputKey
+      if (!manufacturingJobGate.current.isCurrent(ticket)
+        || report.inputKey !== requestedInputKey
         || !isManufacturingEvidenceCurrent(projectRef.current, report.inputKey)) {
-        setManufacturingReport(null);
-        setStatus('Manufacturing analysis discarded because the project changed while analysis was running. Run Analyze Print again.');
+        // An edit / Open / Undo has already invalidated this job. Never clear
+        // a newer report or overwrite the user's more recent status.
         return;
       }
       setManufacturingReport(report);
@@ -743,10 +754,14 @@ export default function App() {
         + ` · ${report.exact ? 'exact' : 'lightweight'} ${report.kernelId} · ${blockers} blocker(s) · ${warnings} warning(s).`,
       );
     } catch (error) {
-      setManufacturingReport(null);
-      setStatus(error instanceof Error ? `Manufacturing analysis blocked: ${error.message}` : 'Manufacturing analysis failed.');
+      if (manufacturingJobGate.current.isCurrent(ticket)) {
+        setManufacturingReport(null);
+        setStatus(error instanceof Error ? `Manufacturing analysis blocked: ${error.message}` : 'Manufacturing analysis failed.');
+      }
     } finally {
-      setManufacturingBusy(false);
+      if (manufacturingJobGate.current.finish(ticket)) {
+        setManufacturingBusy(false);
+      }
     }
   };
 
@@ -975,6 +990,7 @@ export default function App() {
 
   const undoProject = () => {
     if (projectHistory.past.length === 0) return;
+    manufacturingJobGate.current.invalidate();
     setProjectHistory((current) => undoProjectHistory(current));
     setTopologySelection(null);
     setDesignProposal(null);
@@ -983,6 +999,7 @@ export default function App() {
 
   const redoProject = () => {
     if (projectHistory.future.length === 0) return;
+    manufacturingJobGate.current.invalidate();
     setProjectHistory((current) => redoProjectHistory(current));
     setTopologySelection(null);
     setDesignProposal(null);
