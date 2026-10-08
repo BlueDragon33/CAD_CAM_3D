@@ -30,5 +30,15 @@ jobs:
         run: |
           google-chrome --version
           chromedriver --version
+      - name: Browser metrics contract tests
+        run: node --test scripts/browser-metrics.test.mjs
       - name: Browser critical journey
         run: timeout 210s npm run smoke:browser
+      - name: Save sanitized browser performance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cad-browser-performance
+          path: reports/browser-performance.json
+          if-no-files-found: warn
+          retention-days: 14
