@@ -1,6 +1,6 @@
 # WP CAD-QA-002 — Safe Export Ownership and Stale Download Rejection
 
-Status: **ACTIVE**
+Status: **RELEASE CANDIDATE — BROWSER + AUTOMATED GATES PASS**
 Authority: Universal Constitution 1.2.0 / B4 CAD Commercial Blueprint / execution prompt
 Related: `WP-CAD-QA-001-ENGINEERING-RELIABILITY.md`
 Zone: Floors 51–60 + 91–100.
@@ -37,3 +37,15 @@ The UI presently guards each export button by a React busy flag, which updates o
 ## Remaining scope
 
 This slice does not claim measured long-run heap stability, OS-native cancellable OCCT work, print-bed physics or slicer certification. Long-running stress and memory measurements remain separate evidence requirements.
+
+## Evidence — 2026-10-08
+
+- Code HEAD `320ea4f778f706bb82ae49340a1158e9b45e4aae`.
+- CI `37809070708`: **19 Vitest suites PASS**, TypeScript PASS, exact B-Rep smoke PASS, production build PASS, Chrome critical journey PASS.
+- Constitution `37809071594`: governance + dependency sovereignty **PASS**.
+- Chrome: duplicate STEP + same-task calibration edit caused **no obsolete STEP download**; clean subsequent STEP and Aligned Split 3MF both PASS.
+- Chrome: prior STEP PASS label disappears immediately after canonical project edit. Existing Save/Open (including out-of-order reads), Undo/Redo, Recovery and Offline regression PASS.
+- Chrome navigation 5 samples P50 69.0ms/P95 123.9ms; STEP single observation 347ms; aligned split single 774ms. These are CI runner measurements, **not** guarantees for end-user machines.
+- Sanitized CI artifact `cad-browser-performance` ID `11564446290`. Does not include CAD geometry, projects or prompts.
+
+Remaining long-run memory / high-vertex stress and physical-slicer validation must retain distinct gates; this release does not claim those checks were performed.
