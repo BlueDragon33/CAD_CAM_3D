@@ -1,6 +1,6 @@
 # CAD_CAM_3D Human UX Acceptance Runbook
 
-Status: **CONTINUATION AUTHORIZED; FIT-CALIBRATION HUMAN GATE OPEN**
+Status: **AUTONOMOUS v1 COMPLETION AUTHORIZED; FIT-CALIBRATION AUTOMATED RC EVIDENCE PASS**
 Scope: current foundation branch `foundation/general-system`
 Purpose: verify premium usability and real-browser/slicer behavior that CI cannot prove.
 
@@ -133,7 +133,7 @@ Recorded result: **ACCEPT ALIGNED SPLIT 3MF** — Product Owner, 2026-10-08.
 
 This gate authorizes further work built on automatic registration geometry. It still does not authorize PR merge or Production.
 
-### 4C. Persisted registration clearance calibration — CURRENT HUMAN GATE
+### 4C. Persisted registration clearance calibration — AUTOMATED RC EVIDENCE PASS
 
 This gate covers project-persisted registration clearance and its effect on Aligned Split 3MF.
 
@@ -164,13 +164,9 @@ Required wording boundary:
 - not a certified fit;
 - not a structural/watertight/press-fit guarantee.
 
-For this targeted gate, report one of:
+Product Owner delegated future routine spot-checks to reproducible automation on 2026-10-08. The Chrome CI critical journey now downloads a real schema-v13 project file, verifies persisted 0.30 mm/side calibration, mutates the live project, opens the downloaded file again, confirms restored dimensions/calibration, confirms Open resets prior history, then exercises new Undo/Redo, Recovery, Offline, exact STEP and Aligned Split 3MF. This is **automated evidence**, not a claim that a human manually observed the fit-calibration flow.
 
-- **ACCEPT FIT CALIBRATION**
-- **ACCEPT FIT CALIBRATION WITH FINDINGS** + concrete issue(s)
-- **REJECT FIT CALIBRATION** + screenshot/error where practical
-
-This gate authorizes or blocks further work built on persisted fit calibration. It does not authorize PR merge or Production.
+Merge and Production remain conditional on the exact-revision RC/release gates.
 
 ## 5. Recovery
 
