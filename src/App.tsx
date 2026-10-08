@@ -139,10 +139,13 @@ export default function App() {
   }, [project]);
 
   useEffect(() => {
-    // Fallback for any future project state transition not using setProject.
-    // Derived evidence is never canonical engineering intent.
+    // Fallback for future project transitions not using setProject.
+    // A PASS from the previous model must never be shown for a revised model.
     manufacturingJobGate.current.invalidate();
     setManufacturingReport(null);
+    setLastExport(null);
+    setLastStepExport(null);
+    setLastThreeMfExport(null);
     setLastSplitThreeMfExport(null);
     setLastAlignedSplitThreeMfExport(null);
   }, [project]);
