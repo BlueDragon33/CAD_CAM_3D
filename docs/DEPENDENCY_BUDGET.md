@@ -45,3 +45,19 @@ Adding a development test runner does not grant any product/runtime/network auth
 - Provider SDK identifiers may not become feature/project identity.
 - A dependency may not be promoted to `EXTERNAL_ESSENTIAL` without an explicit Product Authority decision, documented capability gap, cost owner, degraded behavior and exit path.
 - Third-party license obligations remain governed by `THIRD_PARTY_NOTICES.md`; dependency sovereignty never bypasses license compliance.
+
+
+## CSP exception for exact kernel
+
+The pinned local dependency `occt-wasm@5.0.0` requires JavaScript string evaluation in its browser runtime. This was proven by the automated Chrome release journey: a CSP containing only `'wasm-unsafe-eval'` blocked exact aligned-split export with a browser CSP violation.
+
+For v1 the document CSP therefore permits `'unsafe-eval'` **only inside `script-src`** while preserving:
+
+- `default-src 'self'`;
+- `connect-src 'self'`;
+- `worker-src 'self' blob:`;
+- `object-src 'none'`;
+- no third-party script origin;
+- no remote exact-kernel provider.
+
+This is a dependency-specific compatibility exception, not permission for application code to introduce dynamic string evaluation. A future exact-kernel worker/isolation design should attempt to remove this exception and must prove exact CAD parity before replacement.
