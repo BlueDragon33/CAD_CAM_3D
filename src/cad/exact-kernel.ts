@@ -1,0 +1,1239 @@
+import * as THREE from 'three';
+import type { Mesh, OcctKernel, ShapeHandle } from 'occt-wasm';
+import type { CadProject, CutFeature, EdgeTreatmentSelection, FaceTopologyRef, FeaturePlacement, HoleFeature } from './model';
+import { rebuildProject, type RebuiltPart } from './rebuild';
+import { solveSketch } from './constraints';
+import {
+  deriveFaceTopology,
+  type ExactEdgeTopology,
+  type ExactFaceTopology,
+  type Vec3Tuple,
+} from './topology-selection';
+import {
+  FaceLineageTracker,
+  type BaseFaceSeed,
+  type TopologyEvolutionTrace,
+} from './topology-evolution';
+import {
+  isSupportedPlanarFace,
+  pointFromFaceLocal,
+  resolveEdgeTopologyRef,
+  resolveFaceTopologyRef,
+  type FaceLocalFrame,
+} from './topology-ref';
+import {
+  makeOrientedBoxTool,
+  makeOrientedCylinderTool,
+  placeCanonicalShapeOnFace,
+  throughToolLength,
+} from './oriented-tool';
+import { makeExactBaseSolid, makeExactProfileFace, makeExactProfilePrism } from './exact-profile';
+import { resolveManufacturingProfileWithRegions } from './profile-region';
+
+const HASH_UPPER_BOUND = 2_147_483_647;
+const CUT_OVERRUN_MM = 1;
+const ATTACHED_FEATURE_OVERLAP_MM = 0.05;
+
+export type ExactTopologySnapshot = {
+  faceIds: string[];
+  edgeIds: string[];
+  faceGroups: Int32Array | null;
+  faces: ExactFaceTopology[];
+  edges: ExactEdgeTopology[];
+  evolution: TopologyEvolutionTrace;
+};
+
+export type ExactKernelReport = {
+  kernelId: 'occt-wasm-v5';
+  exactBrep: true;
+  valid: boolean;
+  triangleCount: number;
+  faceCount: number;
+  edgeCount: number;
+  volumeMm3: number;
+  surfaceAreaMm2: number;
+  dimensionsMm: { width: number; depth: number; height: number };
+  filletApplied: boolean;
+  chamferApplied: boolean;
+  shellApplied: boolean;
+  evolutionStepCount: number;
+  warnings: string[];
+};
+
+export type ExactKernelSnapshot = {
+  rebuilt: RebuiltPart;
+  geometry: THREE.BufferGeometry;
+  stepText: string | null;
+  topology: ExactTopologySnapshot;
+  report: ExactKernelReport;
+};
+
+export type ExactKernelBuildOptions = { includeStep?: boolean };
+
+export type ExactSourceAxis = 'X' | 'Y' | 'Z';
+
+export type ExactClipAxisRange = {
+  startFromEnvelopeMinMm: number;
+  endFromEnvelopeMinMm: number;
+};
+
+export type ExactSplitCylinderOperation = {
+  id: string;
+  mode: 'add' | 'cut';
+  axis: ExactSourceAxis;
+  centerFromEnvelopeMinMm: Record<ExactSourceAxis, number>;
+  startFromEnvelopeMinMm: number;
+  lengthMm: number;
+  radiusMm: number;
+};
+
+export type ExactClipPieceRequest = {
+  id: string;
+  ordinal: number;
+  rangesFromEnvelopeMinMm: {
+    X: ExactClipAxisRange;
+    Y: ExactClipAxisRange;
+    Z: ExactClipAxisRange;
+  };
+  postOperations?: ExactSplitCylinderOperation[];
+};
+
+export type ExactMaterialCorridorProbeRequest = {
+  id: string;
+  axis: ExactSourceAxis;
+  centerFromEnvelopeMinMm: Record<ExactSourceAxis, number>;
+  startFromEnvelopeMinMm: number;
+  lengthMm: number;
+  radiusMm: number;
+};
+
+export type ExactMaterialCorridorProbeResult = {
+  id: string;
+  expectedVolumeMm3: number;
+  materialVolumeMm3: number;
+  volumeDeltaMm3: number;
+  fullMaterial: boolean;
+};
+
+export type ExactClipBuildOptions = {
+  requireVolumeConservation?: boolean;
+};
+
+export type ExactClippedPieceSnapshot = {
+  id: string;
+  ordinal: number;
+  geometry: THREE.BufferGeometry | null;
+  empty: boolean;
+  brepValid: boolean;
+  solidCount: number;
+  manufacturingReady: boolean;
+  volumeMm3: number;
+  dimensionsMm: { width: number; depth: number; height: number };
+};
+
+export type ExactClipSnapshot = {
+  kernelId: 'occt-wasm-v5';
+  sourceVolumeMm3: number;
+  generatedVolumeMm3: number;
+  volumeDeltaMm3: number;
+  volumeConserved: boolean;
+  valid: boolean;
+  pieces: ExactClippedPieceSnapshot[];
+  warnings: string[];
+};
+
+type OcctModule = typeof import('occt-wasm');
+
+let modulePromise: Promise<OcctModule> | null = null;
+let kernelPromise: Promise<OcctKernel> | null = null;
+let operationTail: Promise<void> = Promise.resolve();
+
+async function getKernel() {
+  modulePromise ??= import('occt-wasm');
+  const module = await modulePromise;
+  kernelPromise ??= module.OcctKernel.init();
+  return kernelPromise;
+}
+
+function mapOcctMeshToThree(mesh: Mesh) {
+  const positions = new Float32Array(mesh.positions.length);
+  const normals = new Float32Array(mesh.normals.length);
+  for (let i = 0; i < mesh.positions.length; i += 3) {
+    positions[i] = mesh.positions[i];
+    positions[i + 1] = mesh.positions[i + 2];
+    positions[i + 2] = mesh.positions[i + 1];
+    normals[i] = mesh.normals[i];
+    normals[i + 1] = mesh.normals[i + 2];
+    normals[i + 2] = mesh.normals[i + 1];
+  }
+  const indices = new Uint32Array(mesh.indices.length);
+  for (let i = 0; i < mesh.indices.length; i += 3) {
+    indices[i] = mesh.indices[i];
+    indices[i + 1] = mesh.indices[i + 2];
+    indices[i + 2] = mesh.indices[i + 1];
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
+  geometry.setIndex(new THREE.BufferAttribute(indices, 1));
+  geometry.computeBoundingBox();
+  geometry.computeBoundingSphere();
+  return geometry;
+}
+
+function singleSolid(kernel: OcctKernel, shape: ShapeHandle) {
+  if (kernel.isSolid(shape)) return shape;
+  const solids = kernel.getSubShapes(shape, 'solid');
+  if (solids.length !== 1) {
+    for (const solid of solids) kernel.release(solid);
+    throw new Error(`Exact B-Rep rebuild expected one solid but produced ${solids.length}.`);
+  }
+  return solids[0];
+}
+
+function currentFaceHashes(kernel: OcctKernel, shape: ShapeHandle) {
+  return kernel.subShapeHashes(shape, 'face', HASH_UPPER_BOUND);
+}
+
+function classifyBaseFaces(kernel: OcctKernel, shape: ShapeHandle, rebuilt: RebuiltPart): BaseFaceSeed[] {
+  const handles = kernel.getSubShapes(shape, 'face');
+  const result: BaseFaceSeed[] = [];
+  const tolerance = Math.max(rebuilt.width, rebuilt.depth, rebuilt.height, 1) * 1e-6;
+  for (const face of handles) {
+    try {
+      const box = kernel.getBoundingBox(face, false);
+      const cx = (box.xmin + box.xmax) / 2;
+      const cy = (box.ymin + box.ymax) / 2;
+      const cz = (box.zmin + box.zmax) / 2;
+      const ex = box.xmax - box.xmin;
+      const ey = box.ymax - box.ymin;
+      const ez = box.zmax - box.zmin;
+      let role = 'base-face';
+      if (ez <= tolerance) role = Math.abs(cz - rebuilt.height) <= tolerance ? 'top' : 'bottom';
+      else if (rebuilt.manufacturingProfile?.kind === 'rectangle' && ex <= tolerance) role = cx >= 0 ? 'side:+x' : 'side:-x';
+      else if (rebuilt.manufacturingProfile?.kind === 'rectangle' && ey <= tolerance) role = cy >= 0 ? 'side:+depth' : 'side:-depth';
+      result.push({ hash: kernel.hashCode(face, HASH_UPPER_BOUND), role });
+    } finally {
+      kernel.release(face);
+    }
+  }
+  return result;
+}
+
+function findOuterVerticalEdges(kernel: OcctKernel, shape: ShapeHandle, width: number, depth: number) {
+  const candidates = kernel.getSubShapes(shape, 'edge');
+  const selected: ShapeHandle[] = [];
+  const tolerance = Math.max(1e-5, Math.min(width, depth) * 1e-6);
+  for (const edge of candidates) {
+    try {
+      if (kernel.curveType(edge) !== 'line') {
+        kernel.release(edge);
+        continue;
+      }
+      const { first, last } = kernel.curveParameters(edge);
+      const a = kernel.curvePointAtParam(edge, first);
+      const b = kernel.curvePointAtParam(edge, last);
+      const vertical = Math.abs(a.x - b.x) <= tolerance && Math.abs(a.y - b.y) <= tolerance && Math.abs(a.z - b.z) > tolerance;
+      const outerX = Math.abs(Math.abs(a.x) - width / 2) <= tolerance;
+      const outerY = Math.abs(Math.abs(a.y) - depth / 2) <= tolerance;
+      if (vertical && outerX && outerY) selected.push(edge);
+      else kernel.release(edge);
+    } catch {
+      kernel.release(edge);
+    }
+  }
+  return selected;
+}
+
+function findEdgeHandleByHash(kernel: OcctKernel, shape: ShapeHandle, targetHash: number) {
+  const handles = kernel.getSubShapes(shape, 'edge');
+  let selected: ShapeHandle | null = null;
+  for (const edge of handles) {
+    let keep = false;
+    try {
+      keep = selected === null && kernel.hashCode(edge, HASH_UPPER_BOUND) === targetHash;
+      if (keep) selected = edge;
+    } finally {
+      if (!keep) kernel.release(edge);
+    }
+  }
+  return selected;
+}
+
+function findFaceHandleByHash(kernel: OcctKernel, shape: ShapeHandle, targetHash: number) {
+  const handles = kernel.getSubShapes(shape, 'face');
+  let selected: ShapeHandle | null = null;
+  for (const face of handles) {
+    let keep = false;
+    try {
+      keep = selected === null && kernel.hashCode(face, HASH_UPPER_BOUND) === targetHash;
+      if (keep) selected = face;
+    } finally {
+      if (!keep) kernel.release(face);
+    }
+  }
+  return selected;
+}
+
+function currentExactFaces(kernel: OcctKernel, shape: ShapeHandle, tracker: FaceLineageTracker): ExactFaceTopology[] {
+  const mesh = kernel.meshShape(shape, { linearDeflection: 0.08, angularDeflection: 0.35 });
+  const geometry = mapOcctMeshToThree(mesh);
+  try {
+    const faces = deriveFaceTopology(geometry, mesh.faceGroups ? new Int32Array(mesh.faceGroups) : null);
+    const evolution = tracker.snapshot();
+    for (const face of faces) face.lineageIds = [...(evolution.faceLineageByHash[String(face.hash)] ?? [])];
+    return faces;
+  } finally {
+    geometry.dispose();
+  }
+}
+
+type ResolvedFacePlacement = { point: Vec3Tuple; frame: FaceLocalFrame };
+
+function currentShapeDimensions(kernel: OcctKernel, shape: ShapeHandle) {
+  const box = kernel.getBoundingBox(shape, false);
+  return {
+    width: Math.max(0.1, box.xmax - box.xmin),
+    depth: Math.max(0.1, box.ymax - box.ymin),
+    height: Math.max(0.1, box.zmax - box.zmin),
+  };
+}
+
+function resolveAttachedSketchInput(
+  kernel: OcctKernel,
+  shape: ShapeHandle,
+  tracker: FaceLineageTracker,
+  project: CadProject,
+  rebuilt: RebuiltPart,
+  featureName: string,
+  sketchId: string,
+  warnings: string[],
+) {
+  const source = project.features.find((feature) => feature.id === sketchId);
+  if (!source || !source.enabled || source.kind !== 'sketch' || source.params.plane.kind !== 'face') {
+    warnings.push(`${featureName}: attached source Sketch is missing, disabled, or no longer face-bound.`);
+    return null;
+  }
+  if (!isSupportedPlanarFace(source.params.plane.ref)) {
+    warnings.push(`${featureName}: attached source Sketch no longer references a supported planar lineage.`);
+    return null;
+  }
+  if (!source.params.entities.some((entity) => !entity.construction)) {
+    warnings.push(`${featureName}: attached source Sketch has no promoted feature profile.`);
+    return null;
+  }
+
+  const solvedSource = solveSketch(project, source);
+  const profileResolution = resolveManufacturingProfileWithRegions(
+    solvedSource.entities,
+    solvedSource.width,
+    solvedSource.depth,
+  );
+  if (!profileResolution.promoted || !profileResolution.profile) {
+    warnings.push(`${featureName}: attached source profile is invalid or ambiguous.`);
+    return null;
+  }
+
+  const faces = currentExactFaces(kernel, shape, tracker);
+  const spanMm = Math.max(rebuilt.width, rebuilt.depth, rebuilt.height, 1);
+  const resolution = resolveFaceTopologyRef(source.params.plane.ref, faces, spanMm);
+  if (!resolution) {
+    warnings.push(`${featureName}: attached sketch plane could not be resolved safely against current topology.`);
+    return null;
+  }
+  if (resolution.confidence === 'medium') {
+    warnings.push(`${featureName}: attached sketch plane resolved with medium confidence after upstream rebuild.`);
+  }
+
+  return {
+    profile: profileResolution.profile,
+    frame: resolution.frame,
+    origin: pointFromFaceLocal(
+      resolution.frame,
+      source.params.plane.originUMm,
+      source.params.plane.originVMm,
+    ),
+  };
+}
+
+function resolveFaceBoundPlacement(
+  kernel: OcctKernel,
+  shape: ShapeHandle,
+  tracker: FaceLineageTracker,
+  rebuilt: RebuiltPart,
+  featureName: string,
+  placement: Extract<FeaturePlacement, { mode: 'face' }>,
+  warnings: string[],
+): ResolvedFacePlacement | null {
+  if (!isSupportedPlanarFace(placement.ref)) {
+    warnings.push(`${featureName}: face-bound placement currently accepts only planar descendants of the six base-extrusion faces.`);
+    return null;
+  }
+  const faces = currentExactFaces(kernel, shape, tracker);
+  const spanMm = Math.max(rebuilt.width, rebuilt.depth, rebuilt.height, 1);
+  const resolution = resolveFaceTopologyRef(placement.ref, faces, spanMm);
+  if (!resolution) {
+    warnings.push(`${featureName}: face-bound placement skipped because the persisted face reference could not be resolved safely.`);
+    return null;
+  }
+  if (resolution.confidence === 'medium') warnings.push(`${featureName}: persisted face resolved with medium confidence after rebuild.`);
+  return {
+    point: pointFromFaceLocal(resolution.frame, placement.uMm, placement.vMm),
+    frame: resolution.frame,
+  };
+}
+
+function appPoint(point: { x: number; y: number; z: number }): Vec3Tuple {
+  return [point.x, point.z, point.y];
+}
+
+function decodeEdgeToFaceMap(flat: number[]) {
+  const map = new Map<number, number[]>();
+  let cursor = 0;
+  while (cursor < flat.length) {
+    if (cursor + 1 >= flat.length) throw new Error('edgeToFaceMap ended before adjacent-face count.');
+    const edgeHash = flat[cursor++];
+    const count = flat[cursor++];
+    if (!Number.isInteger(count) || count < 0 || cursor + count > flat.length) throw new Error(`edgeToFaceMap contains invalid adjacent-face count ${String(count)}.`);
+    map.set(edgeHash, flat.slice(cursor, cursor + count));
+    cursor += count;
+  }
+  return map;
+}
+
+function sampleExactEdges(kernel: OcctKernel, shape: ShapeHandle, spanMm: number, evolution: TopologyEvolutionTrace, warnings: string[]) {
+  const handles = kernel.getSubShapes(shape, 'edge');
+  const edges: ExactEdgeTopology[] = [];
+  let adjacency = new Map<number, number[]>();
+  try {
+    adjacency = decodeEdgeToFaceMap(kernel.edgeToFaceMap(shape, HASH_UPPER_BOUND));
+  } catch (error) {
+    warnings.push(error instanceof Error ? `Exact edge adjacency unavailable: ${error.message}` : 'Exact edge adjacency unavailable.');
+  }
+  for (const edge of handles) {
+    try {
+      const hash = kernel.hashCode(edge, HASH_UPPER_BOUND);
+      const curveKind = kernel.curveType(edge);
+      const lengthMm = kernel.curveLength(edge);
+      const { first, last } = kernel.curveParameters(edge);
+      if (!Number.isFinite(first) || !Number.isFinite(last) || !Number.isFinite(lengthMm) || lengthMm <= 1e-9) continue;
+      const targetSegmentMm = Math.max(0.6, spanMm / 45);
+      const sampleCount = curveKind === 'line' ? 2 : Math.min(96, Math.max(12, Math.ceil(lengthMm / targetSegmentMm) + 1));
+      const points = new Float32Array(sampleCount * 3);
+      for (let sample = 0; sample < sampleCount; sample += 1) {
+        const parameter = first + (last - first) * (sampleCount === 1 ? 0 : sample / (sampleCount - 1));
+        const point = appPoint(kernel.curvePointAtParam(edge, parameter));
+        const offset = sample * 3;
+        points[offset] = point[0]; points[offset + 1] = point[1]; points[offset + 2] = point[2];
+      }
+      const midpoint = appPoint(kernel.curvePointAtParam(edge, first + (last - first) / 2));
+      const adjacentFaceHashes = adjacency.get(hash) ?? [];
+      const adjacentFaceLineageIds = [...new Set(adjacentFaceHashes.flatMap((faceHash) => evolution.faceLineageByHash[String(faceHash)] ?? []))].sort();
+      edges.push({ kind: 'edge', runtimeId: `edge:${hash}`, hash, curveKind, lengthMm, midpoint, points, adjacentFaceHashes: [...adjacentFaceHashes], adjacentFaceLineageIds });
+    } catch (error) {
+      warnings.push(error instanceof Error ? `An exact edge could not be sampled: ${error.message}` : 'An exact edge could not be sampled.');
+    } finally {
+      kernel.release(edge);
+    }
+  }
+  return edges;
+}
+
+function resolveEdgeTreatmentHandles(
+  kernel: OcctKernel,
+  solid: ShapeHandle,
+  selection: EdgeTreatmentSelection,
+  rebuilt: RebuiltPart,
+  tracker: FaceLineageTracker,
+  featureName: string,
+  warnings: string[],
+) {
+  if (selection.mode === 'preset') {
+    if (rebuilt.manufacturingProfile?.kind !== 'rectangle') {
+      warnings.push(`${featureName}: the four-outer-vertical-edge preset is rectangle-specific; select exact edges explicitly for a promoted sketch profile.`);
+      return [];
+    }
+    const edges = findOuterVerticalEdges(kernel, solid, rebuilt.width, rebuilt.depth);
+    if (edges.length !== 4) {
+      for (const edge of edges) kernel.release(edge);
+      warnings.push(`${featureName}: exact edge treatment skipped; expected 4 outer vertical edges but found ${edges.length}.`);
+      return [];
+    }
+    return edges;
+  }
+
+  const spanMm = Math.max(rebuilt.width, rebuilt.depth, rebuilt.height, 1);
+  const candidates = sampleExactEdges(kernel, solid, spanMm, tracker.snapshot(), warnings);
+  const resolution = resolveEdgeTopologyRef(selection.ref, candidates, spanMm);
+  if (!resolution) {
+    warnings.push(`${featureName}: exact edge treatment skipped because the persisted edge reference could not be resolved safely.`);
+    return [];
+  }
+  const handle = findEdgeHandleByHash(kernel, solid, resolution.edge.hash);
+  if (!handle) {
+    warnings.push(`${featureName}: exact edge treatment skipped because the resolved edge disappeared before the operation.`);
+    return [];
+  }
+  if (resolution.confidence === 'medium') warnings.push(`${featureName}: persisted edge resolved with medium confidence after rebuild.`);
+  return [handle];
+}
+
+function resolveShellOpeningHandles(
+  kernel: OcctKernel,
+  solid: ShapeHandle,
+  openingRefs: FaceTopologyRef[],
+  rebuilt: RebuiltPart,
+  tracker: FaceLineageTracker,
+  featureName: string,
+  warnings: string[],
+) {
+  const candidates = currentExactFaces(kernel, solid, tracker);
+  const spanMm = Math.max(rebuilt.width, rebuilt.depth, rebuilt.height, 1);
+  const hashes: number[] = [];
+
+  for (const ref of openingRefs) {
+    const resolution = resolveFaceTopologyRef(ref, candidates, spanMm);
+    if (!resolution) {
+      warnings.push(`${featureName}: Shell opening face could not be resolved safely after rebuild.`);
+      return [];
+    }
+    if (resolution.confidence === 'medium') {
+      warnings.push(`${featureName}: Shell opening face resolved with medium confidence after upstream rebuild.`);
+    }
+    hashes.push(resolution.face.hash);
+  }
+
+  const handles: ShapeHandle[] = [];
+  for (const hash of [...new Set(hashes)]) {
+    const handle = findFaceHandleByHash(kernel, solid, hash);
+    if (!handle) {
+      for (const existing of handles) kernel.release(existing);
+      warnings.push(`${featureName}: resolved Shell opening disappeared before exact execution.`);
+      return [];
+    }
+    handles.push(handle);
+  }
+  return handles;
+}
+
+function buildExactShape(kernel: OcctKernel, project: CadProject, rebuilt: RebuiltPart) {
+  const warnings: string[] = [];
+  let filletApplied = false;
+  let chamferApplied = false;
+  let shellApplied = false;
+  let shape = makeExactBaseSolid(kernel, rebuilt);
+
+  const baseFeatureId = project.features.find((feature) => feature.enabled && feature.kind === 'extrude')?.id ?? 'base-extrude';
+  const tracker = new FaceLineageTracker(HASH_UPPER_BOUND, baseFeatureId, classifyBaseFaces(kernel, shape, rebuilt));
+
+  for (const feature of rebuilt.operationSequence) {
+    if (feature.kind === 'pad' || feature.kind === 'pocket') {
+      const input = resolveAttachedSketchInput(
+        kernel,
+        shape,
+        tracker,
+        project,
+        rebuilt,
+        feature.name,
+        feature.params.sketchId,
+        warnings,
+      );
+      if (!input) continue;
+
+      let tool: ShapeHandle;
+      if (feature.kind === 'pad') {
+        const distance = Math.max(0.1, feature.params.distanceMm);
+        tool = makeExactProfilePrism(kernel, input.profile, distance + ATTACHED_FEATURE_OVERLAP_MM);
+        tool = kernel.translate(tool, 0, 0, -ATTACHED_FEATURE_OVERLAP_MM);
+      } else {
+        const distance = feature.params.extent === 'through-all'
+          ? throughToolLength(currentShapeDimensions(kernel, shape))
+          : Math.max(0.1, feature.params.distanceMm);
+        tool = makeExactProfilePrism(kernel, input.profile, distance + ATTACHED_FEATURE_OVERLAP_MM);
+        tool = kernel.translate(tool, 0, 0, -distance);
+      }
+      tool = placeCanonicalShapeOnFace(kernel, tool, input.origin, input.frame);
+
+      const before = currentFaceHashes(kernel, shape);
+      try {
+        const evolution = feature.kind === 'pad'
+          ? kernel.fuseWithHistory(shape, tool, before, HASH_UPPER_BOUND)
+          : kernel.cutWithHistory(shape, tool, before, HASH_UPPER_BOUND);
+        shape = evolution.result;
+        const after = currentFaceHashes(kernel, shape);
+        tracker.record(feature.id, feature.kind, before, after, evolution);
+      } catch (error) {
+        warnings.push(error instanceof Error
+          ? `${feature.name}: exact ${feature.kind} failed: ${error.message}`
+          : `${feature.name}: exact ${feature.kind} failed.`);
+      }
+      continue;
+    }
+
+    if (feature.kind === 'revolve') {
+      const input = resolveAttachedSketchInput(
+        kernel,
+        shape,
+        tracker,
+        project,
+        rebuilt,
+        feature.name,
+        feature.params.sketchId,
+        warnings,
+      );
+      if (!input) continue;
+      if (input.profile.kind === 'region') {
+        throw new Error(`${feature.name}: exact Revolve foundation does not yet accept inner-hole regions.`);
+      }
+      const datum = project.features.find((candidate) => candidate.id === feature.params.axisId);
+      if (!datum || datum.kind !== 'datum-axis' || datum.params.source.kind !== 'sketch-local' || datum.params.source.sketchId !== feature.params.sketchId) {
+        throw new Error(`${feature.name}: referenced Datum Axis is missing or incompatible.`);
+      }
+
+      const face = makeExactProfileFace(kernel, input.profile);
+      const offset = datum.params.source.offsetMm;
+      const axis = datum.params.source.axis === 'u'
+        ? { point: { x: 0, y: offset, z: 0 }, direction: { x: 1, y: 0, z: 0 } }
+        : { point: { x: offset, y: 0, z: 0 }, direction: { x: 0, y: 1, z: 0 } };
+      let tool = kernel.revolve(face, axis, feature.params.angleDeg * Math.PI / 180);
+      tool = placeCanonicalShapeOnFace(kernel, tool, input.origin, input.frame);
+
+      const before = currentFaceHashes(kernel, shape);
+      try {
+        const evolution = kernel.fuseWithHistory(shape, tool, before, HASH_UPPER_BOUND);
+        shape = evolution.result;
+        if (!kernel.isValid(shape)) throw new Error('OpenCascade produced an invalid Revolve fusion.');
+        const after = currentFaceHashes(kernel, shape);
+        tracker.record(feature.id, 'revolve', before, after, evolution);
+      } catch (error) {
+        throw new Error(error instanceof Error
+          ? `${feature.name}: exact Revolve failed: ${error.message}`
+          : `${feature.name}: exact Revolve failed.`);
+      }
+      continue;
+    }
+
+    if (feature.kind === 'shell') {
+      const solid = singleSolid(kernel, shape);
+      const openings = resolveShellOpeningHandles(
+        kernel,
+        solid,
+        feature.params.openings,
+        rebuilt,
+        tracker,
+        feature.name,
+        warnings,
+      );
+      if (openings.length === 0) {
+        throw new Error(`${feature.name}: Shell execution blocked because one or more opening faces could not be resolved safely.`);
+      }
+
+      const before = currentFaceHashes(kernel, solid);
+      const dims = currentShapeDimensions(kernel, solid);
+      const tolerance = Math.max(1e-6, Math.max(dims.width, dims.depth, dims.height) * 1e-8);
+      try {
+        const evolution = kernel.shellWithHistory(
+          solid,
+          openings,
+          Math.max(0.1, feature.params.thicknessMm),
+          tolerance,
+          before,
+          HASH_UPPER_BOUND,
+        );
+        shape = evolution.result;
+        if (!kernel.isValid(shape)) throw new Error('OpenCascade produced an invalid Shell body.');
+        const after = currentFaceHashes(kernel, shape);
+        tracker.record(feature.id, 'shell', before, after, evolution);
+        shellApplied = true;
+      } catch (error) {
+        throw new Error(error instanceof Error
+          ? `${feature.name}: exact Shell failed: ${error.message}`
+          : `${feature.name}: exact Shell failed.`);
+      } finally {
+        for (const face of openings) kernel.release(face);
+      }
+      continue;
+    }
+
+    if (feature.kind === 'hole') {
+      let tool: ShapeHandle;
+      if (feature.params.placement.mode === 'face') {
+        const placement = resolveFaceBoundPlacement(kernel, shape, tracker, rebuilt, feature.name, feature.params.placement, warnings);
+        if (!placement) continue;
+        tool = makeOrientedCylinderTool(kernel, feature.params.diameter / 2, placement.point, placement.frame, rebuilt);
+      } else {
+        tool = kernel.makeCylinder(feature.params.diameter / 2, rebuilt.height + CUT_OVERRUN_MM * 2);
+        tool = kernel.translate(tool, feature.params.x, feature.params.z, -CUT_OVERRUN_MM);
+      }
+      const before = currentFaceHashes(kernel, shape);
+      const evolution = kernel.cutWithHistory(shape, tool, before, HASH_UPPER_BOUND);
+      shape = evolution.result;
+      const after = currentFaceHashes(kernel, shape);
+      tracker.record(feature.id, 'hole', before, after, evolution);
+      continue;
+    }
+
+    if (feature.kind === 'cut') {
+      let tool: ShapeHandle;
+      if (feature.params.placement.mode === 'face') {
+        const placement = resolveFaceBoundPlacement(kernel, shape, tracker, rebuilt, feature.name, feature.params.placement, warnings);
+        if (!placement) continue;
+        tool = makeOrientedBoxTool(kernel, feature.params.width, feature.params.depth, placement.point, placement.frame, rebuilt);
+      } else {
+        tool = kernel.makeBox(feature.params.width, feature.params.depth, rebuilt.height + CUT_OVERRUN_MM * 2);
+        tool = kernel.translate(tool, feature.params.x - feature.params.width / 2, feature.params.z - feature.params.depth / 2, -CUT_OVERRUN_MM);
+      }
+      const before = currentFaceHashes(kernel, shape);
+      const evolution = kernel.cutWithHistory(shape, tool, before, HASH_UPPER_BOUND);
+      shape = evolution.result;
+      const after = currentFaceHashes(kernel, shape);
+      tracker.record(feature.id, 'cut', before, after, evolution);
+      continue;
+    }
+
+    if (feature.kind === 'linear-pattern') {
+      const source = project.features.find((candidate): candidate is HoleFeature | CutFeature => (
+        candidate.enabled
+        && candidate.id === feature.params.sourceFeatureId
+        && (candidate.kind === 'hole' || candidate.kind === 'cut')
+      ));
+      if (!source) {
+        throw new Error(`${feature.name}: Linear Pattern source Hole/Cut is unavailable during exact rebuild.`);
+      }
+
+      for (let instance = 1; instance < feature.params.count; instance += 1) {
+        const shift = feature.params.spacingMm * instance;
+        let tool: ShapeHandle;
+
+        if (source.kind === 'hole') {
+          if (source.params.placement.mode === 'face') {
+            const placement = {
+              ...source.params.placement,
+              uMm: source.params.placement.uMm + (feature.params.axis === 'u' ? shift : 0),
+              vMm: source.params.placement.vMm + (feature.params.axis === 'v' ? shift : 0),
+            };
+            const resolved = resolveFaceBoundPlacement(
+              kernel, shape, tracker, rebuilt, feature.name, placement, warnings,
+            );
+            if (!resolved) {
+              throw new Error(`${feature.name}: pattern instance ${instance + 1} could not resolve the source face safely.`);
+            }
+            tool = makeOrientedCylinderTool(
+              kernel, source.params.diameter / 2, resolved.point, resolved.frame, rebuilt,
+            );
+          } else {
+            tool = kernel.makeCylinder(source.params.diameter / 2, rebuilt.height + CUT_OVERRUN_MM * 2);
+            tool = kernel.translate(
+              tool,
+              source.params.x + (feature.params.axis === 'x' ? shift : 0),
+              source.params.z + (feature.params.axis === 'z' ? shift : 0),
+              -CUT_OVERRUN_MM,
+            );
+          }
+        } else if (source.params.placement.mode === 'face') {
+          const placement = {
+            ...source.params.placement,
+            uMm: source.params.placement.uMm + (feature.params.axis === 'u' ? shift : 0),
+            vMm: source.params.placement.vMm + (feature.params.axis === 'v' ? shift : 0),
+          };
+          const resolved = resolveFaceBoundPlacement(
+            kernel, shape, tracker, rebuilt, feature.name, placement, warnings,
+          );
+          if (!resolved) {
+            throw new Error(`${feature.name}: pattern instance ${instance + 1} could not resolve the source face safely.`);
+          }
+          tool = makeOrientedBoxTool(
+            kernel, source.params.width, source.params.depth, resolved.point, resolved.frame, rebuilt,
+          );
+        } else {
+          tool = kernel.makeBox(source.params.width, source.params.depth, rebuilt.height + CUT_OVERRUN_MM * 2);
+          tool = kernel.translate(
+            tool,
+            source.params.x - source.params.width / 2 + (feature.params.axis === 'x' ? shift : 0),
+            source.params.z - source.params.depth / 2 + (feature.params.axis === 'z' ? shift : 0),
+            -CUT_OVERRUN_MM,
+          );
+        }
+
+        const before = currentFaceHashes(kernel, shape);
+        try {
+          const evolution = kernel.cutWithHistory(shape, tool, before, HASH_UPPER_BOUND);
+          shape = evolution.result;
+          if (!kernel.isValid(shape)) {
+            throw new Error(`instance ${instance + 1} produced an invalid exact body.`);
+          }
+          const after = currentFaceHashes(kernel, shape);
+          tracker.record(
+            `${feature.id}:instance:${instance + 1}`,
+            'linear-pattern',
+            before,
+            after,
+            evolution,
+          );
+        } catch (error) {
+          throw new Error(error instanceof Error
+            ? `${feature.name}: instance ${instance + 1} failed: ${error.message}`
+            : `${feature.name}: instance ${instance + 1} failed.`);
+        }
+      }
+      continue;
+    }
+
+    if (feature.kind === 'mirror') {
+      const source = project.features.find((candidate): candidate is HoleFeature | CutFeature => (
+        candidate.enabled && candidate.id === feature.params.sourceFeatureId
+        && (candidate.kind === 'hole' || candidate.kind === 'cut')
+      ));
+      if (!source) throw new Error(`${feature.name}: Mirror source Hole/Cut is unavailable during exact rebuild.`);
+
+      const faceBound = source.params.placement.mode === 'face';
+      if (faceBound !== (feature.params.plane.kind === 'face-local')) {
+        throw new Error(`${feature.name}: mirror plane family does not match source placement.`);
+      }
+
+      const reflect = (value: number) => feature.params.plane.offsetMm * 2 - value;
+      let tool: ShapeHandle;
+
+      if (source.params.placement.mode === 'face') {
+        const plane = feature.params.plane;
+        if (plane.kind !== 'face-local') throw new Error(`${feature.name}: expected face-local plane.`);
+        const placement = {
+          ...source.params.placement,
+          uMm: plane.axis === 'u' ? reflect(source.params.placement.uMm) : source.params.placement.uMm,
+          vMm: plane.axis === 'v' ? reflect(source.params.placement.vMm) : source.params.placement.vMm,
+        };
+        const resolved = resolveFaceBoundPlacement(kernel, shape, tracker, rebuilt, feature.name, placement, warnings);
+        if (!resolved) throw new Error(`${feature.name}: mirrored source face could not be resolved safely.`);
+        tool = source.kind === 'hole'
+          ? makeOrientedCylinderTool(kernel, source.params.diameter / 2, resolved.point, resolved.frame, rebuilt)
+          : makeOrientedBoxTool(kernel, source.params.width, source.params.depth, resolved.point, resolved.frame, rebuilt);
+      } else {
+        const plane = feature.params.plane;
+        if (plane.kind !== 'global') throw new Error(`${feature.name}: expected global plane.`);
+        const x = plane.axis === 'x' ? reflect(source.params.x) : source.params.x;
+        const z = plane.axis === 'z' ? reflect(source.params.z) : source.params.z;
+        if (source.kind === 'hole') {
+          tool = kernel.makeCylinder(source.params.diameter / 2, rebuilt.height + CUT_OVERRUN_MM * 2);
+          tool = kernel.translate(tool, x, z, -CUT_OVERRUN_MM);
+        } else {
+          tool = kernel.makeBox(source.params.width, source.params.depth, rebuilt.height + CUT_OVERRUN_MM * 2);
+          tool = kernel.translate(tool, x - source.params.width / 2, z - source.params.depth / 2, -CUT_OVERRUN_MM);
+        }
+      }
+
+      const before = currentFaceHashes(kernel, shape);
+      const evolution = kernel.cutWithHistory(shape, tool, before, HASH_UPPER_BOUND);
+      shape = evolution.result;
+      if (!kernel.isValid(shape)) throw new Error(`${feature.name}: mirrored instance produced an invalid exact body.`);
+      const after = currentFaceHashes(kernel, shape);
+      tracker.record(`${feature.id}:mirror`, 'mirror', before, after, evolution);
+      continue;
+    }
+
+    const size = feature.kind === 'fillet' ? feature.params.radius : feature.params.distance;
+    const amount = Math.max(0, Math.min(size, rebuilt.width / 2, rebuilt.depth / 2, rebuilt.height / 2));
+    if (amount <= 0) continue;
+
+    let edges: ShapeHandle[] = [];
+    try {
+      const solid = singleSolid(kernel, shape);
+      edges = resolveEdgeTreatmentHandles(kernel, solid, feature.params.selection, rebuilt, tracker, feature.name, warnings);
+      if (edges.length === 0) continue;
+      const before = currentFaceHashes(kernel, solid);
+      const evolution = feature.kind === 'fillet'
+        ? kernel.filletWithHistory(solid, edges, amount, before, HASH_UPPER_BOUND)
+        : kernel.chamferWithHistory(solid, edges, amount, before, HASH_UPPER_BOUND);
+      shape = evolution.result;
+      const after = currentFaceHashes(kernel, shape);
+      tracker.record(feature.id, feature.kind, before, after, evolution);
+      if (feature.kind === 'fillet') filletApplied = true;
+      else chamferApplied = true;
+    } catch (error) {
+      warnings.push(error instanceof Error ? `${feature.name}: exact ${feature.kind} skipped: ${error.message}` : `${feature.name}: exact ${feature.kind} skipped because OCCT rejected the selected edges.`);
+    } finally {
+      for (const edge of edges) kernel.release(edge);
+    }
+  }
+
+  if (!kernel.isValid(shape)) warnings.push('OCCT reports that the rebuilt B-Rep is not fully valid.');
+  return { shape, warnings, filletApplied, chamferApplied, shellApplied, evolution: tracker.snapshot() };
+}
+
+async function buildSnapshotUnsafe(project: CadProject, options: ExactKernelBuildOptions): Promise<ExactKernelSnapshot> {
+  const rebuilt = rebuildProject(project);
+  if (!rebuilt.hasSolid) throw new Error('A valid rebuilt solid is required before exact-kernel processing.');
+  const kernel = await getKernel();
+  kernel.releaseAll();
+  try {
+    const { shape, warnings, filletApplied, chamferApplied, shellApplied, evolution } = buildExactShape(kernel, project, rebuilt);
+    const mesh = kernel.meshShape(shape, { linearDeflection: 0.08, angularDeflection: 0.35 });
+    const geometry = mapOcctMeshToThree(mesh);
+    const faceGroups = mesh.faceGroups ? new Int32Array(mesh.faceGroups) : null;
+    const faces = deriveFaceTopology(geometry, faceGroups);
+    for (const face of faces) face.lineageIds = [...(evolution.faceLineageByHash[String(face.hash)] ?? [])];
+    const spanMm = Math.max(rebuilt.width, rebuilt.depth, rebuilt.height, 1);
+    const edges = sampleExactEdges(kernel, shape, spanMm, evolution, warnings);
+    const stepText = options.includeStep === false ? null : kernel.exportStep(shape);
+    const bbox = kernel.getBoundingBox(shape, false);
+    const faceHashes = currentFaceHashes(kernel, shape);
+    const edgeHashes = kernel.subShapeHashes(shape, 'edge', HASH_UPPER_BOUND);
+    const valid = kernel.isValid(shape);
+    if (faces.length !== faceHashes.length) warnings.push(`Exact picking mapped ${faces.length} of ${faceHashes.length} B-Rep faces from tessellation groups.`);
+    if (edges.length !== edgeHashes.length) warnings.push(`Exact picking sampled ${edges.length} of ${edgeHashes.length} B-Rep edges.`);
+    const unanchoredFaces = faces.filter((face) => face.lineageIds.length === 0).length;
+    if (unanchoredFaces > 0) warnings.push(`${unanchoredFaces} exact face(s) have no semantic lineage anchor.`);
+    return {
+      rebuilt, geometry, stepText,
+      topology: { faceIds: faces.map((face) => face.runtimeId), edgeIds: edges.map((edge) => edge.runtimeId), faceGroups, faces, edges, evolution },
+      report: {
+        kernelId: 'occt-wasm-v5', exactBrep: true, valid, triangleCount: mesh.triangleCount,
+        faceCount: faceHashes.length, edgeCount: edgeHashes.length, volumeMm3: kernel.getVolume(shape), surfaceAreaMm2: kernel.getSurfaceArea(shape),
+        dimensionsMm: { width: bbox.xmax - bbox.xmin, depth: bbox.ymax - bbox.ymin, height: bbox.zmax - bbox.zmin },
+        filletApplied, chamferApplied, shellApplied, evolutionStepCount: evolution.steps.length, warnings,
+      },
+    };
+  } finally {
+    kernel.releaseAll();
+  }
+}
+
+function exactClipSourceLengths(box: ReturnType<OcctKernel['getBoundingBox']>) {
+  return {
+    X: box.xmax - box.xmin,
+    Y: box.zmax - box.zmin,
+    Z: box.ymax - box.ymin,
+  };
+}
+
+function validateEnvelopeCoordinate(
+  label: string,
+  value: number,
+  sourceLengthMm: number,
+) {
+  const tolerance = Math.max(1e-7, sourceLengthMm * 1e-8);
+  if (!Number.isFinite(value) || value < -tolerance || value > sourceLengthMm + tolerance) {
+    throw new Error(`${label}=${value} mm is outside the final exact envelope 0..${sourceLengthMm} mm.`);
+  }
+}
+
+function makeEnvelopeCylinder(
+  kernel: OcctKernel,
+  box: ReturnType<OcctKernel['getBoundingBox']>,
+  axis: ExactSourceAxis,
+  center: Record<ExactSourceAxis, number>,
+  startFromEnvelopeMinMm: number,
+  lengthMm: number,
+  radiusMm: number,
+) {
+  const lengths = exactClipSourceLengths(box);
+  if (!Number.isFinite(lengthMm) || lengthMm <= 0 || !Number.isFinite(radiusMm) || radiusMm <= 0) {
+    throw new Error('Exact split cylinder requires positive finite length and radius.');
+  }
+  for (const sourceAxis of ['X', 'Y', 'Z'] as const) {
+    validateEnvelopeCoordinate(`Exact split cylinder center.${sourceAxis}`, center[sourceAxis], lengths[sourceAxis]);
+  }
+  validateEnvelopeCoordinate('Exact split cylinder start', startFromEnvelopeMinMm, lengths[axis]);
+  validateEnvelopeCoordinate('Exact split cylinder end', startFromEnvelopeMinMm + lengthMm, lengths[axis]);
+
+  let tool = kernel.makeCylinder(radiusMm, lengthMm);
+  if (axis === 'X') {
+    tool = kernel.rotate(
+      tool,
+      { point: { x: 0, y: 0, z: 0 }, direction: { x: 0, y: 1, z: 0 } },
+      Math.PI / 2,
+    );
+    return kernel.translate(
+      tool,
+      box.xmin + startFromEnvelopeMinMm,
+      box.ymin + center.Z,
+      box.zmin + center.Y,
+    );
+  }
+  if (axis === 'Z') {
+    tool = kernel.rotate(
+      tool,
+      { point: { x: 0, y: 0, z: 0 }, direction: { x: 1, y: 0, z: 0 } },
+      -Math.PI / 2,
+    );
+    return kernel.translate(
+      tool,
+      box.xmin + center.X,
+      box.ymin + startFromEnvelopeMinMm,
+      box.zmin + center.Y,
+    );
+  }
+  return kernel.translate(
+    tool,
+    box.xmin + center.X,
+    box.ymin + center.Z,
+    box.zmin + startFromEnvelopeMinMm,
+  );
+}
+
+function validateClipRange(axis: 'X' | 'Y' | 'Z', range: ExactClipAxisRange, sourceLengthMm: number) {
+  const tolerance = Math.max(1e-7, sourceLengthMm * 1e-8);
+  if (!Number.isFinite(range.startFromEnvelopeMinMm)
+    || !Number.isFinite(range.endFromEnvelopeMinMm)
+    || range.startFromEnvelopeMinMm < -tolerance
+    || range.endFromEnvelopeMinMm > sourceLengthMm + tolerance
+    || range.endFromEnvelopeMinMm - range.startFromEnvelopeMinMm <= tolerance) {
+    throw new Error(
+      `Exact clip range ${axis} [${range.startFromEnvelopeMinMm}, ${range.endFromEnvelopeMinMm}] mm is outside the final exact envelope 0..${sourceLengthMm} mm.`,
+    );
+  }
+}
+
+async function buildClippedPiecesUnsafe(
+  project: CadProject,
+  requests: readonly ExactClipPieceRequest[],
+  options: ExactClipBuildOptions = {},
+): Promise<ExactClipSnapshot> {
+  if (requests.length === 0) throw new Error('Exact clipping requires at least one requested piece envelope.');
+  const ids = new Set<string>();
+  for (const request of requests) {
+    if (!request.id.trim()) throw new Error('Exact clipping requires a stable non-empty piece id.');
+    if (ids.has(request.id)) throw new Error(`Exact clipping received duplicate piece id "${request.id}".`);
+    ids.add(request.id);
+    if (!Number.isInteger(request.ordinal) || request.ordinal <= 0) {
+      throw new Error(`Exact clipping piece "${request.id}" has an invalid ordinal.`);
+    }
+  }
+
+  const rebuilt = rebuildProject(project);
+  if (!rebuilt.hasSolid) throw new Error('A valid rebuilt solid is required before exact split generation.');
+  const kernel = await getKernel();
+  kernel.releaseAll();
+  const builtPieces: ExactClippedPieceSnapshot[] = [];
+  try {
+    const { shape, warnings: rebuildWarnings } = buildExactShape(kernel, project, rebuilt);
+    if (!kernel.isValid(shape)) throw new Error('Final exact B-Rep is invalid; split generation was blocked.');
+
+    const box = kernel.getBoundingBox(shape, false);
+    const sourceLengths = exactClipSourceLengths(box);
+    const sourceVolumeMm3 = kernel.getVolume(shape);
+    if (!Number.isFinite(sourceVolumeMm3) || sourceVolumeMm3 <= 0) {
+      throw new Error('Final exact B-Rep has no positive volume; split generation was blocked.');
+    }
+
+    const warnings = [...rebuildWarnings];
+    for (const request of requests) {
+      validateClipRange('X', request.rangesFromEnvelopeMinMm.X, sourceLengths.X);
+      validateClipRange('Y', request.rangesFromEnvelopeMinMm.Y, sourceLengths.Y);
+      validateClipRange('Z', request.rangesFromEnvelopeMinMm.Z, sourceLengths.Z);
+
+      const x = request.rangesFromEnvelopeMinMm.X;
+      const y = request.rangesFromEnvelopeMinMm.Y;
+      const z = request.rangesFromEnvelopeMinMm.Z;
+      const clip = kernel.makeBoxFromCorners(
+        {
+          x: box.xmin + x.startFromEnvelopeMinMm,
+          y: box.ymin + z.startFromEnvelopeMinMm,
+          z: box.zmin + y.startFromEnvelopeMinMm,
+        },
+        {
+          x: box.xmin + x.endFromEnvelopeMinMm,
+          y: box.ymin + z.endFromEnvelopeMinMm,
+          z: box.zmin + y.endFromEnvelopeMinMm,
+        },
+      );
+      let pieceShape = kernel.common(shape, clip);
+      const baselineVolumeMm3 = Math.max(0, kernel.getVolume(pieceShape));
+      const emptyTolerance = Math.max(1e-8, sourceVolumeMm3 * 1e-10);
+      const baselineEmpty = !Number.isFinite(baselineVolumeMm3) || baselineVolumeMm3 <= emptyTolerance;
+      if (baselineEmpty && (request.postOperations?.length ?? 0) > 0) {
+        throw new Error(`${request.id}: post-split operations cannot target an empty exact cell.`);
+      }
+
+      for (const operation of request.postOperations ?? []) {
+        const tool = makeEnvelopeCylinder(
+          kernel,
+          box,
+          operation.axis,
+          operation.centerFromEnvelopeMinMm,
+          operation.startFromEnvelopeMinMm,
+          operation.lengthMm,
+          operation.radiusMm,
+        );
+        pieceShape = operation.mode === 'add'
+          ? kernel.fuse(pieceShape, tool)
+          : kernel.cut(pieceShape, tool);
+        if (!kernel.isValid(pieceShape)) {
+          throw new Error(`${request.id}: post-split operation "${operation.id}" produced an invalid B-Rep.`);
+        }
+      }
+
+      const volumeMm3 = Math.max(0, kernel.getVolume(pieceShape));
+      const empty = !Number.isFinite(volumeMm3) || volumeMm3 <= emptyTolerance;
+      let solidCount = 0;
+      let brepValid = true;
+      let geometry: THREE.BufferGeometry | null = null;
+      let dimensionsMm = { width: 0, depth: 0, height: 0 };
+
+      if (!empty) {
+        brepValid = kernel.isValid(pieceShape);
+        const solids = kernel.getSubShapes(pieceShape, 'solid');
+        solidCount = solids.length;
+        for (const solid of solids) kernel.release(solid);
+
+        const pieceBox = kernel.getBoundingBox(pieceShape, false);
+        dimensionsMm = {
+          width: pieceBox.xmax - pieceBox.xmin,
+          depth: pieceBox.ymax - pieceBox.ymin,
+          height: pieceBox.zmax - pieceBox.zmin,
+        };
+        const mesh = kernel.meshShape(pieceShape, { linearDeflection: 0.08, angularDeflection: 0.35 });
+        if (mesh.triangleCount > 0) geometry = mapOcctMeshToThree(mesh);
+      }
+
+      const manufacturingReady = !empty && brepValid && solidCount === 1 && geometry !== null;
+      if (empty) warnings.push(`${request.id}: planned envelope cell contains no exact solid volume and will not become a manufacturing piece.`);
+      else if (!brepValid) warnings.push(`${request.id}: clipped B-Rep is invalid.`);
+      else if (solidCount !== 1) warnings.push(`${request.id}: clipped cell contains ${solidCount} disconnected solids; automatic manufacturing-piece export is blocked.`);
+      else if (!geometry) warnings.push(`${request.id}: exact tessellation produced no triangles.`);
+
+      builtPieces.push({
+        id: request.id,
+        ordinal: request.ordinal,
+        geometry,
+        empty,
+        brepValid,
+        solidCount,
+        manufacturingReady,
+        volumeMm3: empty ? 0 : volumeMm3,
+        dimensionsMm,
+      });
+    }
+
+    const generatedVolumeMm3 = builtPieces.reduce((sum, piece) => sum + piece.volumeMm3, 0);
+    const volumeDeltaMm3 = Math.abs(sourceVolumeMm3 - generatedVolumeMm3);
+    const volumeToleranceMm3 = Math.max(1e-5, sourceVolumeMm3 * 1e-6);
+    const volumeConserved = volumeDeltaMm3 <= volumeToleranceMm3;
+    const requireVolumeConservation = options.requireVolumeConservation !== false;
+    if (requireVolumeConservation && !volumeConserved) {
+      warnings.push(
+        `Exact split volume conservation failed: source ${sourceVolumeMm3.toFixed(6)} mm³ vs pieces ${generatedVolumeMm3.toFixed(6)} mm³.`,
+      );
+    }
+
+    return {
+      kernelId: 'occt-wasm-v5',
+      sourceVolumeMm3,
+      generatedVolumeMm3,
+      volumeDeltaMm3,
+      volumeConserved,
+      valid: (!requireVolumeConservation || volumeConserved)
+        && builtPieces.every((piece) => piece.empty || piece.brepValid),
+      pieces: builtPieces,
+      warnings,
+    };
+  } catch (error) {
+    for (const piece of builtPieces) piece.geometry?.dispose();
+    throw error;
+  } finally {
+    kernel.releaseAll();
+  }
+}
+
+async function probeMaterialCorridorsUnsafe(
+  project: CadProject,
+  probes: readonly ExactMaterialCorridorProbeRequest[],
+): Promise<ExactMaterialCorridorProbeResult[]> {
+  if (probes.length === 0) return [];
+  const rebuilt = rebuildProject(project);
+  if (!rebuilt.hasSolid) throw new Error('A valid rebuilt solid is required before exact material-corridor probing.');
+  const kernel = await getKernel();
+  kernel.releaseAll();
+  try {
+    const { shape } = buildExactShape(kernel, project, rebuilt);
+    if (!kernel.isValid(shape)) throw new Error('Final exact B-Rep is invalid; corridor probing was blocked.');
+    const box = kernel.getBoundingBox(shape, false);
+    const sourceLengths = exactClipSourceLengths(box);
+
+    return probes.map((probe) => {
+      const axisLength = sourceLengths[probe.axis];
+      validateEnvelopeCoordinate(`${probe.id} start`, probe.startFromEnvelopeMinMm, axisLength);
+      validateEnvelopeCoordinate(`${probe.id} end`, probe.startFromEnvelopeMinMm + probe.lengthMm, axisLength);
+      const tool = makeEnvelopeCylinder(
+        kernel,
+        box,
+        probe.axis,
+        probe.centerFromEnvelopeMinMm,
+        probe.startFromEnvelopeMinMm,
+        probe.lengthMm,
+        probe.radiusMm,
+      );
+      const intersection = kernel.common(shape, tool);
+      const expectedVolumeMm3 = Math.PI * probe.radiusMm * probe.radiusMm * probe.lengthMm;
+      const materialVolumeMm3 = Math.max(0, kernel.getVolume(intersection));
+      const volumeDeltaMm3 = Math.abs(expectedVolumeMm3 - materialVolumeMm3);
+      const toleranceMm3 = Math.max(1e-5, expectedVolumeMm3 * 1e-5);
+      return {
+        id: probe.id,
+        expectedVolumeMm3,
+        materialVolumeMm3,
+        volumeDeltaMm3,
+        fullMaterial: volumeDeltaMm3 <= toleranceMm3,
+      };
+    });
+  } finally {
+    kernel.releaseAll();
+  }
+}
+
+async function runSerializedExactOperation<T>(operation: () => Promise<T>) {
+  let resolveGate!: () => void;
+  const gate = new Promise<void>((resolve) => { resolveGate = resolve; });
+  const previous = operationTail;
+  operationTail = previous.then(() => gate, () => gate);
+  await previous;
+  try {
+    return await operation();
+  } finally {
+    resolveGate();
+  }
+}
+
+export async function buildExactKernelSnapshot(project: CadProject, options: ExactKernelBuildOptions = {}) {
+  return runSerializedExactOperation(() => buildSnapshotUnsafe(project, options));
+}
+
+export async function buildExactClippedPieces(
+  project: CadProject,
+  requests: readonly ExactClipPieceRequest[],
+  options: ExactClipBuildOptions = {},
+) {
+  return runSerializedExactOperation(() => buildClippedPiecesUnsafe(project, requests, options));
+}
+
+export async function probeExactMaterialCorridors(
+  project: CadProject,
+  probes: readonly ExactMaterialCorridorProbeRequest[],
+) {
+  return runSerializedExactOperation(() => probeMaterialCorridorsUnsafe(project, probes));
+}
+
+export const exactKernelDescriptor = {
+  id: 'occt-wasm-v5',
+  label: 'OpenCascade exact B-Rep',
+  kind: 'exact-brep' as const,
+  lazy: true,
+  capabilities: {
+    exactBrep: true,
+    editableTopology: false,
+    meshPreview: true,
+    stlExport: true,
+    stepExport: true,
+    exactFillet: true,
+    faceBoundThroughFeatures: true,
+    orientedFaceBoundThroughFeatures: true,
+    exactChamfer: true,
+    promotedSketchProfiles: true,
+    attachedPlanarMaterialFeatures: true,
+    shell: true,
+    linearPattern: true,
+    mirror: true,
+    revolve: true,
+    exactSplit: true,
+    exactSplitAlignment: true,
+  },
+};

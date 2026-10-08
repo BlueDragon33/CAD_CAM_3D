@@ -1,0 +1,228 @@
+# Architecture
+
+## Product boundary
+
+CAD_CAM_3D targets small functional printable parts with editable parametric intent rather than reproducing every enterprise-CAD function at once.
+
+## Layer model
+
+```text
+User intent / sketch / measurements
+              |
+              v
+       Interaction layer
+   UI + command interpretation
+              |
+              v
+       Parametric model
+ sketch -> constraints -> features
+              |
+              v
+       Semantic rebuild layer
+              |
+       +------+------------------+
+       |                         |
+       v                         v
+Fast mesh kernel          Exact B-Rep kernel
+ mesh-mvp-v1              occt-wasm-v5 (lazy)
+       |                         |
+       v                         v
+simple preview/STL       exact preview / STEP / STL
+                               + topology evolution
+                               + sketch-entity face lineage
+                               + oriented face tools
+                               + Fillet / Chamfer / Shell
+                               + durable refs
+       |                         |
+       +------------+------------+
+                    v
+          Manufacturing rules
+        printer/material/process
+```
+
+## Core rules
+
+1. `CadProject` is the source of truth; UI state and kernel handles are not geometry data.
+2. Features are ordered and rebuildable; upstream parameter changes rebuild downstream geometry.
+3. Semantic feature history is independent from both geometry kernels.
+4. AI emits validated structured operations against the same feature tree.
+5. Manufacturing rules stay outside the geometry kernels.
+6. Capability flags describe only integrations that actually work.
+7. Durable topology references may contain semantic ancestry and geometry signatures, never raw kernel handles/hashes.
+8. Preview and export must choose a kernel capable of representing every enabled feature.
+9. A sketch region must pass application-level validation before either kernel may use it as manufacturing geometry.
+10. Profile promotion is explicit and preview/STL/STEP must consume the same resolved manufacturing region.
+11. Ambiguous nested topology is rejected rather than silently assigned Boolean meaning.
+12. Exact base side faces are anchored to their originating sketch entity whenever the surface can be matched safely.
+
+## Dual-kernel strategy
+
+`mesh-mvp-v1` handles direct base-profile extrusion and lightweight manufacturing tessellation quickly. `occt-wasm-v5` is lazy-loaded for exact topology, exact edge treatments, oriented face features, attached planar Pad/Pocket, exact Shell, deterministic Linear Pattern/Mirror, exact Revolve, STEP, adaptive STL/3MF and promoted-profile Boolean operations.
+
+`src/cad/project-analysis.ts` promotes models automatically when the fast kernel would be incomplete. Current exact triggers include Pad, Pocket, Revolve, Shell, Linear Pattern, Mirror, Fillet, Chamfer, non-horizontal face-bound Hole/Cut, and Hole/Cut on a promoted sketch profile. Datum Axis is semantic reference geometry and does not force exact geometry by itself.
+
+### Lightweight path
+
+- deterministic rectangle, Line-loop, Circle, mixed Line+Arc, or one-region-with-holes extrusion;
+- region outer contour -> `THREE.Shape`;
+- region direct inner loops -> `Shape.holes`;
+- legacy rectangle global vertical through Hole/Cut;
+- horizontal rectangle face-bound Hole/Cut through cached X/Z;
+- direct STL + mesh preflight.
+
+### Exact path
+
+- ordered OpenCascade B-Rep reconstruction;
+- rectangle, Line-loop, Circle, mixed Line+Arc or classified region base solid;
+- region outer prism minus overrun hole prisms;
+- semantic base-face roles from originating outer/hole Line/Arc/Circle sketch entities;
+- global and oriented face-bound Hole/Cut;
+- promoted planar Line-side Hole/Cut binding;
+- promoted-profile Hole/Cut Boolean handling;
+- selected-edge and four-edge-preset Fillet;
+- selected-edge and four-edge-preset Chamfer;
+- attached planar Sketch → Pad/Pocket using resolved local U/V/normal frames;
+- exact inward Shell from durable opening-face references;
+- deterministic Linear Pattern deriving repeated Hole/Cut instances from one canonical source feature;
+- deterministic Mirror deriving one reflected Hole/Cut instance from one canonical source feature;
+- exact additive Revolve consuming a durable Datum Axis and promoted source Sketch;
+- topology evolution through Pad/Pocket/Revolve/Hole/Cut/Fillet/Chamfer/Shell/Linear Pattern/Mirror;
+- exact face/edge picking and durable reference resolution;
+- exact preview tessellation;
+- adaptive STL + preflight;
+- STEP.
+
+The four-outer-vertical-edge preset remains rectangle-specific. Promoted profiles should use explicit exact-edge selection for Fillet/Chamfer.
+
+## Sketch pipeline
+
+The sketcher separates editable geometry, construction geometry and the active manufacturing region:
+
+```text
+Line / Circle / Arc
+      ↓
+deterministic constraints
+      ↓
+closed-loop extraction
+      ↓
+region classification
+      ↓
+explicit `Use candidate as profile`
+      ↓
+semantic ManufacturingProfile / ManufacturingRegionProfile
+      ↓
+mesh + exact-kernel parity
+```
+
+`src/cad/profile.ts` extracts simple closed Line loops, Circles and mixed Line+Arc loops. It orders Line/Arc edges into deterministic traversal and records signed Arc sweep so an Arc can be consumed forward or reversed without rewriting persisted sketch intent.
+
+`src/cad/profile-region.ts` classifies multiple valid loops. The enabled region model is intentionally narrow: exactly one depth-0 outer contour plus zero or more depth-1 direct holes. Pairwise touching/intersection, multiple outer islands and nesting depth greater than one are rejected.
+
+Profile validation checks endpoint closure, connected components, vertex degree, exact line/arc perimeter, signed area/winding, repeated vertices, open/branched geometry and sampled non-adjacent self-intersections for curved paths. Region validation then adds pairwise loop intersection checks and containment-depth classification.
+
+Constraint analysis separately classifies each Sketch as `empty`, `under-constrained`, `fully-constrained`, `over-constrained` or `inconsistent`. Provable contradictions are preserved but not applied by execution order; inconsistent Sketches are blocked from manufacturing consumption. Redundant constraints remain persisted and visible but do not receive independent degree-of-freedom credit.
+
+Schema v5 introduced each sketch entity's `construction` flag, so profile promotion reuses that durable distinction instead of adding a separate profile-membership store. Schema v6 adds durable `SketchPlaneRef` attachment while keeping those entity semantics unchanged. `construction: false` marks membership in the active profile region; zero non-construction entities means the named width/depth rectangle is active for the base sketch.
+
+If a promoted region becomes invalid after editing, semantic rebuild blocks the solid rather than silently reverting to another profile. `scripts/profile-parity-smoke.mjs` gates single-loop Line/Circle/Line+Arc extrusion; `scripts/region-parity-smoke.mjs` gates one outer contour with multiple holes against Three.js/OpenCascade bounds and volume.
+
+See `docs/SKETCH_PROFILE.md`.
+
+## Topology references
+
+`EdgeTopologyRef` stores adjacent face-lineage IDs plus edge curve kind, length, midpoint and endpoints. Both Fillet and Chamfer consume this same durable reference model.
+
+`FaceTopologyRef` stores face lineages, centroid, normal and area. Hole/Cut store local U/V coordinates and rebuild a deterministic face-local frame at execution time.
+
+Exact base lineage now uses semantic roles tied to sketch entities, for example:
+
+```text
+<extrude-id>:side:outer:line:<entity-id>
+<extrude-id>:side:outer:arc:<entity-id>
+<extrude-id>:side:hole:1:line:<entity-id>
+<extrude-id>:side:hole:2:circle:<entity-id>
+```
+
+Line-derived side faces are known planar surfaces and may participate in the existing face-local Hole/Cut workflow. Arc/Circle side faces receive durable ancestry for selection/remapping but remain inspection-only for face-bound manufacturing operations until cylindrical local coordinates are implemented.
+
+References are resolved against topology immediately before the owning feature executes. Ambiguous references are rejected instead of retargeting silently. See `docs/TOPOLOGY_LINEAGE.md`.
+
+## Oriented through-feature path
+
+```text
+FaceTopologyRef + local U/V
+          ↓
+resolve current exact face
+          ↓
+rebuild local frame
+          ↓
+point = origin + U*u + V*v
+axis  = resolved face normal
+          ↓
+rotate + translate canonical tool
+          ↓
+OCCT through Boolean
+```
+
+For the named rectangle, manufacturing binding accepts descendants of the six planar base-extrusion faces. Promoted regions additionally allow planar side faces generated by Line sketch entities, including direct inner-hole Line walls. Curved Arc/Circle side surfaces remain inspection-first because they require a cylindrical surface-parameter model rather than the planar U/V frame.
+
+## Project persistence
+
+Current editable project schema is v12.
+
+Migration chain:
+- v1: legacy Fillet selection + global Hole/Cut;
+- v2: durable edge references for Fillet;
+- v3: durable face references + local U/V Hole/Cut;
+- v4: Chamfer using durable edge references;
+- v5: persisted Line/Circle/Arc entities, entity constraints and durable construction/manufacturing membership;
+- v6: durable sketch-plane references — legacy XZ sketches migrate to `{ kind: 'base-xz' }`, while new attached sketches persist a planar `FaceTopologyRef` plus local U/V origin;
+- v7: attached `Pad` and `Pocket` features persist a durable source Sketch ID and exact material-operation parameters;
+- v8: `Shell` persists wall thickness plus one or more durable opening-face references;
+- v9: `Linear Pattern` persists an earlier Hole/Cut source feature ID, count, spacing and valid global/local axis;
+- v10: `Mirror` persists an earlier Hole/Cut source feature ID plus explicit global or face-local symmetry plane;
+- v11: `Datum Axis` persists a base-XZ or attached-sketch-local source, axis and offset without kernel runtime identity;
+- v12: `Revolve` persists an earlier promoted Sketch ID, durable Datum Axis ID, bounded angle and additive operation semantics.
+
+The loader accepts v1-v12 and validates supported fields before a project enters the workspace. Multi-loop region membership and side-face semantic lineage reuse stable entity IDs/flags; schema bumps are reserved for changes to durable project meaning such as SketchPlaneRef and Pad/Pocket.
+
+Project JSON, B-Rep and manufacturing files remain owned by CAD_CAM_3D and are not mirrored into Quản trị Ứng dụng.
+
+## Planned modules
+
+- stronger sketch constraint vocabulary/solver behind the existing semantic model;
+- arbitrary datum planes beyond face attachment and current Datum Axis;
+- explicit nested islands / multi-body semantics;
+- cylindrical-surface local coordinates for curved-face placement;
+- richer Shell options (variable thickness/join policy) and exact surface metadata;
+- Sweep/Loft only after profile/plane/axis contracts are mature;
+- sectioning and measurement;
+- richer manufacturing intelligence for clearance, wall inspection, bridging, arbitrary orientation and split/join planning;
+- verified electronics/robotics component packs layered over the local semantic catalog contract;
+- future AI/model providers emitting the bounded typed proposal contract rather than mutating CAD state directly;
+- optional collaboration/account/licensing adapters only after commercial product value is ready for them.
+
+## Manufacturing, AI and local-first foundation
+
+Manufacturing projections now share the adaptive final geometry path:
+
+- STL exports rotate workspace Y-up geometry into slicer Z-up coordinates without reflection;
+- portable Core 3MF is generated locally with explicit millimeter units and no external ZIP/SaaS dependency;
+- adaptive readiness uses exact B-Rep dimensions whenever the project requires the exact kernel;
+- selected-printer envelope analysis checks current and all 90° axis-aligned orientations before recommending split planning;
+- nozzle-scale Hole/Shell heuristics and a geometry-based downward-overhang heuristic are advisory, not slicer guarantees;
+- build-volume mismatch may block readiness for the selected printer without corrupting or withholding a valid manufacturing file.
+
+The command bridge now follows the bounded AI architecture: deterministic intent parsing creates a typed, non-mutating proposal; the UI previews it; commit revalidates both project and topology-selection fingerprints before normal `CadProject` mutation. Future AI providers must target the same validated operation boundary.
+
+Local resilience includes bounded browser recovery snapshots validated through the normal project parser/migration chain. Production builds additionally emit an offline asset manifest and service worker that cache the app shell, JS/CSS and exact-kernel WASM without making cache state canonical project data.
+
+A semantic component-catalog contract and offline local provider now exist for future verified robotics/electronics packs. Synthetic test definitions are never presented as real manufacturer dimensions. External provider/dependency posture is tracked in `docs/DEPENDENCY_BUDGET.md`.
+
+## Current foundation
+
+The project now supports deterministic feature history, schema-v12 persistence with v1-v11 migration, explicit five-state sketch constraint diagnostics, constrained interactive Line/Circle/Arc entities, closed-loop validation, explicit Line/Line+Arc/Circle region promotion, direct inner-hole classification, durable planar Sketch attachment, exact attached Pad/Pocket, exact Shell, deterministic Hole/Cut Linear Pattern and Mirror, durable Datum Axis, exact additive Revolve, mesh/OpenCascade parity gating, sketch-entity semantic side-face lineage, planar promoted-side Hole/Cut binding, lightweight and exact preview/manufacturing paths, STL, portable Core 3MF, STEP, topology evolution, durable face/edge references, oriented planar-face Hole/Cut, exact Fillet and exact Chamfer.
+
+Automated foundations also cover adaptive manufacturing readiness, axis-aligned printer-fit recommendations, downward-overhang warning, local autosave/recovery, offline production asset caching, a bounded preview-before-commit design-command planner and an offline semantic component-catalog provider.
+
+The next automated work may deepen manufacturing checks and verified component/domain packs, but commercially important changes to the command/recovery/manufacturing interaction now require human UX acceptance before being treated as release-quality behavior. Nested islands remain gated on explicit island/multi-body semantics, and Sweep/Loft remain gated on mature profile/plane/path contracts.

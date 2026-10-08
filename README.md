@@ -15,21 +15,64 @@ The system is designed to grow from a general CAD/printing foundation into deepe
 - Prefer parametric and editable models over one-shot mesh generation.
 - Optimize first for parts that fit common desktop 3D printers.
 - Add UAV/USV/UGV domain intelligence as modules, not hard-coded assumptions.
+- Operate as a managed level-1 client under the central **Quản trị Ứng dụng** control-plane when managed mode is enabled.
+- Keep CAD project geometry, mesh payloads and exported manufacturing files owned by CAD_CAM_3D rather than copied into the central control-plane.
+- Preserve local-first/offline-capable core behavior and keep external providers replaceable where practical.
+- Build only justified capability floors, while keeping the structural foundation capable of large future commercial scale.
 
-The initial implementation lives on a development branch before being promoted to `main`.
+## Constitutional governance
 
+CAD_CAM_3D adopts Blueprint OS Universal Constitution **1.2.0** at Blueprint Level **B4** through:
 
-## Application Management contract
+- `.blueprint/constitution-adoption.json`
 
-Repository này công bố metadata tại `control/application-management.contract.json` theo schema `application-management.contract/v1`.
+The canonical project-level commercial/architecture source is:
 
-Contract hiện chỉ dùng để Application Management tự nhận diện ứng dụng và phân loại **Kỹ thuật**. Remote admin, device registry và production runtime vẫn **chưa sẵn sàng**; Trung tâm không được suy diễn hoặc bật thao tác giả trước khi backend thật được triển khai.
+- `docs/CAD_CAM_3D_CENTURY_GRADE_COMMERCIAL_BLUEPRINT.md`
 
+The durable execution prompt is:
+
+- `prompts/CAD_CAM_3D_MASTER_CENTURY_GRADE_EXECUTION_PROMPT.md`
+
+Agents and contributors should begin with:
+
+- `AGENTS.md`
+
+The execution prompt is a projection, not the source-of-truth. Fundamental architecture changes belong in the canonical blueprint first.
+
+## Application Management
+
+The runtime managed-client contract is published at:
+
+- `public/control/application-management.contract.json`
+
+The runtime policy seam is:
+
+- `src/management/policy.ts`
+
+For compatibility with existing Application Management discovery tooling, repository-level metadata is also published at:
+
+- `control/application-management.contract.json` using `application-management.contract/v1`
+
+These contracts are metadata/policy boundaries only. Quản trị Ứng dụng may coordinate operational policy such as device-access metadata, UI policy, feature flags, print-policy defaults and safe audit metadata. It must not own or mirror CAD project data, B-Rep, meshes or manufacturing exports. Remote-admin/device-registry capabilities remain disabled until a real trusted backend exists.
+
+See `docs/CONTROL_PLANE.md` for the boundary and rollout plan.
 
 ## Operational sovereignty
 
-This repository adopts **Universal Constitution 1.2.0** at Blueprint Level **B2**.
+The local CAD project remains canonical and portable. Core project open/edit/rebuild/save/export must remain useful without a paid provider or mandatory cloud account.
 
-CAD/CAM project files and design truth remain local and portable. Cloud rendering, AI generation and Google Drive are optional adapters only. Basic modeling/edit/export must not require a paid provider, and canonical geometry must remain exportable in documented formats.
+Cloud sync, Google Drive, remote rendering/generation and AI providers are optional adapters. They may not redefine canonical CAD meaning or become a hidden boot dependency for the local core.
 
-Canonical dependency posture: `.blueprint/dependency-budget.json`.
+Canonical dependency posture:
+
+- `.blueprint/dependency-budget.json`
+
+## Release
+
+Development work is performed away from Production and promoted only through the documented release gates.
+
+Release operations and rollback:
+
+- `docs/RELEASE_OPERATIONS.md`
+- `docs/DEVELOPMENT_RELEASE_POLICY.md`

@@ -3,7 +3,7 @@
   "policyId": "blueprint-os:universal-century-grade",
   "policyVersion": "1.2.0",
   "projectId": "project:cad-cam-3d",
-  "blueprintLevel": "B2",
+  "blueprintLevel": "B4",
   "enforcementMode": "enforced",
   "inheritedPillars": [
     "structural-capacity",
