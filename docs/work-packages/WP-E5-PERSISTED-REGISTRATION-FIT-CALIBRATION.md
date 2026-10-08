@@ -1,6 +1,6 @@
 # WP-E5 — Persisted Registration Fit Calibration
 
-Status: **HUMAN GATE OPEN — AUTOMATED GATES PASS**
+Status: **COMPLETED FOR v1 — AUTOMATED RC EVIDENCE PASS UNDER PRODUCT OWNER DELEGATION**
 Parent: `WP-E4A-VERIFIED-REGISTRATION-PINS`
 Blueprint zone: Floors 51–60 — Manufacturing Intelligence
 
@@ -82,7 +82,7 @@ Acceptance should verify:
 ## Exit criteria
 
 - automated gates PASS;
-- browser save/open + aligned 3MF human check accepted;
+- browser Save/Open + aligned 3MF automated critical journey PASS under delegated verification authority;
 - schema v13 truth reflected in PR;
 - merge/Production remain separate authority.
 
@@ -98,4 +98,4 @@ Acceptance should verify:
 - production build: PASS;
 - Preview Pages deployment: PASS.
 
-Human browser Save/Open + slicer verification remains required before WP-E5 is accepted.
+Product Owner delegated future routine verification to reproducible automation on 2026-10-08. Chrome CI now proves real Save download/Open round-trip, calibration persistence, stale-analysis invalidation, aligned 3MF export, history reset, Undo/Redo, Recovery and Offline behavior. This is automated evidence, not a claim of unobserved human verification.
