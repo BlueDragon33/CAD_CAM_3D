@@ -1,0 +1,38 @@
+{
+  "schema": "application-management.contract/v1",
+  "protocol": "cad-cam-3d-metadata-v1",
+  "application": {
+    "id": "cad-cam-3d",
+    "name": "CAD CAM 3D",
+    "shortName": "CAD CAM 3D",
+    "category": "Kỹ thuật",
+    "repository": "BlueDragon33/CAD_CAM_3D",
+    "version": "0.1"
+  },
+  "capabilities": {
+    "webLaunch": false,
+    "deviceRegistry": false,
+    "deviceApproval": false,
+    "deviceBlock": false,
+    "deviceUnblock": false,
+    "deviceEditPermission": false,
+    "deviceIdempotentCommands": false,
+    "optimisticConcurrency": false,
+    "sessions": false,
+    "audit": false,
+    "contentReview": false,
+    "payments": false,
+    "reports": false
+  },
+  "endpoints": {},
+  "policy": {
+    "remoteAdminReady": false,
+    "productionRuntimeReady": false,
+    "applicationManagementMayInventOperations": false
+  },
+  "boundary": {
+    "projectGeometryInControlPlane": false,
+    "meshFilesInControlPlane": false,
+    "manufacturingExportsInControlPlane": false
+  }
+}

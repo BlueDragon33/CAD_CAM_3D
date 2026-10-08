@@ -1,0 +1,65 @@
+{
+  "schemaVersion": "1.0.0",
+  "policyId": "blueprint-os:universal-century-grade",
+  "policyVersion": "1.2.0",
+  "projectId": "project:cad-cam-3d",
+  "blueprintLevel": "B4",
+  "posture": "LOCAL_PORTABLE_DESIGN_CORE",
+  "complianceState": "MIGRATION_REQUIRED",
+  "canonicalAuthority": {
+    "cadModels": "portable-local-project-files",
+    "camJobs": "local-tooling-and-explicit-export",
+    "rendering": "optional-provider",
+    "ai": "optional-intelligence-only"
+  },
+  "dependencies": [
+    {
+      "id": "local-cad-cam-runtime",
+      "class": "LOCAL_CORE",
+      "costClass": "local-free-or-user-owned",
+      "purpose": "core CAD/CAM modeling, editing and toolpath preparation",
+      "dataBoundary": "local workstation/project files",
+      "offlineBehavior": "core design remains usable without Internet",
+      "exitPath": "portable documented CAD/CAM exchange formats"
+    },
+    {
+      "id": "google-drive-or-equivalent",
+      "class": "OPTIONAL_SYNC",
+      "costClass": "free-or-optional-paid",
+      "purpose": "optional project backup/cross-device transfer",
+      "dataBoundary": "portable project/export files only",
+      "offlineBehavior": "local editing continues; sync pauses",
+      "exitPath": "ordinary files can move providers"
+    },
+    {
+      "id": "remote-rendering-or-generation",
+      "class": "OPTIONAL_PUBLISH",
+      "costClass": "optional",
+      "purpose": "optional rendering/generation acceleration",
+      "dataBoundary": "explicit scene/model export only",
+      "offlineBehavior": "core modeling remains usable",
+      "exitPath": "replace renderer/provider without changing canonical project files"
+    },
+    {
+      "id": "ai-provider",
+      "class": "OPTIONAL_INTELLIGENCE",
+      "costClass": "optional",
+      "purpose": "design assistance, explanation and optional generation",
+      "dataBoundary": "user-selected project context only",
+      "offlineBehavior": "core design remains usable without AI",
+      "exitPath": "disable/replace provider"
+    }
+  ],
+  "forbidden": [
+    "cloud-only-canonical-cad-project",
+    "mandatory-paid-renderer-for-basic-modeling",
+    "ai-owned-canonical-geometry",
+    "provider-specific-format-without-portable-export"
+  ],
+  "migrationBlockers": [
+    "Define supported portable canonical/export formats.",
+    "Prove core project open/edit/export without cloud providers.",
+    "Keep optional render/generation providers downstream of local project truth."
+  ],
+  "productionAuthority": "separate-explicit-release-gate"
+}
