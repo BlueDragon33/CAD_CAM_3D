@@ -1,5 +1,6 @@
 import type { CadProject } from '../cad/model';
 import type { ManufacturingSplitPlan } from './split-plan';
+import { assertExportDownloadAllowed } from './export-guard';
 import {
   disposeExactManufacturingSplit,
   generateExactManufacturingSplit,
@@ -76,8 +77,10 @@ function downloadBlob(blob: Blob, fileName: string) {
 export async function downloadProjectSplitThreeMf(
   project: CadProject,
   plan: ManufacturingSplitPlan,
+  mayDownload?: () => boolean,
 ): Promise<SplitThreeMfExportReport> {
   const { blob, report } = await createProjectSplitThreeMf(project, plan);
+  assertExportDownloadAllowed(mayDownload);
   downloadBlob(blob, report.fileName);
   return report;
 }
