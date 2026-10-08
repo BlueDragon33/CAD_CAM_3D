@@ -3,7 +3,7 @@
   "private": true,
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build && node scripts/offline-build-smoke.mjs && node scripts/release-build-audit.mjs",
+    "build": "tsc -b && vite build && node scripts/offline-build-smoke.mjs && node scripts/release-build-audit.mjs && node scripts/management-contract-smoke.mjs",
     "preview": "vite preview",
     "typecheck": "tsc -b --pretty false",
     "smoke:exact": "node scripts/exact-kernel-smoke.mjs && node scripts/oriented-face-smoke.mjs && node scripts/profile-parity-smoke.mjs && node scripts/region-parity-smoke.mjs && node scripts/side-lineage-smoke.mjs && node scripts/attached-feature-smoke.mjs && node scripts/shell-smoke.mjs && node scripts/linear-pattern-smoke.mjs && node scripts/mirror-smoke.mjs && node scripts/revolve-smoke.mjs && node scripts/split-exact-smoke.mjs && node scripts/alignment-corridor-smoke.mjs",
