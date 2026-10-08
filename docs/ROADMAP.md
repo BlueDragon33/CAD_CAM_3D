@@ -29,11 +29,11 @@ Exit evidence: repository builds cleanly; canonical CAD meaning is separated fro
 - STEP + STL export.
 - Deterministic rebuild from project JSON.
 
-Current project schema: v12 with explicit legacy migrations.
+Current project schema: v13 with explicit legacy migrations and persisted registration-fit calibration.
 
 Next breadth: Sweep/Loft and broader datum/path semantics only after their contracts can be added without weakening topology/persistence truth.
 
-## Printable-part intelligence — active
+## Printable-part intelligence — established v1 foundation
 
 Implemented foundations:
 
@@ -59,7 +59,7 @@ Next automated depth:
 
 Exit gate: a real functional part receives understandable, actionable warnings and exports correctly to the declared slicer workflow. Heuristics must remain labeled as heuristics.
 
-## AI engineering layer — bounded foundation active
+## AI engineering layer — bounded v1 foundation
 
 Implemented:
 
@@ -80,7 +80,7 @@ Next:
 
 AI may assist but may not become canonical CAD state, authorization or Production authority.
 
-## Component/domain intelligence — semantic foundation active
+## Component/domain intelligence — semantic v1 foundation
 
 Implemented:
 
@@ -109,7 +109,7 @@ Priority domains:
 - GPS/cameras/LiDAR/antennas;
 - UAV/UGV/USV mounts and serviceable interfaces.
 
-## Local-first resilience — automated foundation active
+## Local-first resilience — v1 foundation
 
 Implemented:
 
@@ -137,16 +137,20 @@ Adopt only when the core product is demonstrably worth paying for. When activate
 
 Future commercial adapters may include identity, normalized entitlements, seat/device licensing, optional sync and collaboration. Local project ownership, portability and degraded behavior remain contractual requirements.
 
-## Human acceptance gate — current next gate
+## v1 release candidate — active
 
-Automated engineering has now changed several critical product journeys:
+The Product Owner authorized autonomous completion on 2026-10-08, including automatic investigation/fix/retest of uncertain behavior and conditional merge/Production after exact-revision release evidence passes.
 
-- design command changed from immediate mutation to Preview → Commit/Cancel;
-- manufacturing readiness gained adaptive exact analysis and orientation/overhang advice;
-- 3MF was added;
-- recovery was added;
-- production offline behavior was added.
+The v1 release candidate now prioritizes:
 
-Before these surfaces are treated as **commercial/release-quality UX**, the Product Owner must perform a real browser journey and confirm that the interaction hierarchy is understandable and worth keeping. CI success proves implementation integrity, not premium usability.
+- canonical project/state safety, including bounded Undo/Redo;
+- schema v13 migration and reproducible print-fit calibration;
+- stale async-evidence protection;
+- exact export/manufacturing regressions;
+- offline/local-first integrity;
+- release/rollback automation;
+- exact-revision main CI before Production deployment.
 
-After this human UX gate, continue automatically into the next justified manufacturing/component Work Packages. Merge and Production remain separate explicit authorities.
+See `docs/work-packages/WP-RC1-V1-RELEASE-CANDIDATE-HARDENING.md`.
+
+Post-v1 breadth such as Sweep/Loft, curved-surface sketching and cloud commercial infrastructure remains intentionally deferred rather than blocking a truthful usable v1.
