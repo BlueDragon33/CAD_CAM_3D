@@ -33,6 +33,23 @@ describe('split alignment planning', () => {
     expect(alignment.pins[1].centerFromEnvelopeMinMm.Z).toBeCloseTo(80 / 3);
   });
 
+  it('uses persisted project calibration in the registration pocket geometry', () => {
+    const project = createDefaultProject();
+    project.printProfile.buildVolume = { width: 256, depth: 256, height: 256 };
+    project.printProfile.nozzleMm = 0.4;
+    project.printProfile.fitCalibration.registrationClearancePerSideMm = 0.3;
+    const split = planBuildVolumeSplit({ width: 300, depth: 40, height: 12 }, project);
+    expect(split).not.toBeNull();
+
+    const alignment = planSplitAlignment(project, split!);
+
+    expect(alignment.ready).toBe(true);
+    expect(alignment.pins).toHaveLength(2);
+    expect(alignment.pins.every((pin) => pin.pinDiameterMm === 2)).toBe(true);
+    expect(alignment.pins.every((pin) => pin.clearancePerSideMm === 0.3)).toBe(true);
+    expect(alignment.pins.every((pin) => pin.pocketDiameterMm === 2.6)).toBe(true);
+  });
+
   it('fails closed when the seam envelope is too small for two conservative pins', () => {
     const project = createDefaultProject();
     project.printProfile.buildVolume = { width: 256, depth: 256, height: 256 };
