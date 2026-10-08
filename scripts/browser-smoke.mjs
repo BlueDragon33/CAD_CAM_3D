@@ -116,6 +116,32 @@ try {
       const text = await bodyText();
       return present ? text.includes(needle) : !text.includes(needle);
     }, timeoutMs);
+  const waitOperationResult = async (successNeedle, failureNeedles, timeoutMs = 60000) => {
+    let lastText = '';
+    try {
+      const matched = await waitFor('operation result ' + successNeedle, async () => {
+        lastText = await bodyText();
+        if (lastText.includes(successNeedle)) return { ok: true, text: lastText };
+        const failure = failureNeedles.find((needle) => lastText.includes(needle));
+        if (failure) return { ok: false, text: lastText, failure };
+        return null;
+      }, timeoutMs, 250);
+      if (!matched.ok) {
+        throw new Error(
+          'Operation reported failure marker "' + matched.failure + '". Current UI text:\n'
+          + matched.text.slice(-6000),
+        );
+      }
+      return matched.text;
+    } catch (error) {
+      if (String(error).includes('Operation reported failure marker')) throw error;
+      throw new Error(
+        String(error)
+        + '\nCurrent UI text after timeout:\n'
+        + lastText.slice(-6000),
+      );
+    }
+  };
   const clickButton = async (label) => {
     const result = await execute(
       "const b=[...document.querySelectorAll('button')].find(x=>x.textContent.trim()===arguments[0]); if(!b) return 'missing'; if(b.disabled) return 'disabled'; b.click(); return 'clicked';",
@@ -182,10 +208,18 @@ try {
   await waitText('Export Aligned Split 3MF');
 
   await clickButton('Export Aligned Split 3MF');
-  await waitText('Aligned Split 3MF PASS', true, 60000);
+  await waitOperationResult(
+    'Aligned Split 3MF PASS',
+    ['Aligned Split 3MF blocked:', 'Aligned Split 3MF failed.'],
+    60000,
+  );
 
   await clickButton('Export STEP');
-  await waitText('STEP export PASS', true, 60000);
+  await waitOperationResult(
+    'STEP export PASS',
+    ['STEP export blocked:', 'STEP export failed.'],
+    60000,
+  );
 
   await clickButton('Undo');
   await waitFor('calibration undo', async () => (await inputValue('Registration clearance / side')) === '');
