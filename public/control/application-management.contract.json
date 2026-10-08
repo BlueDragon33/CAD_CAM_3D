@@ -1,56 +1,56 @@
 {
-  "contract": "application-management",
+  "schema": "application-management.contract/v1",
+  "protocol": "application-management.contract/v1",
   "application": {
     "id": "cad-cam-3d",
     "name": "CAD CAM 3D",
+    "shortName": "CAD CAM 3D",
+    "category": "Kỹ thuật",
     "repository": "BlueDragon33/CAD_CAM_3D",
-    "tier": "client"
+    "version": "1.0.0"
   },
-  "controlPlane": {
-    "name": "Quản trị Ứng dụng",
-    "mode": "managed-client",
-    "status": "scaffolded"
+  "capabilities": {
+    "webLaunch": true,
+    "deviceRegistry": false,
+    "deviceApproval": false,
+    "deviceBlock": false,
+    "deviceUnblock": false,
+    "deviceEditPermission": false,
+    "deviceIdempotentCommands": false,
+    "optimisticConcurrency": false,
+    "deviceAutoApproval": false,
+    "deviceAutoBlockPending": false,
+    "automationIdempotentCommands": false,
+    "automationOptimisticConcurrency": false,
+    "sessions": false,
+    "audit": false,
+    "contentReview": false,
+    "payments": false,
+    "reports": false
+  },
+  "endpoints": {},
+  "policy": {
+    "remoteAdminReady": false,
+    "credentialRequired": false,
+    "localFirst": true,
+    "productionRuntimeReady": true,
+    "applicationManagementMayInventOperations": false
   },
   "runtime": {
+    "publicUrl": "https://bluedragon33.github.io/CAD_CAM_3D/",
     "ownership": "CAD_CAM_3D",
-    "projectDataOwnership": "CAD_CAM_3D",
-    "remoteAdminReady": false
+    "projectDataOwnership": "CAD_CAM_3D"
   },
   "devicePolicy": {
     "namespace": "CAD-",
     "classes": ["desktop", "tablet", "phone"],
     "phoneMode": "review-only"
   },
-  "allowlist": [
-    "runtime-status",
-    "device-access-metadata",
-    "ui-policy",
-    "feature-flags",
-    "print-policy",
-    "safe-audit-metadata"
-  ],
-  "denylist": [
-    "cad-project-files",
-    "geometry-bodies",
-    "mesh-data",
-    "exported-stl-step-3mf",
-    "private-design-notes",
-    "raw-ai-prompts"
-  ],
-  "management": {
-    "uiPolicy": {
-      "workspaceDensity": ["compact", "engineering", "comfortable"],
-      "aiCommandBridge": true,
-      "printValidation": true,
-      "experimentalCadFeatures": false,
-      "phoneMode": "review-only"
-    },
-    "operations": {
-      "deviceApproval": "planned",
-      "remoteSessionRevocation": "planned",
-      "featurePolicyUpdate": "planned",
-      "interfacePolicyUpdate": "planned",
-      "auditRead": "planned"
-    }
+  "boundary": {
+    "projectGeometryInControlPlane": false,
+    "meshFilesInControlPlane": false,
+    "manufacturingExportsInControlPlane": false,
+    "privateDesignNotesInControlPlane": false,
+    "rawAiPromptsInControlPlane": false
   }
 }
