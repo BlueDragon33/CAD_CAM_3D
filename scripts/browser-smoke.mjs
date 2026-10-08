@@ -208,6 +208,22 @@ try {
   await setLabelInput('width', 300);
   await setLabelInput('depth', 40);
   await setLabelInput('height', 12);
+
+  // Same browser task: two Analyze clicks before React can render disabled,
+  // followed by a project edit before the pending promise completes.
+  // The old job must not publish stale manufacturing evidence after the edit.
+  const raceStarted = await execute(
+    "const b=[...document.querySelectorAll('button')].find(x=>x.textContent.trim()==='Analyze Print'); const l=[...document.querySelectorAll('label')].find(x=>x.querySelector('span')?.textContent.trim()==='width'); const i=l?.querySelector('input'); if(!b||b.disabled||!i) return false; b.click(); b.click(); const s=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set; s.call(i,'301'); i.dispatchEvent(new Event('input',{bubbles:true})); i.dispatchEvent(new Event('change',{bubbles:true})); return true;",
+  );
+  if (!raceStarted) throw new Error('Unable to exercise repeated Analyze Print + edit in one browser task.');
+  await waitFor('width edit during Analyze Print', async () => Number(await inputValue('width')) === 301);
+  await waitFor('Analyze Print single-flight completion', async () => execute(
+    "const b=[...document.querySelectorAll('button')].find(x=>x.textContent.trim()==='Analyze Print'); return Boolean(b && !b.disabled);",
+  ), 45000, 200);
+  await waitText('Exact split handoff', false);
+  await setLabelInput('width', 300);
+  console.log('Browser smoke: duplicate Analyze + edit-while-busy stale rejection PASS');
+
   await clickButton('Analyze Print');
   await waitText('Exact split handoff', true, 45000);
   await waitText('0.20 mm/side clearance');
@@ -363,7 +379,7 @@ try {
       + ` | p95=${p95 === null ? 'n/a' : p95.toFixed(1) + 'ms'}`
       + ` | step=${stepDurationMs.toFixed(0)}ms`
       + ` | aligned=${alignedDurationMs.toFixed(0)}ms`
-      + ' | calibration/reanalysis/aligned-3MF/STEP/save-open/history-reset/undo-redo/recovery/offline PASS',
+      + ' | analyze-single-flight/stale-edit/calibration/reanalysis/aligned-3MF/STEP/save-open/history-reset/undo-redo/recovery/offline PASS',
   );
 } catch (error) {
   throw new Error(String(error) + previewOutput() + driverOutput());
