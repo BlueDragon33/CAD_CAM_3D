@@ -1,4 +1,7 @@
 import { spawn } from 'node:child_process';
+import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 const host = '127.0.0.1';
 const port = Number(process.env.BROWSER_SMOKE_PORT || 4173);
@@ -64,6 +67,7 @@ const previewOutput = capture(preview, 'vite preview');
 const driverOutput = capture(driver, 'chromedriver');
 
 let sessionId = null;
+let downloadDir = null;
 
 try {
   await waitFor('Vite preview', async () => {
@@ -168,6 +172,12 @@ try {
     method: 'POST',
     body: JSON.stringify({ cmd, params }),
   });
+  downloadDir = await mkdtemp(join(tmpdir(), 'cad-cam-3d-browser-smoke-'));
+  await cdp('Browser.setDownloadBehavior', {
+    behavior: 'allow',
+    downloadPath: downloadDir,
+    eventsEnabled: true,
+  });
 
   await jsonRequest(endpoint('/timeouts'), {
     method: 'POST',
@@ -230,6 +240,41 @@ try {
   );
   const alignedDurationMs = performance.now() - alignedStartedAt;
   console.log('Browser smoke: aligned split PASS in ' + alignedDurationMs.toFixed(0) + 'ms');
+
+  console.log('Browser smoke: Save/Open file round-trip start');
+  await clickButton('Save Project');
+  await waitText('Project saved · schema v13');
+  const savedFileName = await waitFor('downloaded CAD project file', async () => {
+    const names = await readdir(downloadDir);
+    return names.find((name) => name.endsWith('.cad3d.json') && !name.endsWith('.crdownload')) ?? null;
+  }, 20000, 200);
+  const savedPath = join(downloadDir, savedFileName);
+  const savedText = await readFile(savedPath, 'utf8');
+  const savedDocument = JSON.parse(savedText);
+  if (savedDocument.schemaVersion !== 13) {
+    throw new Error(`Saved project schema expected v13, got ${savedDocument.schemaVersion}.`);
+  }
+  if (savedDocument.project?.printProfile?.fitCalibration?.registrationClearancePerSideMm !== 0.3) {
+    throw new Error('Saved project did not persist 0.30 mm registration clearance.');
+  }
+  if (savedDocument.project?.dimensions?.width !== 300) {
+    throw new Error('Saved project did not persist the 300 mm width used by the browser journey.');
+  }
+
+  await setLabelInput('Registration clearance / side', 0.45);
+  await setLabelInput('width', 180);
+  await waitFor('mutated calibration before Open', async () => Number(await inputValue('Registration clearance / side')) === 0.45);
+  await waitFor('mutated width before Open', async () => Number(await inputValue('width')) === 180);
+
+  const injected = await execute(
+    "const input=document.querySelector('input.file-input[type=file]'); if(!input) return false; const f=new File([arguments[0]],arguments[1],{type:'application/json'}); const dt=new DataTransfer(); dt.items.add(f); input.files=dt.files; input.dispatchEvent(new Event('change',{bubbles:true})); return true;",
+    [savedText, savedFileName],
+  );
+  if (!injected) throw new Error('Open Project file input was not found for browser round-trip.');
+  await waitText('Project opened · schema v13');
+  await waitFor('opened calibration from saved file', async () => Number(await inputValue('Registration clearance / side')) === 0.3);
+  await waitFor('opened width from saved file', async () => Number(await inputValue('width')) === 300);
+  console.log('Browser smoke: Save/Open file round-trip PASS');
 
   await clickButton('Undo');
   await waitFor('calibration undo', async () => (await inputValue('Registration clearance / side')) === '');
@@ -307,7 +352,7 @@ try {
       + ` | p95=${p95 === null ? 'n/a' : p95.toFixed(1) + 'ms'}`
       + ` | step=${stepDurationMs.toFixed(0)}ms`
       + ` | aligned=${alignedDurationMs.toFixed(0)}ms`
-      + ' | calibration/reanalysis/aligned-3MF/STEP/undo-redo/recovery/offline PASS',
+      + ' | calibration/reanalysis/aligned-3MF/STEP/save-open/undo-redo/recovery/offline PASS',
   );
 } catch (error) {
   throw new Error(String(error) + previewOutput() + driverOutput());
@@ -319,5 +364,8 @@ try {
     try { child.kill('SIGTERM'); } catch {}
     child.stdout?.destroy();
     child.stderr?.destroy();
+  }
+  if (downloadDir) {
+    try { await rm(downloadDir, { recursive: true, force: true }); } catch {}
   }
 }
