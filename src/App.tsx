@@ -11,6 +11,7 @@ import {
 import { activeCadKernel } from './cad/kernel';
 import { exactKernelDescriptor } from './cad/exact-kernel';
 import { downloadProjectFile, loadProjectFile } from './cad/project-io';
+import { applyProjectUpdate, createProjectHistory, redoProjectHistory, replaceProjectHistory, undoProjectHistory, type ProjectUpdate } from './cad/project-history';
 import { rebuildProject } from './cad/rebuild';
 import { solveSketch } from './cad/constraints';
 import { resolveManufacturingProfileWithRegions } from './cad/profile-region';
@@ -67,7 +68,14 @@ function initialRecoveryCandidate(): RecoverySnapshot | null {
 }
 
 export default function App() {
-  const [project, setProject] = useState<CadProject>(() => createDefaultProject());
+  const [projectHistory, setProjectHistory] = useState(() => createProjectHistory(createDefaultProject()));
+  const project = projectHistory.present;
+  const setProject = (update: ProjectUpdate) => {
+    setProjectHistory((current) => applyProjectUpdate(current, update));
+  };
+  const replaceProject = (next: CadProject) => {
+    setProjectHistory(replaceProjectHistory(next));
+  };
   const projectRef = useRef(project);
   projectRef.current = project;
   const [selectedFeatureId, setSelectedFeatureId] = useState<string | null>(() => project.features[1]?.id ?? project.features[0]?.id ?? null);
@@ -576,7 +584,7 @@ export default function App() {
     if (!recoveryCandidate) return;
     try {
       const restored = restoreRecoverySnapshot(recoveryCandidate);
-      setProject(restored.project);
+      replaceProject(restored.project);
       setSelectedFeatureId(restored.project.features[1]?.id ?? restored.project.features[0]?.id ?? null);
       setTopologySelection(null);
       setLastExport(null);
@@ -594,7 +602,7 @@ export default function App() {
     if (!file) return;
     try {
       const loaded = await loadProjectFile(file);
-      setProject(loaded.project);
+      replaceProject(loaded.project);
       setSelectedFeatureId(loaded.project.features[1]?.id ?? loaded.project.features[0]?.id ?? null);
       setTopologySelection(null); setLastExport(null); setLastStepExport(null); setLastThreeMfExport(null); setLastSplitThreeMfExport(null); setManufacturingReport(null); setRecoveryCandidate(null);
       const migration = loaded.report.migrated ? ` · migrated schema v${loaded.report.sourceSchemaVersion} → v${loaded.report.schemaVersion}` : ` · schema v${loaded.report.schemaVersion}`;
@@ -744,7 +752,7 @@ export default function App() {
 
   const reset = () => {
     const next = createDefaultProject();
-    setProject(next); setSelectedFeatureId(next.features[1]?.id ?? next.features[0]?.id ?? null); setTopologySelection(null); setLastExport(null); setLastStepExport(null); setLastThreeMfExport(null); setLastSplitThreeMfExport(null); setLastAlignedSplitThreeMfExport(null); setManufacturingReport(null); setRecoveryCandidate(null); setStatus('Workspace reset.');
+    replaceProject(next); setSelectedFeatureId(next.features[1]?.id ?? next.features[0]?.id ?? null); setTopologySelection(null); setLastExport(null); setLastStepExport(null); setLastThreeMfExport(null); setLastSplitThreeMfExport(null); setLastAlignedSplitThreeMfExport(null); setManufacturingReport(null); setRecoveryCandidate(null); setStatus('Workspace reset.');
   };
 
   const handleTopologySelection = (selection: TopologySelection | null) => {
@@ -965,6 +973,48 @@ export default function App() {
     return renderEdgeTreatmentInspector(selectedFeature);
   };
 
+  const undoProject = () => {
+    if (projectHistory.past.length === 0) return;
+    setProjectHistory((current) => undoProjectHistory(current));
+    setTopologySelection(null);
+    setDesignProposal(null);
+    setStatus('Undo · restored the previous canonical project state.');
+  };
+
+  const redoProject = () => {
+    if (projectHistory.future.length === 0) return;
+    setProjectHistory((current) => redoProjectHistory(current));
+    setTopologySelection(null);
+    setDesignProposal(null);
+    setStatus('Redo · restored the next canonical project state.');
+  };
+
+  useEffect(() => {
+    if (selectedFeatureId && !project.features.some((feature) => feature.id === selectedFeatureId)) {
+      setSelectedFeatureId(project.features.at(-1)?.id ?? null);
+    }
+  }, [project, selectedFeatureId]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!(event.ctrlKey || event.metaKey) || event.altKey) return;
+      const target = event.target as HTMLElement | null;
+      const tag = target?.tagName;
+      if (target?.isContentEditable || tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+      const key = event.key.toLowerCase();
+      if (key === 'z' && !event.shiftKey) {
+        if (projectHistory.past.length === 0) return;
+        event.preventDefault();
+        undoProject();
+      } else if ((key === 'y' || (key === 'z' && event.shiftKey)) && projectHistory.future.length > 0) {
+        event.preventDefault();
+        redoProject();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [projectHistory.past.length, projectHistory.future.length]);
+
   const sketchSelected = selectedFeature?.kind === 'sketch';
 
   return (
@@ -974,6 +1024,8 @@ export default function App() {
         <div className="topbar-actions">
           <span className="managed-badge" title={`${managementIdentity.appName} được quản lý dưới ${managementIdentity.controlPlane}`}>Managed · Quản trị Ứng dụng</span>
           <span className="kernel-badge" title={`Kernel id: ${activeCadKernel.id}`}>{activeCadKernel.label}</span>
+          <button type="button" onClick={undoProject} disabled={projectHistory.past.length === 0} title="Undo project change (Ctrl/Cmd+Z)">Undo</button>
+          <button type="button" onClick={redoProject} disabled={projectHistory.future.length === 0} title="Redo project change (Ctrl/Cmd+Y or Ctrl/Cmd+Shift+Z)">Redo</button>
           <button type="button" onClick={saveProject}>Save Project</button>
           {recoveryCandidate ? <button type="button" onClick={restoreRecovery} title={`Local autosave from ${new Date(recoveryCandidate.savedAt).toLocaleString()}`}>Recover</button> : null}
           <button type="button" onClick={() => projectInputRef.current?.click()}>Open Project</button>
