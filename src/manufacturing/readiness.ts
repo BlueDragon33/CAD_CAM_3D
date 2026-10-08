@@ -5,6 +5,7 @@ import { buildExactKernelSnapshot } from '../cad/exact-kernel';
 import { projectRequiresExactGeometry } from '../cad/project-analysis';
 import { analyzeDownwardOverhang } from './geometry-analysis';
 import { planBuildVolumeSplit, type ManufacturingSplitPlan } from './split-plan';
+import { manufacturingEvidenceKey } from './evidence';
 
 export type ManufacturingFindingLevel = 'ok' | 'warning' | 'blocker';
 export type ManufacturingFindingCategory = 'geometry' | 'build-volume' | 'orientation' | 'split' | 'overhang' | 'feature-size' | 'wall' | 'design-intent' | 'kernel';
@@ -27,6 +28,7 @@ export type AxisAlignedOrientation = {
 };
 
 export type ManufacturingReadinessReport = {
+  inputKey: string;
   kernelId: string;
   exact: boolean;
   dimensionsMm: { width: number; depth: number; height: number };
@@ -255,7 +257,7 @@ export function evaluateManufacturingReadiness(
   const exportBlocked = findings.some((entry) => entry.level === 'blocker' && entry.blocksExport);
   const selectedPrinterReady = !findings.some((entry) => entry.level === 'blocker');
 
-  return { kernelId, exact, dimensionsMm, recommendedOrientation, splitPlan, findings, exportBlocked, selectedPrinterReady };
+  return { inputKey: manufacturingEvidenceKey(project), kernelId, exact, dimensionsMm, recommendedOrientation, splitPlan, findings, exportBlocked, selectedPrinterReady };
 }
 
 function appendOverhangFinding(
