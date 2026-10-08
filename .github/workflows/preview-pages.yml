@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: cad-cam-3d-preview-build
@@ -27,16 +27,26 @@ jobs:
           cache: npm
           cache-dependency-path: package.json
 
-      - name: Install dependencies
+      - name: Check lockfile presence
+        id: lock
+        run: |
+          if [ -f package-lock.json ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install dependencies and resolve bootstrap lock
         run: npm install --no-audit --no-fund
 
-      - name: Upload resolved lockfile bootstrap
-        uses: actions/upload-artifact@v4
-        with:
-          name: resolved-package-lock-${{ github.sha }}
-          path: package-lock.json
-          if-no-files-found: error
-          retention-days: 1
+      - name: Commit bootstrap lockfile once
+        if: steps.lock.outputs.present == 'false'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package-lock.json
+          git commit -m "chore(deps): lock v1 dependency graph"
+          git push origin HEAD:foundation/general-system
 
       - name: Build preview artifact
         env:
