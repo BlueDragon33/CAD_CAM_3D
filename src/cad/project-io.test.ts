@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createDefaultProject, type DatumAxisFeature, type HoleFeature, type LinearPatternFeature, type MirrorFeature, type PadFeature, type RevolveFeature, type ShellFeature, type SketchFeature } from './model';
-import { parseProjectDocument, serializeProject } from './project-io';
+import { MAX_PROJECT_DOCUMENT_BYTES, parseProjectDocument, serializeProject } from './project-io';
 
 function baseDocument() {
   return JSON.parse(serializeProject(createDefaultProject())) as {
@@ -314,6 +314,23 @@ describe('project schema migration', () => {
     };
     doc.project.features.push(pad);
     expect(() => parseProjectDocument(JSON.stringify(doc))).toThrow(/missing or later sketch/i);
+  });
+
+  it('rejects project documents above the v1 serialized-size safety bound before parsing', () => {
+    const oversized = ' '.repeat(MAX_PROJECT_DOCUMENT_BYTES + 1);
+    expect(() => parseProjectDocument(oversized)).toThrow(/safety limit/i);
+  });
+
+  it('rejects pathological feature counts before rebuilding geometry', () => {
+    const doc = baseDocument();
+    const seed = doc.project.features[0];
+    doc.project.features = Array.from({ length: 5001 }, (_, index) => ({
+      ...seed,
+      id: `feature-${index}`,
+      name: `Feature ${index}`,
+    })) as typeof doc.project.features;
+
+    expect(() => parseProjectDocument(JSON.stringify(doc))).toThrow(/5000 features/i);
   });
 
   it('rejects future unknown project schemas', () => {
