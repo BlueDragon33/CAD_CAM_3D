@@ -16,7 +16,7 @@ A. Introduce a small, in-memory exclusive operation gate for Analyze Print. Enfo
 
 B. Extend Chrome critical journey with a rapid repeated-click case and an edit-while-analysis-running case; ensure only one analysis is launched and stale results never reappear.
 
-C. Capture reproducible real-browser timings (navigation, STEP, aligned 3MF) as evidence, with raw samples and P50/P95 and **UNSET** performance budgets until approved/measured. Do not invent target thresholds.
+C. Preserve the previously ratified v1 CI regression budgets (navigation P95 1500 ms, STEP 10000 ms, aligned split 15000 ms). Write a sanitized artifact per Chrome run containing raw navigation samples, valid P50/P95, single-export durations (without falsely labeling them P50/P95), environment/revision and documented limitations. These guards are not hardware-neutral latency SLAs.
 
 D. Audit remaining export/open async completion paths, worker isolation and memory under realistic stress before claiming long-running robustness. Subsequent slices need their own evidence.
 
@@ -52,3 +52,14 @@ No new dependency, external essential service, credential, network send, schema 
 ## Exit
 
 Close slice A/B only when exact-HEAD CI + real Chrome critical journey pass. WP remains active for later performance/memory slices; do not label the whole commercial product finished solely because this slice passes.
+
+## Slice A/B/C implementation evidence contract
+
+- `src/platform/exclusive-job.ts` prevents double-begin before React's next paint and does not pretend to cancel running kernel work.
+- `src/App.tsx` invalidates job publication on project edits, Open/Reset, Undo/Redo; stale failures cannot overwrite newer UI truth.
+- `scripts/browser-smoke.mjs` exercises double Analyze + synchronous edit, then a fresh Analyze followed by real Save/Open, export and offline journeys.
+- `scripts/browser-metrics.mjs` uses observed nearest-rank percentiles for multiple navigation samples. A **single** STEP/aligned-split observation is reported only as duration, never as P50/P95.
+- `.github/workflows/ci.yml` uploads `cad-browser-performance` (14-day retention), containing only timing numbers and CI revision; no project, mesh or private prompts.
+- `scripts/browser-metrics.test.mjs` is Vitest-native, avoiding a conflicting nested Node test runner.
+
+This document must not state that the entire WP is complete while export/file-import race and memory/load investigation (slice D) is still open.
