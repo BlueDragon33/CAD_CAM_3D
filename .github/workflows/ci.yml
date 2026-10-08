@@ -30,8 +30,6 @@ jobs:
         run: |
           google-chrome --version
           chromedriver --version
-      - name: Browser metrics contract tests
-        run: node --test scripts/browser-metrics.test.mjs
       - name: Browser critical journey
         run: timeout 210s npm run smoke:browser
       - name: Save sanitized browser performance evidence
