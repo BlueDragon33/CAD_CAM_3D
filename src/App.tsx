@@ -32,6 +32,7 @@ import { downloadProjectThreeMf, type ThreeMfExportReport } from './manufacturin
 import { downloadProjectSplitThreeMf, type SplitThreeMfExportReport } from './manufacturing/split-export';
 import { planSplitAlignment } from './manufacturing/alignment-plan';
 import { deriveRegistrationFitPolicy } from './manufacturing/fit-policy';
+import { isManufacturingEvidenceCurrent, manufacturingEvidenceKey } from './manufacturing/evidence';
 import { downloadProjectAlignedSplitThreeMf, type AlignedSplitThreeMfExportReport } from './manufacturing/aligned-split-export';
 import { Sketcher } from './components/Sketcher';
 import { Viewport } from './components/Viewport';
@@ -67,6 +68,8 @@ function initialRecoveryCandidate(): RecoverySnapshot | null {
 
 export default function App() {
   const [project, setProject] = useState<CadProject>(() => createDefaultProject());
+  const projectRef = useRef(project);
+  projectRef.current = project;
   const [selectedFeatureId, setSelectedFeatureId] = useState<string | null>(() => project.features[1]?.id ?? project.features[0]?.id ?? null);
   const [topologySelection, setTopologySelection] = useState<TopologySelection | null>(null);
   const [command, setCommand] = useState('');
@@ -625,6 +628,11 @@ export default function App() {
   };
 
   const exportSplitThreeMf = async () => {
+    if (manufacturingReport && !isManufacturingEvidenceCurrent(project, manufacturingReport.inputKey)) {
+      setManufacturingReport(null);
+      setStatus('Split 3MF export blocked: Analyze Print evidence is stale for the current project.');
+      return;
+    }
     const plan = manufacturingReport?.splitPlan;
     if (!plan) {
       setStatus('Split 3MF export requires a current Analyze Print result with a split plan.');
@@ -654,6 +662,11 @@ export default function App() {
   };
 
   const exportAlignedSplitThreeMf = async () => {
+    if (manufacturingReport && !isManufacturingEvidenceCurrent(project, manufacturingReport.inputKey)) {
+      setManufacturingReport(null);
+      setStatus('Aligned Split 3MF export blocked: Analyze Print evidence is stale for the current project.');
+      return;
+    }
     const splitPlan = manufacturingReport?.splitPlan;
     const alignmentPlan = splitAlignmentPlan;
     if (!splitPlan || !alignmentPlan?.ready) {
@@ -703,10 +716,17 @@ export default function App() {
   };
 
   const analyzePrint = async () => {
+    const requestedInputKey = manufacturingEvidenceKey(project);
     setManufacturingBusy(true);
     setStatus('Analyzing final manufacturing geometry…');
     try {
       const report = await analyzeManufacturingReadiness(project);
+      if (report.inputKey !== requestedInputKey
+        || !isManufacturingEvidenceCurrent(projectRef.current, report.inputKey)) {
+        setManufacturingReport(null);
+        setStatus('Manufacturing analysis discarded because the project changed while analysis was running. Run Analyze Print again.');
+        return;
+      }
       setManufacturingReport(report);
       const blockers = report.findings.filter((entry) => entry.level === 'blocker').length;
       const warnings = report.findings.filter((entry) => entry.level === 'warning').length;
