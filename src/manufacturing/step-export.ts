@@ -1,5 +1,6 @@
 import type { CadProject } from '../cad/model';
 import { buildExactKernelSnapshot, type ExactKernelReport } from '../cad/exact-kernel';
+import { assertExportDownloadAllowed } from './export-guard';
 
 export type StepExportReport = ExactKernelReport & {
   fileName: string;
@@ -34,8 +35,9 @@ export async function createStepExport(project: CadProject) {
   }
 }
 
-export async function downloadProjectStep(project: CadProject): Promise<StepExportReport> {
+export async function downloadProjectStep(project: CadProject, mayDownload?: () => boolean): Promise<StepExportReport> {
   const { blob, report } = await createStepExport(project);
+  assertExportDownloadAllowed(mayDownload);
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement('a');
   anchor.href = url;
