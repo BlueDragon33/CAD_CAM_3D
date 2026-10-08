@@ -276,10 +276,21 @@ try {
   await waitFor('opened width from saved file', async () => Number(await inputValue('width')) === 300);
   console.log('Browser smoke: Save/Open file round-trip PASS');
 
+  const undoDisabledAfterOpen = await execute(
+    "const b=[...document.querySelectorAll('button')].find(x=>x.textContent.trim()==='Undo'); return b ? b.disabled : null;",
+  );
+  if (undoDisabledAfterOpen !== true) {
+    throw new Error('Open Project must reset prior project history; Undo was unexpectedly enabled.');
+  }
+
+  await setLabelInput('Registration clearance / side', 0.40);
+  await waitFor('post-open calibration edit', async () => Number(await inputValue('Registration clearance / side')) === 0.4);
   await clickButton('Undo');
-  await waitFor('calibration undo', async () => (await inputValue('Registration clearance / side')) === '');
+  await waitFor('post-open calibration undo', async () => Number(await inputValue('Registration clearance / side')) === 0.3);
   await clickButton('Redo');
-  await waitFor('calibration redo', async () => Number(await inputValue('Registration clearance / side')) === 0.3);
+  await waitFor('post-open calibration redo', async () => Number(await inputValue('Registration clearance / side')) === 0.4);
+  await setLabelInput('Registration clearance / side', 0.30);
+  await waitFor('recovery target calibration', async () => Number(await inputValue('Registration clearance / side')) === 0.3);
 
   await delay(1800);
   await refresh();
@@ -352,7 +363,7 @@ try {
       + ` | p95=${p95 === null ? 'n/a' : p95.toFixed(1) + 'ms'}`
       + ` | step=${stepDurationMs.toFixed(0)}ms`
       + ` | aligned=${alignedDurationMs.toFixed(0)}ms`
-      + ' | calibration/reanalysis/aligned-3MF/STEP/save-open/undo-redo/recovery/offline PASS',
+      + ' | calibration/reanalysis/aligned-3MF/STEP/save-open/history-reset/undo-redo/recovery/offline PASS',
   );
 } catch (error) {
   throw new Error(String(error) + previewOutput() + driverOutput());
