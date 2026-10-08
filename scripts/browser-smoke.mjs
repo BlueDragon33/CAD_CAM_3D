@@ -280,6 +280,12 @@ try {
   const alignedDurationMs = performance.now() - alignedStartedAt;
   console.log('Browser smoke: aligned split PASS in ' + alignedDurationMs.toFixed(0) + 'ms');
 
+  await waitText('Last STEP · PASS');
+  await setLabelInput('width', 299);
+  await waitText('Last STEP · PASS', false);
+  await setLabelInput('width', 300);
+  console.log('Browser smoke: editing CAD removes stale export PASS labels');
+
   console.log('Browser smoke: Save/Open file round-trip start');
   await clickButton('Save Project');
   await waitText('Project saved · schema v13');
@@ -413,7 +419,7 @@ try {
       + ` | p95=${p95 === null ? 'n/a' : p95.toFixed(1) + 'ms'}`
       + ` | step=${stepDurationMs.toFixed(0)}ms`
       + ` | aligned=${alignedDurationMs.toFixed(0)}ms`
-      + ' | analyze-single-flight/stale-edit/export-single-flight/stale-STEP-block/calibration/reanalysis/aligned-3MF/STEP/save-open/latest-open/history-reset/undo-redo/recovery/offline PASS',
+      + ' | analyze-single-flight/stale-edit/export-single-flight/stale-STEP-block/export-evidence-invalidation/calibration/reanalysis/aligned-3MF/STEP/save-open/latest-open/history-reset/undo-redo/recovery/offline PASS',
   );
 } catch (error) {
   throw new Error(String(error) + previewOutput() + driverOutput());
