@@ -1,14 +1,14 @@
 # CAD_CAM_3D Human UX Acceptance Runbook
 
 Status: **AUTONOMOUS v1 COMPLETION AUTHORIZED; FIT-CALIBRATION AUTOMATED RC EVIDENCE PASS**
-Scope: current foundation branch `foundation/general-system`
+Scope: released v1 `main` baseline (original implementation branch: `foundation/general-system`).
 Purpose: verify premium usability and real-browser/slicer behavior that CI cannot prove.
 
 On 2026-10-07 the Product Owner explicitly authorized automated implementation to continue beyond the earlier interaction checkpoint. That authorization is **not** recorded as evidence that every browser journey below was manually tested, and it does not authorize merge or Production. The exact split / multi-object 3MF handoff added after that authorization was explicitly accepted by the Product Owner on 2026-10-07. This acceptance authorizes continued foundation work only; merge and Production remain separate gates.
 
 ## 1. Run the production-like app
 
-From a local checkout of `foundation/general-system`:
+From a local checkout of the exact revision being accepted (normally a release/RC branch, or `main` for post-release spot-check):
 
 ```bash
 npm install
