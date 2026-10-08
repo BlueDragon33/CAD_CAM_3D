@@ -141,3 +141,27 @@ v1.0.0 is complete when the exact main revision has:
 - production deployment PASS;
 - PR/release docs record the exact revision;
 - no known release-blocking regression.
+
+## Ratified v1 regression budgets
+
+Budgets were set **after** measurement, not invented as PASS criteria.
+
+Measured CI baseline on 2026-10-08:
+- production assets total: 22.148 MiB;
+- JavaScript: 0.937 MiB;
+- CSS: 0.015 MiB;
+- exact OCCT WASM: 21.197 MiB;
+- browser navigation p95: 357.8 ms across five CI samples;
+- browser exact STEP export: 992 ms;
+- browser aligned split 3MF: 885 ms.
+
+v1 CI regression guards:
+- total assets <= 28 MiB;
+- JavaScript <= 1.25 MiB;
+- CSS <= 0.10 MiB;
+- exact WASM <= 24 MiB;
+- navigation p95 <= 1500 ms;
+- STEP <= 10 s;
+- aligned split <= 15 s.
+
+These are CI regression budgets with deliberate variance headroom. They are not public end-user SLAs.
