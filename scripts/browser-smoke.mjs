@@ -40,11 +40,18 @@ function capture(process, label) {
 
 async function jsonRequest(url, options = {}) {
   const { timeoutMs = 15000, ...requestOptions } = options;
-  const response = await fetch(url, {
-    ...requestOptions,
-    signal: AbortSignal.timeout(timeoutMs),
-    headers: { 'content-type': 'application/json', ...(requestOptions.headers || {}) },
-  });
+  let response;
+  try {
+    response = await fetch(url, {
+      ...requestOptions,
+      signal: AbortSignal.timeout(timeoutMs),
+      headers: { 'content-type': 'application/json', ...(requestOptions.headers || {}) },
+    });
+  } catch (error) {
+    // Surface which local WebDriver request timed out, rather than a bare
+    // TimeoutError that cannot distinguish Chrome startup from a CAD defect.
+    throw new Error(`${requestOptions.method || 'GET'} ${url} could not complete within ${timeoutMs}ms: ${String(error)}`);
+  }
   const text = await response.text();
   let body = null;
   if (text) {
@@ -83,6 +90,9 @@ try {
 
   const session = await jsonRequest(driverUrl + '/session', {
     method: 'POST',
+    // Cold ChromeDriver session startup can exceed the 15s per-request
+    // default on a busy hosted runner; retain the 210s whole-journey gate.
+    timeoutMs: 30000,
     body: JSON.stringify({
       capabilities: {
         alwaysMatch: {
