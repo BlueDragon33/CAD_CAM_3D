@@ -168,7 +168,7 @@ For the named rectangle, manufacturing binding accepts descendants of the six pl
 
 ## Project persistence
 
-Current editable project schema is v12.
+Current editable project schema is **v13**. `CadProject` remains the sole canonical editable engineering source of truth.
 
 Migration chain:
 - v1: legacy Fillet selection + global Hole/Cut;
@@ -183,8 +183,9 @@ Migration chain:
 - v10: `Mirror` persists an earlier Hole/Cut source feature ID plus explicit global or face-local symmetry plane;
 - v11: `Datum Axis` persists a base-XZ or attached-sketch-local source, axis and offset without kernel runtime identity;
 - v12: `Revolve` persists an earlier promoted Sketch ID, durable Datum Axis ID, bounded angle and additive operation semantics.
+- v13: `printProfile.fitCalibration.registrationClearancePerSideMm` persists an optional 0.05–2.00 mm per-side registration clearance; v1–v12 migrate to `null` (documented uncalibrated default), never to a guessed calibrated value.
 
-The loader accepts v1-v12 and validates supported fields before a project enters the workspace. Multi-loop region membership and side-face semantic lineage reuse stable entity IDs/flags; schema bumps are reserved for changes to durable project meaning such as SketchPlaneRef and Pad/Pocket.
+The loader accepts v1–v13, migrates older documents to v13, and validates supported fields before a project enters the workspace. Multi-loop region membership and side-face semantic lineage reuse stable entity IDs/flags; schema bumps are reserved for changes to durable project meaning such as SketchPlaneRef and Pad/Pocket.
 
 Project JSON, B-Rep and manufacturing files remain owned by CAD_CAM_3D and are not mirrored into Quản trị Ứng dụng.
 
@@ -221,7 +222,7 @@ A semantic component-catalog contract and offline local provider now exist for f
 
 ## Current foundation
 
-The project now supports deterministic feature history, schema-v12 persistence with v1-v11 migration, explicit five-state sketch constraint diagnostics, constrained interactive Line/Circle/Arc entities, closed-loop validation, explicit Line/Line+Arc/Circle region promotion, direct inner-hole classification, durable planar Sketch attachment, exact attached Pad/Pocket, exact Shell, deterministic Hole/Cut Linear Pattern and Mirror, durable Datum Axis, exact additive Revolve, mesh/OpenCascade parity gating, sketch-entity semantic side-face lineage, planar promoted-side Hole/Cut binding, lightweight and exact preview/manufacturing paths, STL, portable Core 3MF, STEP, topology evolution, durable face/edge references, oriented planar-face Hole/Cut, exact Fillet and exact Chamfer.
+The project now supports deterministic feature history, schema-v13 persistence with v1–v12 migrations, explicit five-state sketch constraint diagnostics, constrained interactive Line/Circle/Arc entities, closed-loop validation, explicit Line/Line+Arc/Circle region promotion, direct inner-hole classification, durable planar Sketch attachment, exact attached Pad/Pocket, exact Shell, deterministic Hole/Cut Linear Pattern and Mirror, durable Datum Axis, exact additive Revolve, mesh/OpenCascade parity gating, sketch-entity semantic side-face lineage, planar promoted-side Hole/Cut binding, lightweight and exact preview/manufacturing paths, STL, portable Core 3MF, STEP, topology evolution, durable face/edge references, oriented planar-face Hole/Cut, exact Fillet and exact Chamfer.
 
 Automated foundations also cover adaptive manufacturing readiness, axis-aligned printer-fit recommendations, downward-overhang warning, local autosave/recovery, offline production asset caching, a bounded preview-before-commit design-command planner and an offline semantic component-catalog provider.
 
