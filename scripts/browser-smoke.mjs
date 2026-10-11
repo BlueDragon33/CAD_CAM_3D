@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promis
 import { browserPerformanceEvidence } from './browser-metrics.mjs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const host = '127.0.0.1';
 const port = Number(process.env.BROWSER_SMOKE_PORT || 4173);
@@ -302,7 +303,7 @@ try {
   const { stdout: artifactEvidence } = await new Promise((resolve, reject) => {
     execFile(
       process.env.PYTHON || 'python3',
-      [new URL('./manufacturing-artifact-conformance.py', import.meta.url).pathname,
+      [fileURLToPath(new URL('./manufacturing-artifact-conformance.py', import.meta.url)),
         join(downloadDir, artifacts.step), join(downloadDir, artifacts.mf)],
       { timeout: 20000 },
       (error, stdout, stderr) => error ? reject(new Error(stderr || error.message))
