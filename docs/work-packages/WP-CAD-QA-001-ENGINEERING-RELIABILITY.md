@@ -77,3 +77,14 @@ This document must not state that the entire WP is complete while export/file-im
 ### Still open (next QA slice)
 
 Long-run memory and heavy project histories, repeated export contention, and real-device performance baselines require separate evidence. These are not silently labeled PASS by this release slice.
+
+## Slice D1 — bounded project-history stress regression (2026-10-11)
+
+- Reproduce 2,000 sequential canonical parameter edits in the unit runner.
+- Assert every step retains at most 50 undo snapshots; oldest snapshot is inaccessible after compaction.
+- Undo 50 times and redo 50 times, checking final project intent.
+- Reject invalid custom snapshot budgets (zero, negative, fractional, above maximum, NaN and Infinity) **before invoking the update callback**, rather than accepting an unbounded/undefined retention policy.
+- This is deterministic history-retention stress only; **not** a measurement of OCCT heap, tessellation throughput, large B-Rep project load, actual Chromium memory or long-duration workstation stability.
+- Evidence: exact branch CI run pending. Do not mark slice PASS before automated gates return green.
+
+The broader QA-001 memory/load slice remains open after D1; production promotion requires separate exact-revision gates.
