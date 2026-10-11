@@ -23,6 +23,9 @@ export function applyProjectUpdate(
   update: ProjectUpdate,
   limit = MAX_PROJECT_HISTORY,
 ): ProjectHistory {
+  if (!Number.isInteger(limit) || limit < 1 || limit > MAX_PROJECT_HISTORY) {
+    throw new RangeError(`Project history limit must be an integer between 1 and ${MAX_PROJECT_HISTORY}.`);
+  }
   const next = typeof update === 'function' ? update(history.present) : update;
   if (projectEqual(history.present, next)) return history;
   const past = [...history.past, history.present];
