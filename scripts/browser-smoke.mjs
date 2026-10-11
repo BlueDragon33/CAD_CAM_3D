@@ -295,8 +295,8 @@ try {
   const artifacts = await waitFor('completed STEP and aligned 3MF downloads', async () => {
     const names = await readdir(downloadDir);
     if (names.some((name) => name.endsWith('.crdownload'))) return null;
-    const step = names.filter((name) => /\\.step$/i.test(name));
-    const mf = names.filter((name) => /\\.3mf$/i.test(name));
+    const step = names.filter((name) => /\.step$/i.test(name));
+    const mf = names.filter((name) => /\.3mf$/i.test(name));
     return step.length === 1 && mf.length === 1 ? { step: step[0], mf: mf[0] } : null;
   }, 20000, 200);
   const { stdout: artifactEvidence } = await new Promise((resolve, reject) => {
