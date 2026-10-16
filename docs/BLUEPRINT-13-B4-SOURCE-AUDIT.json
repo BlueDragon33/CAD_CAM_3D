@@ -1,0 +1,39 @@
+{
+  "schemaVersion": "1.0.0",
+  "status": "MIGRATION_REQUIRED_SOURCE_CANDIDATE",
+  "kind": "app-source-inheritance-audit",
+  "projectId": "project:cad-cam-3d",
+  "blueprintLevel": "B4",
+  "baseCommit": "5720d06c96aeb39825e1149330eff1e3518292bd",
+  "policy": {
+    "source": "BlueDragon33/Software-Blueprint-Hub",
+    "version": "1.3.0",
+    "constitutionRatifiedElsewhere": true
+  },
+  "sourceFiles": [
+    ".blueprint/constitution-adoption.json",
+    ".blueprint/dependency-budget.json",
+    "README.md"
+  ],
+  "core": "local-cad-cam-runtime",
+  "posture": "LOCAL_PORTABLE_DESIGN_CORE",
+  "requiredForbidden": [
+    "cloud-only-canonical-cad-project",
+    "ai-owned-canonical-geometry",
+    "provider-specific-format-without-portable-export"
+  ],
+  "unresolvedRuntimeQA": [
+    "Network-denied CAD local editor open/create/save/reopen/export/import",
+    "Verify canonical geometry reproducibility and portable file formats",
+    "Representative renderer/UX quality and browser regression without online hosting"
+  ],
+  "truth": {
+    "migration": "MIGRATION_REQUIRED",
+    "offlineRuntime": "UNVERIFIED",
+    "productPass": false,
+    "independentReview": "PENDING",
+    "productionAuthorized": false,
+    "networkPublication": "DISABLED_BY_ECOSYSTEM_POLICY",
+    "newConstitutionRatification": false
+  }
+}
