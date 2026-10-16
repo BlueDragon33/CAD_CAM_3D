@@ -1,6 +1,6 @@
 # WP-S1 — CAD v1 Post-Release Truth, Reliability & Manufacturing Validation
 
-Status: **ACTIVE — S1-A in progress; physical/slicer acceptance remains unverified**
+Status: **ACTIVE — S1-A release/document truth complete; S1-B structural conformance in progress; physical/slicer acceptance unverified**
 Baseline: `CAD_CAM_3D/main@e250a175a134d0b88330b25e0aa3f4815a3ab2dc`
 Authority: Universal Constitution 1.2.0 / B4 > CAD Century-Grade Blueprint > canonical Work Packages > execution prompt
 Product: local-first editable 3D-print CAD v1.0.0
@@ -24,11 +24,13 @@ CAD v1 reached Production and Application Management successfully discovered its
 - [x] Compare project schema source with architecture docs; reconcile v13 and legacy migration wording.
 - [x] Record live launch/observe-only App Manager integration and explicit missing Remote Admin authority.
 - [x] Update runbook scope from the historical foundation branch to release/RC-revision testing.
-- [ ] Gate architecture/schema documentation invariants in CI, without inventing capabilities.
-- [ ] Classify PR #4 Constitution B2 adoption as current/superseded; preserve its history and never merge obsolete B2 into B4.
-- [ ] Complete exact-head test/PR evidence and document whether any merge/Production authority is required.
+- [x] Gate architecture/schema documentation invariants in CI, without inventing capabilities (main CI `38122840617`, 2026-10-11).
+- [x] Classify PR #4 Constitution B2 adoption as superseded/closed; preserve history and B4 adoption (verified 2026-10-11).
+- [x] Record exact-head QA/Constitution and Production release readback: main `32a927bc26da2e2dd3d9f33d4c11997809e461f0`, CI `38122840617`, Constitution `38122840975`, Pages `38122907436` (2026-10-11). Post-v1 changes still require their own exact-revision gates and appropriate Production authority.
 
 ### S1-B — Real functional/slicer conformance
+
+- [x] Add separate standard-library decoding of actual Chrome-downloaded STEP and aligned 3MF artifacts: STEP exchange sections; 3MF OPC ZIP/CRC, content types, relationships, mesh/index validity, exactly two build objects, mm and Z-up, 300 × 40 × 12 mm extents. Exact branch `e6902ae67704704426643b2895cbb543468c8102` CI `38143973357` and Constitution `38143973773` PASS; browser logs independently confirm validator execution. This is **automated structure checking only**, not third-party STEP/slicer import or print testing.
 
 - [ ] Verify a release-generated STL and Core 3MF in an independent slicer (Bambu Studio or OrcaSlicer), including **mm**, slicer **Z-up**, dimensions and object count.
 - [ ] Verify STEP reopens in a separate STEP-capable application and represents the intended solid.
@@ -95,6 +97,9 @@ No action may change production access, introduce `EXTERNAL_ESSENTIAL`, or claim
 - Q11: separate Production Authority; a green PR never authorizes publishing a new post-v1 release by itself.
 
 ## Evidence and limits
+
+**2026-10-11 post-release evidence:** PR #11 and #12 harden browser startup/export and bounded 2,000-edit history retention; PR #13 reconciles schema v13 with documentation. All merged into `main@32a927bc26da2e2dd3d9f33d4c11997809e461f0` with exact-head CI/Constitution and Production Pages PASS. The observed live `release.json` SHA and source CI run also matched that commit. An additional separate PR #14 adds a real-browser downloaded STEP/3MF structural reader; branch evidence is positive but final Production promotion must not be inferred from green branch CI.
+
 
 **Already evidenced at baseline** (2026-10-08):
 - CAD CI + Production Pages: `main@e250a175a134d0b88330b25e0aa3f4815a3ab2dc`; CAD Pages workflow run `37793724466` succeeded.

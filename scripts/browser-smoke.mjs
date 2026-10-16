@@ -1,8 +1,9 @@
-import { spawn } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { browserPerformanceEvidence } from './browser-metrics.mjs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const host = '127.0.0.1';
 const port = Number(process.env.BROWSER_SMOKE_PORT || 4173);
@@ -289,6 +290,27 @@ try {
   );
   const alignedDurationMs = performance.now() - alignedStartedAt;
   console.log('Browser smoke: aligned split PASS in ' + alignedDurationMs.toFixed(0) + 'ms');
+
+  // Validate the actual browser-downloaded files with an independent ZIP/XML
+  // reader, not with the CAD serializer. This is NOT a slicer or printer test.
+  const artifacts = await waitFor('completed STEP and aligned 3MF downloads', async () => {
+    const names = await readdir(downloadDir);
+    if (names.some((name) => name.endsWith('.crdownload'))) return null;
+    const step = names.filter((name) => /\.step$/i.test(name));
+    const mf = names.filter((name) => /\.3mf$/i.test(name));
+    return step.length === 1 && mf.length === 1 ? { step: step[0], mf: mf[0] } : null;
+  }, 20000, 200);
+  const { stdout: artifactEvidence } = await new Promise((resolve, reject) => {
+    execFile(
+      process.env.PYTHON || 'python3',
+      [fileURLToPath(new URL('./manufacturing-artifact-conformance.py', import.meta.url)),
+        join(downloadDir, artifacts.step), join(downloadDir, artifacts.mf)],
+      { timeout: 20000 },
+      (error, stdout, stderr) => error ? reject(new Error(stderr || error.message))
+        : resolve({ stdout }),
+    );
+  });
+  console.log(artifactEvidence.trim());
 
   await waitText('Last STEP · PASS');
   await setLabelInput('width', 299);
