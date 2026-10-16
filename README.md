@@ -22,7 +22,7 @@ The system is designed to grow from a general CAD/printing foundation into deepe
 
 ## Constitutional governance
 
-CAD_CAM_3D adopts Blueprint OS Universal Constitution **1.2.0** at Blueprint Level **B4** through:
+CAD_CAM_3D adopts Blueprint OS Universal Constitution **1.3.0** at Blueprint Level **B4** through:
 
 - `.blueprint/constitution-adoption.json`
 
@@ -76,3 +76,8 @@ Release operations and rollback:
 
 - `docs/RELEASE_OPERATIONS.md`
 - `docs/DEVELOPMENT_RELEASE_POLICY.md`
+
+
+## Phạm vi kiểm định Blueprint 1.3
+
+Mã nguồn đã được đối chiếu Hiến pháp 1.3 nhưng nghiệm thu thực tế CAD offline, nhập/xuất dự án và UX chưa được thực hiện. Trạng thái migration giữ `MIGRATION_REQUIRED`; theo `docs/BLUEPRINT-13-B4-SOURCE-AUDIT.json`. Merge không tự publish online hoặc cấp Production.
