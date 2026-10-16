@@ -1,9 +1,21 @@
 name: CAD CAM 3D Production Pages
 
 on:
-  workflow_run:
-    workflows: ["CAD CAM 3D CI"]
-    types: [completed]
+  workflow_dispatch:
+    inputs:
+      enable_online_release:
+        type: boolean
+        required: true
+        default: false
+        description: "Offline default: future owner-approved production publish only"
+      release_sha:
+        type: string
+        required: true
+        description: "Exact SHA previously verified by CI"
+      source_ci_run_id:
+        type: string
+        required: true
+        description: "Source CI run proving the exact SHA"
 
 permissions:
   contents: read
@@ -17,12 +29,13 @@ concurrency:
 jobs:
   build:
     if: >-
-      github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.head_branch == 'main'
+      inputs.enable_online_release == true &&
+      inputs.release_sha != '' &&
+      inputs.source_ci_run_id != ''
     runs-on: ubuntu-latest
     env:
-      RELEASE_SHA: ${{ github.event.workflow_run.head_sha }}
-      SOURCE_CI_RUN_ID: ${{ github.event.workflow_run.id }}
+      RELEASE_SHA: ${{ inputs.release_sha }}
+      SOURCE_CI_RUN_ID: ${{ inputs.source_ci_run_id }}
     steps:
       - name: Checkout exact CI revision
         uses: actions/checkout@v4
@@ -63,8 +76,9 @@ jobs:
 
   deploy:
     if: >-
-      github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.head_branch == 'main'
+      inputs.enable_online_release == true &&
+      inputs.release_sha != '' &&
+      inputs.source_ci_run_id != ''
     environment:
       name: production-pages
       url: ${{ steps.deployment.outputs.page_url }}
