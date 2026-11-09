@@ -60,13 +60,27 @@
     "canonicalProjectProfile": {
       "storage": "Software-Blueprint-Hub PostgreSQL ProjectProfile record",
       "projectId": "project:cad-cam-3d",
-      "readStatus": "NOT_RUN_NO_AUTHORIZED_DB",
+      "readStatus": "NOT_RUN_ARCHIVED_NEON_COMPUTE_COST_GATE",
       "recordVersion": null,
-      "approvedBlueprintLevel": null
+      "approvedBlueprintLevel": null,
+      "providerMetadataObservation": {
+        "source": "CONNECTED_NEON_PROJECT_METADATA_ONLY",
+        "projectName": "software-blueprint-hub",
+        "projectId": "jolly-silence-12709552",
+        "defaultBranchName": "production",
+        "defaultBranchId": "br-aged-field-b38m3wht",
+        "defaultBranchState": "archived",
+        "accessibleBranchCount": 7,
+        "archivedBranchCount": 7,
+        "inspectedComputeState": "idle",
+        "sqlExecuted": false,
+        "reason": "Explicit zero-new-cost constraint: do not wake archived/idle Neon compute without verified zero-charge coverage; the default branch also names Production; no canonical DB result or granted identity proven.",
+        "canonicalDatabaseIdentity": "UNVERIFIED_AT_RECORD_LEVEL"
+      }
     },
     "ownerProjectAuthority": {
       "authority": "ProjectAuthority authenticated scoped principal/role",
-      "verification": "NOT_RUN",
+      "verification": "NOT_RUN_METADATA_ONLY_NO_SQL",
       "approval": "NOT_GRANTED_BY_THIS_SOURCE_CHANGE"
     },
     "impactReview": {
