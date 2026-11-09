@@ -26,7 +26,7 @@ if (version === 13) {
     'v13 architecture must document persisted registration-fit calibration.');
 }
 
-assert.equal(adoption.policyVersion, '1.2.0', 'Constitution version must match the adopted v1 governance.');
+assert.equal(adoption.policyVersion, '1.3.0', 'Constitution must inherit the ratified central 1.3 policy; this source check does not mean Production is deployed.');
 assert.equal(adoption.blueprintLevel, 'B4', 'Do not regress to obsolete B2 governance.');
 
 assert.equal(publicContract.schema, 'application-management.contract/v1');

@@ -1,0 +1,110 @@
+{
+  "schemaVersion": "1.0.0",
+  "status": "MIGRATION_REQUIRED_SOURCE_CANDIDATE",
+  "kind": "app-source-inheritance-audit",
+  "projectId": "project:cad-cam-3d",
+  "blueprintLevel": "B4",
+  "baseCommit": "5720d06c96aeb39825e1149330eff1e3518292bd",
+  "policy": {
+    "source": "BlueDragon33/Software-Blueprint-Hub",
+    "version": "1.3.0",
+    "constitutionRatifiedElsewhere": true
+  },
+  "sourceFiles": [
+    ".blueprint/constitution-adoption.json",
+    ".blueprint/dependency-budget.json",
+    "README.md"
+  ],
+  "core": "local-cad-cam-runtime",
+  "posture": "LOCAL_PORTABLE_DESIGN_CORE",
+  "requiredForbidden": [
+    "cloud-only-canonical-cad-project",
+    "ai-owned-canonical-geometry",
+    "provider-specific-format-without-portable-export"
+  ],
+  "unresolvedRuntimeQA": [
+    "Network-denied CAD local editor open/create/save/reopen/export/import",
+    "Verify canonical geometry reproducibility and portable file formats",
+    "Representative renderer/UX quality and browser regression without online hosting"
+  ],
+  "truth": {
+    "migration": "MIGRATION_REQUIRED",
+    "offlineRuntime": "UNVERIFIED",
+    "productPass": false,
+    "independentReview": "PENDING",
+    "productionAuthorized": false,
+    "networkPublication": "DISABLED_BY_ECOSYSTEM_POLICY",
+    "newConstitutionRatification": false
+  },
+  "authorityReconciliation": {
+    "kind": "B2_TO_B4_PROFILE_RECLASSIFICATION_CANDIDATE",
+    "status": "PENDING_CANONICAL_PROFILE_AND_AUTHORIZED_DECISION",
+    "sealedBaseline": {
+      "repository": "BlueDragon33/Software-Blueprint-Hub",
+      "branch": "main",
+      "sourceRevision": "cd01fb3c2178393628ce968af209db082227d2c4",
+      "path": "control/constitution-governed-repositories.json",
+      "sourceBlobSha": "dd8b98953ed011df186b6233049d3148cd301b5e",
+      "projectId": "project:cad-cam-3d",
+      "blueprintLevel": "B2"
+    },
+    "proposed": {
+      "repository": "BlueDragon33/CAD_CAM_3D",
+      "baseRevision": "5720d06c96aeb39825e1149330eff1e3518292bd",
+      "proposalRevision": "4b31198f756462f7ce0d8bbc222ae57dbc11e9c5",
+      "path": ".blueprint/constitution-adoption.json",
+      "blueprintLevel": "B4",
+      "policyVersion": "1.3.0",
+      "authority": "CANDIDATE_SOURCE_ONLY"
+    },
+    "canonicalProjectProfile": {
+      "storage": "Software-Blueprint-Hub PostgreSQL ProjectProfile record",
+      "projectId": "project:cad-cam-3d",
+      "readStatus": "NOT_RUN_ARCHIVED_NEON_COMPUTE_COST_GATE",
+      "recordVersion": null,
+      "approvedBlueprintLevel": null,
+      "providerMetadataObservation": {
+        "source": "CONNECTED_NEON_PROJECT_METADATA_ONLY",
+        "projectName": "software-blueprint-hub",
+        "projectId": "jolly-silence-12709552",
+        "defaultBranchName": "production",
+        "defaultBranchId": "br-aged-field-b38m3wht",
+        "defaultBranchState": "archived",
+        "accessibleBranchCount": 7,
+        "archivedBranchCount": 7,
+        "inspectedComputeState": "idle",
+        "sqlExecuted": false,
+        "reason": "Explicit zero-new-cost constraint: do not wake archived/idle Neon compute without verified zero-charge coverage; the default branch also names Production; no canonical DB result or granted identity proven.",
+        "canonicalDatabaseIdentity": "UNVERIFIED_AT_RECORD_LEVEL"
+      }
+    },
+    "ownerProjectAuthority": {
+      "authority": "ProjectAuthority authenticated scoped principal/role",
+      "verification": "NOT_RUN_METADATA_ONLY_NO_SQL",
+      "approval": "NOT_GRANTED_BY_THIS_SOURCE_CHANGE"
+    },
+    "impactReview": {
+      "applicationScope": "local-first parametric CAD/CAM, manufacturable parts, geometry and CAM user data, optional AI/providers and App-Management metadata-only",
+      "sensitivity": "user-owned CAD geometry and project files; do not upload by default",
+      "privilegedCapabilities": "no inferred remote device-control or Production privileges",
+      "executionProfileIfApproved": "STRUCTURED_B4",
+      "migration": "MIGRATION_REQUIRED",
+      "offlineCoreQA": "NOT_RUN",
+      "geometryAndExportQA": "NOT_RUN",
+      "independentUXQA": "PENDING",
+      "releaseSafety": "separate exact-SHA, CI, rollback and authorized Production",
+      "costAndDependencies": "local free/user-owned core, optional third party adapters; zero new required paid services"
+    },
+    "requiredBeforePromotion": [
+      "Read live canonical ProjectProfile project:cad-cam-3d at exact recordVersion and reconcile B2/B4 scope with authorized project owner",
+      "Record authorized B2-to-B4 reclassification decision, principal, evidence and audit trail without rewriting sealed history",
+      "Assess product scope/security/data isolation/architecture/offline/UX/performance and migration effort at STRUCTURED level",
+      "Prove network-denied create-edit-save-reopen-export-import portable CAD workflows and recovery for user-owned files",
+      "Verify representative browser/geometry/correctness, independent UX and release/rollback evidence on exact SHA",
+      "Only then align canonical record, registry and adoption declaration through their respective authorized owners and QA gates"
+    ],
+    "sealedRegistryMutationApproved": false,
+    "productionReleaseAuthorized": false,
+    "migrationPass": false
+  }
+}
