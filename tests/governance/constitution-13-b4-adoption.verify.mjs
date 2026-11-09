@@ -48,9 +48,14 @@ test("B2-to-B4 is an unratified project reclassification, not an automatic CAD a
  assert.equal(g.proposed.blueprintLevel,a.blueprintLevel);
  assert.equal(g.proposed.policyVersion,a.policyVersion);
  assert.equal(g.proposed.authority,"CANDIDATE_SOURCE_ONLY");
- assert.equal(g.canonicalProjectProfile.readStatus,"NOT_RUN_NO_AUTHORIZED_DB");
+ assert.equal(g.canonicalProjectProfile.readStatus,"NOT_RUN_ARCHIVED_NEON_COMPUTE_COST_GATE");
  assert.equal(g.canonicalProjectProfile.recordVersion,null);
- assert.equal(g.ownerProjectAuthority.verification,"NOT_RUN");
+ assert.equal(g.canonicalProjectProfile.providerMetadataObservation.projectName,"software-blueprint-hub");
+ assert.equal(g.canonicalProjectProfile.providerMetadataObservation.archivedBranchCount,7);
+ assert.equal(g.canonicalProjectProfile.providerMetadataObservation.sqlExecuted,false);
+ assert.equal(g.canonicalProjectProfile.providerMetadataObservation.defaultBranchState,"archived");
+ assert.equal(g.canonicalProjectProfile.recordVersion,null);
+ assert.equal(g.ownerProjectAuthority.verification,"NOT_RUN_METADATA_ONLY_NO_SQL");
  assert.equal(g.ownerProjectAuthority.approval,"NOT_GRANTED_BY_THIS_SOURCE_CHANGE");
  assert.equal(g.impactReview.migration,"MIGRATION_REQUIRED");
  assert.equal(g.impactReview.offlineCoreQA,"NOT_RUN");
