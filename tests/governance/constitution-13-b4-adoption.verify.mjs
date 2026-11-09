@@ -36,3 +36,27 @@ test("source audit only; incomplete B4 runtime and review remain unverified",()=
  assert.ok(e.unresolvedRuntimeQA.length>=3);
  for(const f of e.sourceFiles)assert.ok(existsSync(f),"missing source "+f);
 });
+
+test("B2-to-B4 is an unratified project reclassification, not an automatic CAD adoption grant",()=>{
+ const g=e.authorityReconciliation;
+ assert.equal(g.kind,"B2_TO_B4_PROFILE_RECLASSIFICATION_CANDIDATE");
+ assert.equal(g.status,"PENDING_CANONICAL_PROFILE_AND_AUTHORIZED_DECISION");
+ assert.equal(g.sealedBaseline.projectId,a.projectId);
+ assert.equal(g.sealedBaseline.blueprintLevel,"B2");
+ assert.equal(g.sealedBaseline.sourceRevision,"cd01fb3c2178393628ce968af209db082227d2c4");
+ assert.equal(g.sealedBaseline.sourceBlobSha,"dd8b98953ed011df186b6233049d3148cd301b5e");
+ assert.equal(g.proposed.blueprintLevel,a.blueprintLevel);
+ assert.equal(g.proposed.policyVersion,a.policyVersion);
+ assert.equal(g.proposed.authority,"CANDIDATE_SOURCE_ONLY");
+ assert.equal(g.canonicalProjectProfile.readStatus,"NOT_RUN_NO_AUTHORIZED_DB");
+ assert.equal(g.canonicalProjectProfile.recordVersion,null);
+ assert.equal(g.ownerProjectAuthority.verification,"NOT_RUN");
+ assert.equal(g.ownerProjectAuthority.approval,"NOT_GRANTED_BY_THIS_SOURCE_CHANGE");
+ assert.equal(g.impactReview.migration,"MIGRATION_REQUIRED");
+ assert.equal(g.impactReview.offlineCoreQA,"NOT_RUN");
+ assert.equal(g.impactReview.geometryAndExportQA,"NOT_RUN");
+ assert.ok(g.requiredBeforePromotion.length>=5);
+ assert.equal(g.sealedRegistryMutationApproved,false);
+ assert.equal(g.productionReleaseAuthorized,false);
+ assert.equal(g.migrationPass,false);
+});
